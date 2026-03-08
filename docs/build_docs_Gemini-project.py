@@ -85,7 +85,8 @@ def should_document_file(file: Path, code_root: Path) -> bool:
         return False
 
     # Skip specific problematic directories
-    skip_dirs = {'data', 'output', '.ruff_cache', '.venv', 'venv', '.git', 'tests', 'docs'}
+    skip_dirs = {'data', 'output', '.ruff_cache', '.venv', 'venv', '.git', 'tests', 'docs',
+                 'site'}
     if any(part in skip_dirs or part.endswith('_files') for part in relative_parts):
         return False
 

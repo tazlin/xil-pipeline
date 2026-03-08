@@ -21,12 +21,14 @@ Automated podcast/audio production pipeline using ElevenLabs TTS API. The projec
 `XILP001_script_parser.py` — Parses markdown production scripts into structured JSON.
 
 ```bash
-python XILP001_script_parser.py "scripts/<script>.md" --preview 10
+python XILP001_script_parser.py "scripts/<script>.md" --episode S01E01 --preview 10
 ```
 
 - Input: Markdown scripts in `scripts/` with dialogue format `SPEAKER (direction) Spoken text`
 - Output: `parsed/parsed_the413_S01E01.json` — entries with seq, type, section, scene, speaker, direction, text, direction_type
 - Output path derived from script header metadata (season/episode); override with `--output`
+- `--episode S01E01` (optional) validates that the script header matches the intended episode tag
+- When `--episode` is provided and `cast_the413_S01E01.json` / `sfx_the413_S01E01.json` don't exist, auto-generates skeleton configs with `voice_id=TBD` and default SFX prompts
 - Supports `--quiet` (JSON only, skip summary) and `--debug` (write diagnostic CSV alongside JSON)
 - Known speakers defined in `KNOWN_SPEAKERS` list (must be longest-first for multi-word names like "MR. PATTERSON")
 

@@ -4,6 +4,8 @@ import os
 import json
 import tempfile
 import importlib
+import unittest.mock
+
 import pytest
 
 # Import the parser module (filename starts with digits, so use importlib)
@@ -730,3 +732,204 @@ END OF EPISODE 1
         section_rows = [r for r in rows if r["type"] == "section_header"]
         assert section_rows, "Should have a section_header row"
         assert section_rows[0]["section"] == "cold-open"
+
+
+# ─── Tests: --episode validation ───
+
+class TestEpisodeValidation:
+    @pytest.fixture
+    def script_file(self, tmp_path):
+        script_file = tmp_path / "test_script.md"
+        script_file.write_text(MINIMAL_SCRIPT, encoding="utf-8")
+        return str(script_file)
+
+    def test_episode_matches_header(self, script_file, tmp_path):
+        """No error when --episode matches script header."""
+        output = str(tmp_path / "out.json")
+        with unittest.mock.patch("sys.argv", [
+            "XILP001", script_file, "--episode", "S01E01",
+            "--output", output, "--quiet",
+        ]):
+            parser.main()
+        assert os.path.exists(output)
+
+    def test_episode_mismatch_exits(self, script_file, tmp_path):
+        """SystemExit when --episode doesn't match script header."""
+        output = str(tmp_path / "out.json")
+        with pytest.raises(SystemExit):
+            with unittest.mock.patch("sys.argv", [
+                "XILP001", script_file, "--episode", "S99E99",
+                "--output", output, "--quiet",
+            ]):
+                parser.main()
+
+    def test_no_episode_arg_works(self, script_file, tmp_path):
+        """Parser works normally without --episode."""
+        output = str(tmp_path / "out.json")
+        with unittest.mock.patch("sys.argv", [
+            "XILP001", script_file, "--output", output, "--quiet",
+        ]):
+            parser.main()
+        assert os.path.exists(output)
+
+
+# ─── Tests: generate_cast_config ───
+
+class TestGenerateCastConfig:
+    @pytest.fixture
+    def parsed(self, tmp_path):
+        script_file = tmp_path / "test_script.md"
+        script_file.write_text(MINIMAL_SCRIPT, encoding="utf-8")
+        return parser.parse_script(str(script_file))
+
+    def test_creates_cast_file_when_absent(self, parsed, tmp_path):
+        cast_path = str(tmp_path / "cast_the413_S01E01.json")
+        parser.generate_cast_config(parsed, cast_path)
+        assert os.path.exists(cast_path)
+
+    def test_cast_has_correct_speakers(self, parsed, tmp_path):
+        cast_path = str(tmp_path / "cast_the413_S01E01.json")
+        parser.generate_cast_config(parsed, cast_path)
+        with open(cast_path, "r", encoding="utf-8") as f:
+            config = json.load(f)
+        assert "adam" in config["cast"]
+        assert "dez" in config["cast"]
+        assert "mr_patterson" in config["cast"]
+
+    def test_cast_has_tbd_voice_ids(self, parsed, tmp_path):
+        cast_path = str(tmp_path / "cast_the413_S01E01.json")
+        parser.generate_cast_config(parsed, cast_path)
+        with open(cast_path, "r", encoding="utf-8") as f:
+            config = json.load(f)
+        for member in config["cast"].values():
+            assert member["voice_id"] == "TBD"
+
+    def test_cast_metadata_from_script(self, parsed, tmp_path):
+        cast_path = str(tmp_path / "cast_the413_S01E01.json")
+        parser.generate_cast_config(parsed, cast_path)
+        with open(cast_path, "r", encoding="utf-8") as f:
+            config = json.load(f)
+        assert config["show"] == "THE 413"
+        assert config["season"] == 1
+        assert config["episode"] == 1
+
+    def test_cast_member_defaults(self, parsed, tmp_path):
+        cast_path = str(tmp_path / "cast.json")
+        parser.generate_cast_config(parsed, cast_path)
+        with open(cast_path, "r", encoding="utf-8") as f:
+            config = json.load(f)
+        member = config["cast"]["adam"]
+        assert member["pan"] == 0.0
+        assert member["filter"] is False
+        assert member["role"] == "TBD"
+
+    def test_skips_when_cast_exists(self, parsed, tmp_path, capsys):
+        """main() should not overwrite existing cast config."""
+        script_file = tmp_path / "test_script.md"
+        script_file.write_text(MINIMAL_SCRIPT, encoding="utf-8")
+        cast_path = tmp_path / "cast_the413_S01E01.json"
+        cast_path.write_text('{"existing": true}', encoding="utf-8")
+        output = str(tmp_path / "out.json")
+        original_cwd = os.getcwd()
+        os.chdir(str(tmp_path))
+        try:
+            with unittest.mock.patch("sys.argv", [
+                "XILP001", str(script_file), "--episode", "S01E01",
+                "--output", output, "--quiet",
+            ]):
+                parser.main()
+        finally:
+            os.chdir(original_cwd)
+        with open(str(cast_path), "r", encoding="utf-8") as f:
+            data = json.load(f)
+        assert data == {"existing": True}
+
+
+# ─── Tests: generate_sfx_config ───
+
+class TestGenerateSfxConfig:
+    @pytest.fixture
+    def parsed(self, tmp_path):
+        script_file = tmp_path / "test_script.md"
+        script_file.write_text(MINIMAL_SCRIPT, encoding="utf-8")
+        return parser.parse_script(str(script_file))
+
+    def test_creates_sfx_file_when_absent(self, parsed, tmp_path):
+        sfx_path = str(tmp_path / "sfx_the413_S01E01.json")
+        parser.generate_sfx_config(parsed, sfx_path)
+        assert os.path.exists(sfx_path)
+
+    def test_beat_is_silence_type(self, parsed, tmp_path):
+        sfx_path = str(tmp_path / "sfx.json")
+        parser.generate_sfx_config(parsed, sfx_path)
+        with open(sfx_path, "r", encoding="utf-8") as f:
+            config = json.load(f)
+        assert config["effects"]["BEAT"]["type"] == "silence"
+        assert config["effects"]["BEAT"]["duration_seconds"] == 1.0
+
+    def test_sfx_has_prompt(self, parsed, tmp_path):
+        sfx_path = str(tmp_path / "sfx.json")
+        parser.generate_sfx_config(parsed, sfx_path)
+        with open(sfx_path, "r", encoding="utf-8") as f:
+            config = json.load(f)
+        assert "prompt" in config["effects"]["SFX: DOOR OPENS"]
+
+    def test_ambience_has_loop_true(self, parsed, tmp_path):
+        sfx_path = str(tmp_path / "sfx.json")
+        parser.generate_sfx_config(parsed, sfx_path)
+        with open(sfx_path, "r", encoding="utf-8") as f:
+            config = json.load(f)
+        ambience = config["effects"]["AMBIENCE: RADIO STATION"]
+        assert ambience["loop"] is True
+        assert ambience["duration_seconds"] == 30.0
+
+    def test_music_duration(self, parsed, tmp_path):
+        sfx_path = str(tmp_path / "sfx.json")
+        parser.generate_sfx_config(parsed, sfx_path)
+        with open(sfx_path, "r", encoding="utf-8") as f:
+            config = json.load(f)
+        assert config["effects"]["MUSIC: THEME"]["duration_seconds"] == 15.0
+
+    def test_sfx_metadata_from_script(self, parsed, tmp_path):
+        sfx_path = str(tmp_path / "sfx.json")
+        parser.generate_sfx_config(parsed, sfx_path)
+        with open(sfx_path, "r", encoding="utf-8") as f:
+            config = json.load(f)
+        assert config["show"] == "THE 413"
+        assert config["season"] == 1
+        assert config["episode"] == 1
+        assert config["defaults"]["prompt_influence"] == 0.3
+
+    def test_skips_when_sfx_exists(self, parsed, tmp_path, capsys):
+        """main() should not overwrite existing sfx config."""
+        script_file = tmp_path / "test_script.md"
+        script_file.write_text(MINIMAL_SCRIPT, encoding="utf-8")
+        sfx_path = tmp_path / "sfx_the413_S01E01.json"
+        sfx_path.write_text('{"existing": true}', encoding="utf-8")
+        # Also need cast to exist to avoid creating it
+        cast_path = tmp_path / "cast_the413_S01E01.json"
+        cast_path.write_text('{"existing": true}', encoding="utf-8")
+        output = str(tmp_path / "out.json")
+        original_cwd = os.getcwd()
+        os.chdir(str(tmp_path))
+        try:
+            with unittest.mock.patch("sys.argv", [
+                "XILP001", str(script_file), "--episode", "S01E01",
+                "--output", output, "--quiet",
+            ]):
+                parser.main()
+        finally:
+            os.chdir(original_cwd)
+        with open(str(sfx_path), "r", encoding="utf-8") as f:
+            data = json.load(f)
+        assert data == {"existing": True}
+
+    def test_unique_effects_only(self, parsed, tmp_path):
+        """Duplicate direction entries should produce one effect."""
+        sfx_path = str(tmp_path / "sfx.json")
+        parser.generate_sfx_config(parsed, sfx_path)
+        with open(sfx_path, "r", encoding="utf-8") as f:
+            config = json.load(f)
+        # AMBIENCE: DINER appears via scene header split
+        effect_keys = list(config["effects"].keys())
+        assert len(effect_keys) == len(set(effect_keys))

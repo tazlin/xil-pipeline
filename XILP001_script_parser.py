@@ -15,6 +15,7 @@ import json
 import csv
 import argparse
 import os
+import sys
 
 from models import ScriptEntry, ScriptStats, ParsedScript, episode_tag
 
@@ -577,10 +578,120 @@ def print_dialogue_preview(parsed: dict, limit: int | None = None) -> None:
         print()
 
 
+def generate_cast_config(parsed: dict, cast_path: str) -> None:
+    """Generate a skeleton cast config JSON from parsed script data.
+
+    Creates a cast config with all speakers found in the parsed script,
+    using ``voice_id="TBD"`` and sensible defaults for pan, filter, and role.
+    The user must fill in voice IDs via ``XILU001_discover_voices_T2S.py``.
+
+    Args:
+        parsed: Parsed script dict from :func:`parse_script`.
+        cast_path: Output path for the cast config JSON.
+    """
+    # Build reverse mapping: speaker_key -> display name
+    key_to_display = {v: k for k, v in SPEAKER_KEYS.items()}
+
+    speakers = parsed["stats"]["speakers"]
+    cast = {}
+    for speaker_key in speakers:
+        display = key_to_display.get(speaker_key, speaker_key)
+        full_name = display.replace("_", " ").title()
+        cast[speaker_key] = {
+            "full_name": full_name,
+            "voice_id": "TBD",
+            "pan": 0.0,
+            "filter": False,
+            "role": "TBD",
+        }
+
+    config = {
+        "show": parsed.get("show", "THE 413"),
+        "season": parsed.get("season"),
+        "episode": parsed.get("episode", 1),
+        "title": parsed.get("title", ""),
+        "cast": cast,
+    }
+
+    with open(cast_path, "w", encoding="utf-8") as f:
+        json.dump(config, f, indent=2, ensure_ascii=False)
+
+    print(f"Created {cast_path} with {len(speakers)} speakers "
+          f"(voice_id=TBD — run XILU001 to assign)")
+
+
+def generate_sfx_config(parsed: dict, sfx_path: str) -> None:
+    """Generate a skeleton SFX config JSON from parsed script data.
+
+    Creates an SFX config with entries for each unique direction found
+    in the parsed script.  Defaults are based on direction type:
+
+    - ``BEAT`` / ``LONG BEAT`` → silence (no API call)
+    - ``SFX:`` → 5s effect
+    - ``MUSIC:`` → 15s effect
+    - ``AMBIENCE:`` → 30s looping effect
+    - Other → 5s effect
+
+    The user should review and refine prompts before running generation.
+
+    Args:
+        parsed: Parsed script dict from :func:`parse_script`.
+        sfx_path: Output path for the SFX config JSON.
+    """
+    effects: dict[str, dict] = {}
+    silence_count = 0
+    sfx_count = 0
+
+    for entry in parsed["entries"]:
+        if entry["type"] != "direction":
+            continue
+        text = entry["text"]
+        if text in effects:
+            continue
+
+        if text == "BEAT":
+            effects[text] = {"type": "silence", "duration_seconds": 1.0}
+            silence_count += 1
+        elif text == "LONG BEAT":
+            effects[text] = {"type": "silence", "duration_seconds": 2.0}
+            silence_count += 1
+        elif text.startswith("AMBIENCE:"):
+            effects[text] = {
+                "prompt": text,
+                "duration_seconds": 30.0,
+                "loop": True,
+            }
+            sfx_count += 1
+        elif text.startswith("MUSIC:"):
+            effects[text] = {"prompt": text, "duration_seconds": 15.0}
+            sfx_count += 1
+        else:
+            effects[text] = {"prompt": text, "duration_seconds": 5.0}
+            sfx_count += 1
+
+    config = {
+        "show": parsed.get("show", "THE 413"),
+        "season": parsed.get("season"),
+        "episode": parsed.get("episode", 1),
+        "defaults": {"prompt_influence": 0.3},
+        "effects": effects,
+    }
+
+    with open(sfx_path, "w", encoding="utf-8") as f:
+        json.dump(config, f, indent=2, ensure_ascii=False)
+
+    total = silence_count + sfx_count
+    print(f"Created {sfx_path} with {total} effects "
+          f"({silence_count} silence, {sfx_count} sfx "
+          f"— review prompts before generation)")
+
+
 def main() -> None:
     """CLI entry point for script parsing."""
     parser = argparse.ArgumentParser(description="Parse THE 413 production script markdown into structured JSON")
     parser.add_argument("script", help="Path to the production script markdown file")
+    parser.add_argument("--episode", default=None,
+                        help="Episode tag (e.g. S01E01) — validates header and auto-generates absent cast/sfx configs")
     parser.add_argument("--output", "-o", default=None,
                         help="Output JSON path (default: parsed/parsed_the413_<TAG>.json)")
     parser.add_argument("--preview", type=int, default=None,
@@ -594,9 +705,17 @@ def main() -> None:
     # Parse first so we can derive the output path from metadata
     parsed = parse_script(args.script)
 
+    # Derive tag from parsed header
+    tag = episode_tag(parsed.get("season"), parsed["episode"])
+
+    # Validate --episode matches script header
+    if args.episode is not None and args.episode != tag:
+        print(f"ERROR: Script header indicates {tag} but "
+              f"--episode {args.episode} was specified")
+        sys.exit(1)
+
     # Derive default output path from parsed season/episode
     if args.output is None:
-        tag = episode_tag(parsed.get("season"), parsed["episode"])
         args.output = f"parsed/parsed_the413_{tag}.json"
 
     # Write debug CSV if requested (must happen after output path is resolved)
@@ -616,6 +735,15 @@ def main() -> None:
         print(f"JSON written to: {args.output}")
         if args.debug:
             print(f"Debug CSV written to: {os.path.splitext(args.output)[0]}.csv")
+
+    # Auto-generate cast/sfx configs if --episode provided and files absent
+    if args.episode:
+        cast_path = f"cast_the413_{args.episode}.json"
+        sfx_path = f"sfx_the413_{args.episode}.json"
+        if not os.path.exists(cast_path):
+            generate_cast_config(parsed, cast_path)
+        if not os.path.exists(sfx_path):
+            generate_sfx_config(parsed, sfx_path)
 
 
 if __name__ == "__main__":
