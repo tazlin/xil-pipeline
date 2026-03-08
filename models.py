@@ -11,6 +11,21 @@ from typing import Literal, Optional
 from pydantic import BaseModel, Field
 
 
+def episode_tag(season: int | None, episode: int) -> str:
+    """Format season/episode as a compact tag like ``S01E01`` or ``E01``.
+
+    Args:
+        season: Season number, or ``None`` if not declared.
+        episode: Episode number.
+
+    Returns:
+        ``"S01E01"`` when season is set, ``"E01"`` otherwise.
+    """
+    if season is not None:
+        return f"S{season:02d}E{episode:02d}"
+    return f"E{episode:02d}"
+
+
 # ---------------------------------------------------------------------------
 # Script parsing models (Stage 1 output)
 # ---------------------------------------------------------------------------
@@ -92,6 +107,11 @@ class ParsedScript(BaseModel):
     entries: list[ScriptEntry] = Field(..., description="Parsed script entries")
     stats: ScriptStats = Field(..., description="Aggregate statistics")
 
+    @property
+    def tag(self) -> str:
+        """Compact season/episode tag, e.g. ``S01E01`` or ``E01``."""
+        return episode_tag(self.season, self.episode)
+
 
 # ---------------------------------------------------------------------------
 # Cast configuration models
@@ -138,6 +158,11 @@ class CastConfiguration(BaseModel):
     title: str | None = Field(default=None, description="Episode title")
     cast: dict[str, CastMember] = Field(..., description="Speaker-to-config mapping")
 
+    @property
+    def tag(self) -> str:
+        """Compact season/episode tag, e.g. ``S01E01`` or ``E01``."""
+        return episode_tag(self.season, self.episode)
+
 
 # ---------------------------------------------------------------------------
 # Production pipeline models (Stage 2/3)
@@ -180,3 +205,67 @@ class DialogueEntry(BaseModel):
     stem_name: str = Field(..., description="Output audio stem name")
     seq: int = Field(..., gt=0, description="1-based sequence number")
     direction: str | None = Field(default=None, description="Acting direction")
+
+
+# ---------------------------------------------------------------------------
+# SFX configuration models
+# ---------------------------------------------------------------------------
+
+
+class SfxEntry(BaseModel):
+    """A single sound effect mapping from script direction to API parameters.
+
+    Maps a direction entry's text (e.g., ``"SFX: PHONE BUZZING"``) to the
+    ElevenLabs Sound Effects API parameters needed to generate it, or marks
+    it as silence (for BEAT entries).
+
+    Attributes:
+        prompt: Natural-language description for the ElevenLabs SFX API.
+            ``None`` for silence entries.
+        type: Whether this is an API-generated sound effect or local silence.
+        duration_seconds: Length of the generated audio (0.5–30.0s).
+        prompt_influence: How closely the output follows the prompt (0.0–1.0).
+            ``None`` to use the config-level default.
+        loop: Whether the effect should be loopable (useful for ambience).
+    """
+
+    prompt: str | None = Field(default=None, description="ElevenLabs SFX prompt")
+    type: Literal["sfx", "silence"] = Field(
+        default="sfx", description="Effect type: API-generated or local silence"
+    )
+    duration_seconds: float = Field(
+        default=5.0, ge=0.5, le=30.0, description="Audio duration in seconds"
+    )
+    prompt_influence: float | None = Field(
+        default=None, ge=0.0, le=1.0,
+        description="Prompt adherence (0.0–1.0), None for config default",
+    )
+    loop: bool = Field(default=False, description="Generate loopable audio")
+
+
+class SfxConfiguration(BaseModel):
+    """Sound effects configuration for a production episode.
+
+    Analogous to :class:`CastConfiguration` for voices. Maps parsed
+    direction entry text to ElevenLabs Sound Effects API parameters.
+
+    Attributes:
+        show: Show title (e.g., ``"THE 413"``).
+        season: Season number, or ``None`` if not declared.
+        episode: Episode number.
+        defaults: Shared default settings (e.g., ``prompt_influence``).
+        effects: Mapping of direction text to SFX entry configurations.
+    """
+
+    show: str = Field(..., description="Show title")
+    season: int | None = Field(default=None, description="Season number")
+    episode: int = Field(..., description="Episode number")
+    defaults: dict = Field(default_factory=dict, description="Shared SFX defaults")
+    effects: dict[str, SfxEntry] = Field(
+        ..., description="Direction text to SFX mapping"
+    )
+
+    @property
+    def tag(self) -> str:
+        """Compact season/episode tag, e.g. ``S01E01`` or ``E01``."""
+        return episode_tag(self.season, self.episode)

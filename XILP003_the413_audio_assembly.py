@@ -38,7 +38,7 @@ def apply_phone_filter(segment: AudioSegment) -> AudioSegment:
     return segment.high_pass_filter(300).low_pass_filter(3000) + 5
 
 
-def assemble_audio(config: dict[str, dict]) -> None:
+def assemble_audio(config: dict[str, dict], stems_dir: str, final_output: str) -> None:
     """Assemble voice stems into a final master audio file.
 
     Loads all MP3 stems from the stems directory sorted by filename
@@ -50,12 +50,12 @@ def assemble_audio(config: dict[str, dict]) -> None:
         config: Mapping of speaker keys to voice settings dicts with
             keys ``id``, ``pan``, and ``filter``. Built from cast config
             via ``CastConfiguration`` and ``VoiceConfig``.
+        stems_dir: Directory containing voice stem MP3 files.
+        final_output: Path for the master MP3 output file.
     """
-    final_output = "the413_ep01_master.mp3"
-
-    stem_files = sorted(glob.glob(os.path.join(STEMS_DIR, "*.mp3")))
+    stem_files = sorted(glob.glob(os.path.join(stems_dir, "*.mp3")))
     if not stem_files:
-        print(f" [!] No stems found in {STEMS_DIR}/. Run XILP002 first.")
+        print(f" [!] No stems found in {stems_dir}/. Run XILP002 first.")
         return
 
     print(f"--- Phase 2: Assembling {len(stem_files)} stems ---")
@@ -93,25 +93,30 @@ def main() -> None:
         description="THE 413 Audio Assembly — assemble voice stems into master MP3"
     )
     parser.add_argument(
-        "--cast", default="cast_the413.json",
-        help="Path to cast config JSON (default: cast_the413.json)"
+        "--episode", required=True,
+        help="Episode tag (e.g. S01E01) — derives cast config path"
     )
     parser.add_argument(
-        "--output", default="the413_ep01_master.mp3",
-        help="Output master MP3 path (default: the413_ep01_master.mp3)"
+        "--output", default=None,
+        help="Output master MP3 path (default: the413_<TAG>_master.mp3)"
     )
     args = parser.parse_args()
 
-    with open(args.cast, "r", encoding="utf-8") as f:
+    cast_path = f"cast_the413_{args.episode}.json"
+    with open(cast_path, "r", encoding="utf-8") as f:
         cast_data = json.load(f)
 
     cast_cfg = CastConfiguration(**cast_data)
+    tag = cast_cfg.tag
     config = {
         key: VoiceConfig(id=member.voice_id, pan=member.pan, filter=member.filter).model_dump()
         for key, member in cast_cfg.cast.items()
     }
 
-    assemble_audio(config)
+    stems_dir = os.path.join(STEMS_DIR, tag)
+    output = args.output or f"the413_{tag}_master.mp3"
+
+    assemble_audio(config, stems_dir, output)
 
 
 if __name__ == "__main__":

@@ -26,6 +26,7 @@ with unittest.mock.patch.dict(os.environ, {"ELEVENLABS_API_KEY": "test_key"}):
 def sample_cast(tmp_path):
     cast = {
         "show": "TEST SHOW",
+        "season": 1,
         "episode": 1,
         "cast": {
             "adam": {"full_name": "Adam Santos", "voice_id": "voice_adam_123", "pan": 0.0, "filter": False, "role": "Host"},
@@ -71,43 +72,43 @@ def sample_script(tmp_path):
 
 class TestLoadProduction:
     def test_returns_config_and_entries(self, sample_script, sample_cast):
-        config, entries = producer.load_production(sample_script, sample_cast)
+        config, entries, _tag = producer.load_production(sample_script, sample_cast)
         assert isinstance(config, dict)
         assert isinstance(entries, list)
 
     def test_config_has_voice_ids(self, sample_script, sample_cast):
-        config, _ = producer.load_production(sample_script, sample_cast)
+        config, _, _tag = producer.load_production(sample_script, sample_cast)
         assert config["adam"]["id"] == "voice_adam_123"
         assert config["dez"]["id"] == "voice_dez_456"
         assert config["frank"]["id"] == "TBD"
 
     def test_config_has_pan_and_filter(self, sample_script, sample_cast):
-        config, _ = producer.load_production(sample_script, sample_cast)
+        config, _, _tag = producer.load_production(sample_script, sample_cast)
         assert config["adam"]["pan"] == 0.0
         assert config["adam"]["filter"] is False
         assert config["frank"]["filter"] is True
 
     def test_only_dialogue_entries_returned(self, sample_script, sample_cast):
-        _, entries = producer.load_production(sample_script, sample_cast)
+        _, entries, _tag = producer.load_production(sample_script, sample_cast)
         assert len(entries) == 4  # Only dialogue, not headers/directions
 
     def test_entry_has_stem_name(self, sample_script, sample_cast):
-        _, entries = producer.load_production(sample_script, sample_cast)
+        _, entries, _tag = producer.load_production(sample_script, sample_cast)
         assert entries[0]["stem_name"] == "003_cold-open_adam"
         assert entries[2]["stem_name"] == "006_act1-scene-1_dez"
 
     def test_entry_preserves_speaker_and_text(self, sample_script, sample_cast):
-        _, entries = producer.load_production(sample_script, sample_cast)
+        _, entries, _tag = producer.load_production(sample_script, sample_cast)
         assert entries[0]["speaker"] == "adam"
         assert entries[0]["text"] == "Hello listeners."
 
     def test_entry_preserves_direction(self, sample_script, sample_cast):
-        _, entries = producer.load_production(sample_script, sample_cast)
+        _, entries, _tag = producer.load_production(sample_script, sample_cast)
         assert entries[0]["direction"] == "on-air voice"
         assert entries[1]["direction"] is None
 
     def test_entry_seq_preserved(self, sample_script, sample_cast):
-        _, entries = producer.load_production(sample_script, sample_cast)
+        _, entries, _tag = producer.load_production(sample_script, sample_cast)
         seqs = [e["seq"] for e in entries]
         assert seqs == [3, 4, 6, 7]
 
@@ -116,7 +117,7 @@ class TestLoadProduction:
 
 class TestDryRun:
     def test_prints_all_lines(self, sample_script, sample_cast, capsys):
-        config, entries = producer.load_production(sample_script, sample_cast)
+        config, entries, _tag = producer.load_production(sample_script, sample_cast)
         producer.dry_run(config, entries)
         output = capsys.readouterr().out
         assert "4 dialogue lines" in output
@@ -124,14 +125,14 @@ class TestDryRun:
         assert "Something happened." in output
 
     def test_shows_tbd_warning(self, sample_script, sample_cast, capsys):
-        config, entries = producer.load_production(sample_script, sample_cast)
+        config, entries, _tag = producer.load_production(sample_script, sample_cast)
         producer.dry_run(config, entries)
         output = capsys.readouterr().out
         assert "TBD" in output
         assert "frank" in output
 
     def test_start_from_filters_count(self, sample_script, sample_cast, capsys):
-        config, entries = producer.load_production(sample_script, sample_cast)
+        config, entries, _tag = producer.load_production(sample_script, sample_cast)
         producer.dry_run(config, entries, start_from=6)
         output = capsys.readouterr().out
         assert "FROM 6:" in output
@@ -139,14 +140,14 @@ class TestDryRun:
         assert "2 lines" in output
 
     def test_shows_stem_names(self, sample_script, sample_cast, capsys):
-        config, entries = producer.load_production(sample_script, sample_cast)
+        config, entries, _tag = producer.load_production(sample_script, sample_cast)
         producer.dry_run(config, entries)
         output = capsys.readouterr().out
         assert "003_cold-open_adam.mp3" in output
         assert "006_act1-scene-1_dez.mp3" in output
 
     def test_shows_char_counts(self, sample_script, sample_cast, capsys):
-        config, entries = producer.load_production(sample_script, sample_cast)
+        config, entries, _tag = producer.load_production(sample_script, sample_cast)
         producer.dry_run(config, entries)
         output = capsys.readouterr().out
         # "Hello listeners." = 16 chars
@@ -156,7 +157,7 @@ class TestDryRun:
 # ─── Integration: load from actual project files ───
 
 ACTUAL_SCRIPT = os.path.join(os.path.dirname(__file__), "..", "parsed", "parsed_the413_ep01.json")
-ACTUAL_CAST = os.path.join(os.path.dirname(__file__), "..", "cast_the413.json")
+ACTUAL_CAST = os.path.join(os.path.dirname(__file__), "..", "cast_the413_S01E01.json")
 
 
 @pytest.mark.skipif(
@@ -165,18 +166,18 @@ ACTUAL_CAST = os.path.join(os.path.dirname(__file__), "..", "cast_the413.json")
 )
 class TestLoadActualProduction:
     def test_loads_without_error(self):
-        config, entries = producer.load_production(ACTUAL_SCRIPT, ACTUAL_CAST)
+        config, entries, _tag = producer.load_production(ACTUAL_SCRIPT, ACTUAL_CAST)
         assert len(entries) > 100
         assert "adam" in config
 
     def test_all_speakers_in_config(self):
-        config, entries = producer.load_production(ACTUAL_SCRIPT, ACTUAL_CAST)
+        config, entries, _tag = producer.load_production(ACTUAL_SCRIPT, ACTUAL_CAST)
         speakers_in_script = set(e["speaker"] for e in entries)
         for speaker in speakers_in_script:
             assert speaker in config, f"Speaker '{speaker}' missing from cast config"
 
     def test_stem_names_are_unique(self):
-        _, entries = producer.load_production(ACTUAL_SCRIPT, ACTUAL_CAST)
+        _, entries, _tag = producer.load_production(ACTUAL_SCRIPT, ACTUAL_CAST)
         stem_names = [e["stem_name"] for e in entries]
         assert len(stem_names) == len(set(stem_names)), "Duplicate stem names found"
 
@@ -300,12 +301,8 @@ class TestGenerateVoices:
 
     def test_skips_tbd_voice(self, config, entries, tmp_path, capsys):
         self._setup_api()
-        original_dir = producer.STEMS_DIR
-        producer.STEMS_DIR = str(tmp_path)
-        try:
-            producer.generate_voices(config, entries)
-        finally:
-            producer.STEMS_DIR = original_dir
+        stems_dir = str(tmp_path)
+        producer.generate_voices(config, entries, stems_dir)
 
         out = capsys.readouterr().out
         assert "No voice_id for dez" in out
@@ -316,12 +313,8 @@ class TestGenerateVoices:
         self._setup_api()
         # Pre-create the adam stem
         (tmp_path / "003_cold-open_adam.mp3").write_bytes(b"existing")
-        original_dir = producer.STEMS_DIR
-        producer.STEMS_DIR = str(tmp_path)
-        try:
-            producer.generate_voices(config, entries)
-        finally:
-            producer.STEMS_DIR = original_dir
+        stems_dir = str(tmp_path)
+        producer.generate_voices(config, entries, stems_dir)
 
         out = capsys.readouterr().out
         assert "skipping" in out
@@ -334,24 +327,16 @@ class TestGenerateVoices:
         user_info.subscription = sub
         producer.client.user.get.return_value = user_info
 
-        original_dir = producer.STEMS_DIR
-        producer.STEMS_DIR = str(tmp_path)
-        try:
-            producer.generate_voices(config, entries)
-        finally:
-            producer.STEMS_DIR = original_dir
+        stems_dir = str(tmp_path)
+        producer.generate_voices(config, entries, stems_dir)
 
         out = capsys.readouterr().out
         assert "halted" in out
 
     def test_start_from_skips_earlier_entries(self, config, entries, tmp_path, capsys):
         self._setup_api()
-        original_dir = producer.STEMS_DIR
-        producer.STEMS_DIR = str(tmp_path)
-        try:
-            producer.generate_voices(config, entries, start_from=6)
-        finally:
-            producer.STEMS_DIR = original_dir
+        stems_dir = str(tmp_path)
+        producer.generate_voices(config, entries, stems_dir, start_from=6)
 
         out = capsys.readouterr().out
         # adam (seq=3) should not appear in generation output
@@ -370,12 +355,12 @@ class TestLoadProductionModelContract:
     """Verify load_production output is valid against Pydantic models."""
 
     def test_config_values_are_valid_voice_configs(self, sample_script, sample_cast):
-        config, _ = producer.load_production(sample_script, sample_cast)
+        config, _, _tag = producer.load_production(sample_script, sample_cast)
         for key, val in config.items():
             models.VoiceConfig(**val)
 
     def test_entries_are_valid_dialogue_entries(self, sample_script, sample_cast):
-        _, entries = producer.load_production(sample_script, sample_cast)
+        _, entries, _tag = producer.load_production(sample_script, sample_cast)
         for entry in entries:
             models.DialogueEntry(**entry)
 
@@ -407,7 +392,7 @@ class TestTruncateToWords:
 
 class TestTerseMode:
     def test_dry_run_shows_truncated_text(self, sample_script, sample_cast, capsys):
-        config, entries = producer.load_production(sample_script, sample_cast)
+        config, entries, _tag = producer.load_production(sample_script, sample_cast)
         terse_entries = [
             {**e, "text": producer.truncate_to_words(e["text"])} for e in entries
         ]
@@ -419,7 +404,7 @@ class TestTerseMode:
         assert "Welcome to the show." not in output
 
     def test_dry_run_char_count_reduced(self, sample_script, sample_cast, capsys):
-        config, entries = producer.load_production(sample_script, sample_cast)
+        config, entries, _tag = producer.load_production(sample_script, sample_cast)
         # Full run char count
         producer.dry_run(config, entries)
         full_out = capsys.readouterr().out
@@ -438,18 +423,14 @@ class TestTerseMode:
     def test_generate_voices_sends_truncated_text(self, sample_script, sample_cast, tmp_path):
         """--terse entries reach the ElevenLabs API call with truncated text."""
         self._setup_api()
-        config, entries = producer.load_production(sample_script, sample_cast)
+        config, entries, _tag = producer.load_production(sample_script, sample_cast)
         terse_entries = [
             {**e, "text": producer.truncate_to_words(e["text"])}
             for e in entries
             if e["speaker"] != "frank"  # skip TBD voice
         ]
-        original_dir = producer.STEMS_DIR
-        producer.STEMS_DIR = str(tmp_path)
-        try:
-            producer.generate_voices(config, terse_entries)
-        finally:
-            producer.STEMS_DIR = original_dir
+        stems_dir = str(tmp_path)
+        producer.generate_voices(config, terse_entries, stems_dir)
 
         calls = producer.client.text_to_speech.convert.call_args_list
         for call in calls:
@@ -466,3 +447,248 @@ class TestTerseMode:
         user_info.subscription = sub
         producer.client.user.get.return_value = user_info
         producer.client.text_to_speech.convert.return_value = iter([b"fake_audio"])
+
+
+# ─── Tests: SFX entry loading ───
+
+@pytest.fixture
+def sample_sfx_config(tmp_path):
+    sfx = {
+        "show": "TEST SHOW",
+        "season": 1,
+        "episode": 1,
+        "defaults": {"prompt_influence": 0.3},
+        "effects": {
+            "AMBIENCE: RADIO STATION": {
+                "prompt": "Late night radio station ambience",
+                "duration_seconds": 30.0,
+                "loop": True,
+            },
+            "SFX: PHONE BUZZING": {
+                "prompt": "Phone vibrating buzz",
+                "duration_seconds": 2.0,
+                "prompt_influence": 0.5,
+            },
+            "BEAT": {
+                "type": "silence",
+                "duration_seconds": 1.0,
+            },
+        },
+    }
+    sfx_file = tmp_path / "sfx.json"
+    sfx_file.write_text(json.dumps(sfx), encoding="utf-8")
+    return str(sfx_file)
+
+
+@pytest.fixture
+def sample_script_with_sfx(tmp_path):
+    script = {
+        "show": "TEST SHOW",
+        "episode": 1,
+        "title": "Test Episode",
+        "entries": [
+            {"seq": 1, "type": "section_header", "section": "cold-open", "scene": None,
+             "speaker": None, "direction": None, "text": "COLD OPEN", "direction_type": None},
+            {"seq": 2, "type": "direction", "section": "cold-open", "scene": None,
+             "speaker": None, "direction": None, "text": "AMBIENCE: RADIO STATION", "direction_type": "AMBIENCE"},
+            {"seq": 3, "type": "dialogue", "section": "cold-open", "scene": None,
+             "speaker": "adam", "direction": "on-air voice", "text": "Hello listeners.", "direction_type": None},
+            {"seq": 4, "type": "direction", "section": "cold-open", "scene": None,
+             "speaker": None, "direction": None, "text": "BEAT", "direction_type": "BEAT"},
+            {"seq": 5, "type": "direction", "section": "cold-open", "scene": None,
+             "speaker": None, "direction": None, "text": "SFX: PHONE BUZZING", "direction_type": "SFX"},
+            {"seq": 6, "type": "dialogue", "section": "cold-open", "scene": None,
+             "speaker": "adam", "direction": None, "text": "Welcome to the show.", "direction_type": None},
+        ],
+        "stats": {"dialogue_lines": 2},
+    }
+    script_file = tmp_path / "script.json"
+    script_file.write_text(json.dumps(script), encoding="utf-8")
+    return str(script_file)
+
+
+class TestLoadSfxEntries:
+    def test_returns_list_of_sfx_entries(self, sample_script_with_sfx, sample_sfx_config):
+        sfx_entries = producer.load_sfx_entries(sample_script_with_sfx, sample_sfx_config)
+        assert isinstance(sfx_entries, list)
+        assert len(sfx_entries) == 3  # AMBIENCE + BEAT + SFX
+
+    def test_only_direction_entries_with_config_match(self, sample_script_with_sfx, sample_sfx_config):
+        sfx_entries = producer.load_sfx_entries(sample_script_with_sfx, sample_sfx_config)
+        texts = [e["text"] for e in sfx_entries]
+        assert "AMBIENCE: RADIO STATION" in texts
+        assert "BEAT" in texts
+        assert "SFX: PHONE BUZZING" in texts
+
+    def test_skips_direction_without_config_match(self, tmp_path):
+        script = {
+            "show": "TEST", "episode": 1, "title": "T",
+            "entries": [
+                {"seq": 1, "type": "direction", "section": "cold-open", "scene": None,
+                 "speaker": None, "direction": None, "text": "SFX: UNKNOWN SOUND", "direction_type": "SFX"},
+            ],
+            "stats": {},
+        }
+        sfx = {
+            "show": "TEST", "episode": 1,
+            "effects": {"BEAT": {"type": "silence", "duration_seconds": 1.0}},
+        }
+        script_file = tmp_path / "script.json"
+        script_file.write_text(json.dumps(script), encoding="utf-8")
+        sfx_file = tmp_path / "sfx.json"
+        sfx_file.write_text(json.dumps(sfx), encoding="utf-8")
+        sfx_entries = producer.load_sfx_entries(str(script_file), str(sfx_file))
+        assert len(sfx_entries) == 0
+
+    def test_entry_has_stem_name(self, sample_script_with_sfx, sample_sfx_config):
+        sfx_entries = producer.load_sfx_entries(sample_script_with_sfx, sample_sfx_config)
+        # seq 2, section cold-open, no scene → "002_cold-open_sfx"
+        ambience = [e for e in sfx_entries if e["text"] == "AMBIENCE: RADIO STATION"][0]
+        assert ambience["stem_name"] == "002_cold-open_sfx"
+
+    def test_entry_has_sfx_type(self, sample_script_with_sfx, sample_sfx_config):
+        sfx_entries = producer.load_sfx_entries(sample_script_with_sfx, sample_sfx_config)
+        beat = [e for e in sfx_entries if e["text"] == "BEAT"][0]
+        assert beat["sfx_type"] == "silence"
+        ambience = [e for e in sfx_entries if e["text"] == "AMBIENCE: RADIO STATION"][0]
+        assert ambience["sfx_type"] == "sfx"
+
+    def test_entry_seq_preserved(self, sample_script_with_sfx, sample_sfx_config):
+        sfx_entries = producer.load_sfx_entries(sample_script_with_sfx, sample_sfx_config)
+        seqs = [e["seq"] for e in sfx_entries]
+        assert seqs == [2, 4, 5]
+
+
+# ─── Tests: generate_sfx_stems ───
+
+class TestGenerateSfxStems:
+    """Tests that producer.generate_sfx_stems delegates to sfx_common.generate_sfx."""
+
+    def _make_sfx_entries(self):
+        return [
+            {"seq": 2, "text": "AMBIENCE: RADIO STATION", "stem_name": "002_cold-open_sfx",
+             "sfx_type": "sfx", "section": "cold-open", "scene": None},
+            {"seq": 4, "text": "BEAT", "stem_name": "004_cold-open_sfx",
+             "sfx_type": "silence", "section": "cold-open", "scene": None},
+            {"seq": 5, "text": "SFX: PHONE BUZZING", "stem_name": "005_cold-open_sfx",
+             "sfx_type": "sfx", "section": "cold-open", "scene": None},
+        ]
+
+    def _make_sfx_config_dict(self):
+        return {
+            "show": "TEST", "season": 1, "episode": 1,
+            "defaults": {"prompt_influence": 0.3},
+            "effects": {
+                "AMBIENCE: RADIO STATION": {
+                    "prompt": "Late night radio station ambience",
+                    "duration_seconds": 30.0, "loop": True,
+                },
+                "BEAT": {"type": "silence", "duration_seconds": 1.0},
+                "SFX: PHONE BUZZING": {
+                    "prompt": "Phone vibrating buzz",
+                    "duration_seconds": 2.0, "prompt_influence": 0.5,
+                },
+            },
+        }
+
+    def test_silence_stem_created_without_api(self, tmp_path):
+        entries = [self._make_sfx_entries()[1]]  # BEAT only
+        config = self._make_sfx_config_dict()
+        stems_dir = str(tmp_path / "stems")
+        sfx_dir = str(tmp_path / "SFX")
+        producer.generate_sfx_stems(entries, config, stems_dir,
+                                    client=None, sfx_dir=sfx_dir)
+        assert (tmp_path / "stems" / "004_cold-open_sfx.mp3").exists()
+        # Shared asset also created
+        assert (tmp_path / "SFX" / "beat.mp3").exists()
+
+    def test_sfx_stem_calls_api(self, tmp_path):
+        entries = [self._make_sfx_entries()[2]]  # SFX: PHONE BUZZING
+        config = self._make_sfx_config_dict()
+        mock_client = unittest.mock.MagicMock()
+        mock_client.text_to_sound_effects.convert.return_value = iter([b"\xff\xfb" * 50])
+        stems_dir = str(tmp_path / "stems")
+        sfx_dir = str(tmp_path / "SFX")
+        producer.generate_sfx_stems(entries, config, stems_dir,
+                                    client=mock_client, sfx_dir=sfx_dir)
+        mock_client.text_to_sound_effects.convert.assert_called_once()
+        assert (tmp_path / "stems" / "005_cold-open_sfx.mp3").exists()
+
+    def test_skips_existing_sfx_stem(self, tmp_path, capsys):
+        entries = [self._make_sfx_entries()[1]]  # BEAT
+        config = self._make_sfx_config_dict()
+        stems_dir = str(tmp_path / "stems")
+        sfx_dir = str(tmp_path / "SFX")
+        os.makedirs(stems_dir, exist_ok=True)
+        (tmp_path / "stems" / "004_cold-open_sfx.mp3").write_bytes(b"existing")
+        producer.generate_sfx_stems(entries, config, stems_dir,
+                                    client=None, sfx_dir=sfx_dir)
+        out = capsys.readouterr().out
+        assert "skipping" in out.lower() or "Exists" in out
+
+    def test_start_from_filters_entries(self, tmp_path):
+        entries = self._make_sfx_entries()
+        config = self._make_sfx_config_dict()
+        mock_client = unittest.mock.MagicMock()
+        mock_client.text_to_sound_effects.convert.return_value = iter([b"\xff\xfb" * 50])
+        stems_dir = str(tmp_path / "stems")
+        sfx_dir = str(tmp_path / "SFX")
+        producer.generate_sfx_stems(entries, config, stems_dir,
+                                    client=mock_client, start_from=5,
+                                    sfx_dir=sfx_dir)
+        # Only seq 5 should be processed (seq 2 and 4 skipped)
+        assert not (tmp_path / "stems" / "002_cold-open_sfx.mp3").exists()
+        assert not (tmp_path / "stems" / "004_cold-open_sfx.mp3").exists()
+
+
+# ─── Tests: dry_run with SFX ───
+
+class TestDryRunWithSfx:
+    def test_dry_run_includes_sfx_entries(self, tmp_path, capsys):
+        config = {"adam": {"id": "voice_123", "pan": 0.0, "filter": False}}
+        dialogue = [
+            {"seq": 3, "speaker": "adam", "text": "Hello.", "stem_name": "003_cold-open_adam", "direction": None},
+        ]
+        sfx = [
+            {"seq": 2, "text": "AMBIENCE: RADIO STATION", "stem_name": "002_cold-open_sfx",
+             "sfx_type": "sfx", "section": "cold-open", "scene": None},
+            {"seq": 4, "text": "BEAT", "stem_name": "004_cold-open_sfx",
+             "sfx_type": "silence", "section": "cold-open", "scene": None},
+        ]
+        sfx_config = {
+            "show": "TEST", "episode": 1,
+            "defaults": {"prompt_influence": 0.3},
+            "effects": {
+                "AMBIENCE: RADIO STATION": {
+                    "prompt": "Radio ambience", "duration_seconds": 30.0,
+                },
+                "BEAT": {"type": "silence", "duration_seconds": 1.0},
+            },
+        }
+        producer.dry_run(config, dialogue, sfx_entries=sfx, sfx_config=sfx_config,
+                         stems_dir=str(tmp_path))
+        out = capsys.readouterr().out
+        assert "AMBIENCE: RADIO STATION" in out
+        assert "BEAT" in out
+        assert "silence" in out.lower()
+
+    def test_dry_run_shows_sfx_cost_estimate(self, tmp_path, capsys):
+        config = {}
+        dialogue = []
+        sfx = [
+            {"seq": 2, "text": "SFX: PHONE BUZZING", "stem_name": "002_cold-open_sfx",
+             "sfx_type": "sfx", "section": "cold-open", "scene": None},
+        ]
+        sfx_config = {
+            "show": "TEST", "episode": 1, "defaults": {},
+            "effects": {
+                "SFX: PHONE BUZZING": {
+                    "prompt": "Phone buzzing", "duration_seconds": 2.0,
+                },
+            },
+        }
+        producer.dry_run(config, dialogue, sfx_entries=sfx, sfx_config=sfx_config,
+                         stems_dir=str(tmp_path))
+        out = capsys.readouterr().out
+        # Should show duration or credit cost info
+        assert "2.0" in out or "credits" in out.lower()

@@ -31,6 +31,64 @@ class TestFoundation:
 
 
 # ---------------------------------------------------------------------------
+# episode_tag helper and model .tag property
+# ---------------------------------------------------------------------------
+
+
+class TestEpisodeTag:
+    """Tests for the episode_tag() function and model .tag properties."""
+
+    def test_with_season_and_episode(self):
+        assert models.episode_tag(1, 1) == "S01E01"
+
+    def test_with_higher_numbers(self):
+        assert models.episode_tag(2, 12) == "S02E12"
+
+    def test_without_season(self):
+        assert models.episode_tag(None, 3) == "E03"
+
+    def test_zero_padded(self):
+        assert models.episode_tag(1, 1) == "S01E01"
+        assert models.episode_tag(None, 1) == "E01"
+
+
+class TestParsedScriptTag:
+    """Tests for ParsedScript.tag property."""
+
+    def _make(self, season=1, episode=1):
+        return models.ParsedScript(
+            show="THE 413", season=season, episode=episode,
+            title="Test", source_file="test.md",
+            entries=[], stats=models.ScriptStats(
+                total_entries=0, dialogue_lines=0, direction_lines=0,
+                characters_for_tts=0, speakers=[], sections=[],
+            ),
+        )
+
+    def test_tag_with_season(self):
+        assert self._make(season=1, episode=1).tag == "S01E01"
+
+    def test_tag_without_season(self):
+        assert self._make(season=None, episode=2).tag == "E02"
+
+
+class TestCastConfigurationTag:
+    """Tests for CastConfiguration.tag property."""
+
+    def test_tag_with_season(self):
+        cc = models.CastConfiguration(
+            show="THE 413", season=1, episode=1, title="Test", cast={},
+        )
+        assert cc.tag == "S01E01"
+
+    def test_tag_without_season(self):
+        cc = models.CastConfiguration(
+            show="THE 413", season=None, episode=5, title="Test", cast={},
+        )
+        assert cc.tag == "E05"
+
+
+# ---------------------------------------------------------------------------
 # Phase 1 — Script Models
 # ---------------------------------------------------------------------------
 
@@ -384,3 +442,179 @@ class TestDialogueEntry:
             "direction": "excited",
         }
         assert models.DialogueEntry(**raw).model_dump() == raw
+
+
+# ---------------------------------------------------------------------------
+# Phase 3 — SFX Configuration Models
+# ---------------------------------------------------------------------------
+
+
+class TestSfxEntry:
+    """Tests for the SfxEntry model (sound effect mapping)."""
+
+    def _make(self, **overrides):
+        defaults = {
+            "prompt": "Phone vibrating buzz notification sound on a table",
+            "duration_seconds": 2.0,
+        }
+        defaults.update(overrides)
+        return models.SfxEntry(**defaults)
+
+    def test_valid_sfx_entry(self):
+        entry = self._make()
+        assert entry.type == "sfx"
+        assert entry.prompt == "Phone vibrating buzz notification sound on a table"
+        assert entry.duration_seconds == 2.0
+
+    def test_default_type_is_sfx(self):
+        entry = self._make()
+        assert entry.type == "sfx"
+
+    def test_silence_type(self):
+        entry = models.SfxEntry(type="silence", duration_seconds=1.0)
+        assert entry.type == "silence"
+        assert entry.prompt is None
+
+    def test_invalid_type_rejected(self):
+        with pytest.raises(ValidationError):
+            self._make(type="unknown")
+
+    def test_duration_range_min(self):
+        self._make(duration_seconds=0.5)  # boundary OK
+        with pytest.raises(ValidationError):
+            self._make(duration_seconds=0.1)
+
+    def test_duration_range_max(self):
+        self._make(duration_seconds=30.0)  # boundary OK
+        with pytest.raises(ValidationError):
+            self._make(duration_seconds=31.0)
+
+    def test_prompt_influence_range(self):
+        self._make(prompt_influence=0.0)  # boundary OK
+        self._make(prompt_influence=1.0)  # boundary OK
+        with pytest.raises(ValidationError):
+            self._make(prompt_influence=-0.1)
+        with pytest.raises(ValidationError):
+            self._make(prompt_influence=1.5)
+
+    def test_prompt_influence_default_none(self):
+        entry = self._make()
+        assert entry.prompt_influence is None
+
+    def test_loop_default_false(self):
+        entry = self._make()
+        assert entry.loop is False
+
+    def test_loop_true_for_ambience(self):
+        entry = self._make(
+            prompt="Late night diner ambience, coffee percolating",
+            duration_seconds=30.0,
+            loop=True,
+        )
+        assert entry.loop is True
+
+    def test_model_dump_roundtrip_sfx(self):
+        raw = {
+            "prompt": "Door opening with bell chime",
+            "type": "sfx",
+            "duration_seconds": 4.0,
+            "prompt_influence": 0.5,
+            "loop": False,
+        }
+        assert models.SfxEntry(**raw).model_dump() == raw
+
+    def test_model_dump_roundtrip_silence(self):
+        raw = {
+            "prompt": None,
+            "type": "silence",
+            "duration_seconds": 1.0,
+            "prompt_influence": None,
+            "loop": False,
+        }
+        assert models.SfxEntry(**raw).model_dump() == raw
+
+
+class TestSfxConfiguration:
+    """Tests for the SfxConfiguration model."""
+
+    def _make_effects(self):
+        return {
+            "SFX: PHONE BUZZING – TEXT MESSAGE": {
+                "prompt": "Phone vibrating buzz notification",
+                "duration_seconds": 2.0,
+                "prompt_influence": 0.5,
+            },
+            "BEAT": {
+                "type": "silence",
+                "duration_seconds": 1.0,
+            },
+        }
+
+    def test_valid_sfx_config(self):
+        sc = models.SfxConfiguration(
+            show="THE 413", episode=1, effects=self._make_effects(),
+        )
+        assert sc.show == "THE 413"
+        assert len(sc.effects) == 2
+
+    def test_accepts_raw_dicts_for_entries(self):
+        sc = models.SfxConfiguration(
+            show="THE 413", episode=1, effects=self._make_effects(),
+        )
+        assert isinstance(sc.effects["BEAT"], models.SfxEntry)
+        assert sc.effects["BEAT"].type == "silence"
+
+    def test_tag_with_season(self):
+        sc = models.SfxConfiguration(
+            show="THE 413", season=1, episode=1,
+            effects=self._make_effects(),
+        )
+        assert sc.tag == "S01E01"
+
+    def test_tag_without_season(self):
+        sc = models.SfxConfiguration(
+            show="THE 413", episode=3, effects=self._make_effects(),
+        )
+        assert sc.tag == "E03"
+
+    def test_season_optional(self):
+        sc = models.SfxConfiguration(
+            show="THE 413", episode=1, effects=self._make_effects(),
+        )
+        assert sc.season is None
+
+    def test_defaults_field(self):
+        sc = models.SfxConfiguration(
+            show="THE 413", episode=1,
+            defaults={"prompt_influence": 0.3, "output_format": "mp3_44100_128"},
+            effects=self._make_effects(),
+        )
+        assert sc.defaults["prompt_influence"] == 0.3
+
+    def test_defaults_empty_by_default(self):
+        sc = models.SfxConfiguration(
+            show="THE 413", episode=1, effects=self._make_effects(),
+        )
+        assert sc.defaults == {}
+
+    def test_effects_lookup_by_direction_text(self):
+        sc = models.SfxConfiguration(
+            show="THE 413", episode=1, effects=self._make_effects(),
+        )
+        sfx = sc.effects.get("SFX: PHONE BUZZING – TEXT MESSAGE")
+        assert sfx is not None
+        assert sfx.prompt == "Phone vibrating buzz notification"
+
+    def test_model_dump_roundtrip(self):
+        raw = {
+            "show": "THE 413", "season": 1, "episode": 1,
+            "defaults": {"prompt_influence": 0.3},
+            "effects": {
+                "BEAT": {
+                    "prompt": None, "type": "silence",
+                    "duration_seconds": 1.0,
+                    "prompt_influence": None, "loop": False,
+                },
+            },
+        }
+        assert models.SfxConfiguration(**raw).model_dump() == raw

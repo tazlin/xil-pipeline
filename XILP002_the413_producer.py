@@ -12,7 +12,12 @@ import json
 import argparse
 from elevenlabs.client import ElevenLabs
 
-from models import VoiceConfig, DialogueEntry, CastConfiguration
+from models import VoiceConfig, DialogueEntry, CastConfiguration, episode_tag
+from sfx_common import (
+    load_sfx_entries,
+    generate_sfx as generate_sfx_stems,
+    dry_run_sfx,
+)
 
 # Setup ElevenLabs Client
 client = ElevenLabs(api_key=os.environ.get("ELEVENLABS_API_KEY"))
@@ -120,7 +125,7 @@ def truncate_to_words(text: str, n: int = 3) -> str:
 
 def load_production(
     script_json_path: str, cast_json_path: str
-) -> tuple[dict[str, dict], list[dict]]:
+) -> tuple[dict[str, dict], list[dict], str]:
     """Load parsed script JSON and cast config for production.
 
     Reads the cast configuration and parsed script, then builds a
@@ -132,9 +137,10 @@ def load_production(
         cast_json_path: Path to the cast configuration JSON.
 
     Returns:
-        A tuple of ``(config, dialogue_entries)`` where ``config`` maps
-        speaker keys to ``VoiceConfig`` dicts and ``dialogue_entries``
-        is a list of ``DialogueEntry`` dicts.
+        A tuple of ``(config, dialogue_entries, tag)`` where ``config`` maps
+        speaker keys to ``VoiceConfig`` dicts, ``dialogue_entries``
+        is a list of ``DialogueEntry`` dicts, and ``tag`` is the
+        episode tag (e.g. ``"S01E01"``).
 
     Raises:
         FileNotFoundError: If either JSON file does not exist.
@@ -147,6 +153,7 @@ def load_production(
 
     # Build config: speaker_key -> {id, pan, filter}
     cast_cfg = CastConfiguration(**cast_data)
+    tag = cast_cfg.tag
     config = {}
     for key, member in cast_cfg.cast.items():
         vc = VoiceConfig(id=member.voice_id, pan=member.pan, filter=member.filter)
@@ -172,11 +179,13 @@ def load_production(
         )
         dialogue_entries.append(de.model_dump())
 
-    return config, dialogue_entries
+    return config, dialogue_entries, tag
 
 
 def dry_run(
-    config: dict[str, dict], dialogue_entries: list[dict], start_from: int = 1
+    config: dict[str, dict], dialogue_entries: list[dict], start_from: int = 1,
+    sfx_entries: list[dict] | None = None, sfx_config: dict | None = None,
+    stems_dir: str = "",
 ) -> None:
     """Preview all dialogue lines and TTS cost without making API calls.
 
@@ -185,6 +194,9 @@ def dry_run(
         dialogue_entries: Dialogue entry dicts from ``load_production()``.
         start_from: Sequence number to start from (lines before this
             are shown but marked as skipped).
+        sfx_entries: Optional SFX entry dicts from ``load_sfx_entries()``.
+        sfx_config: Optional raw SFX config dict.
+        stems_dir: Episode stems directory (for SFX shared-library status).
     """
     print(f"\n{'='*70}")
     print(f"DRY RUN — {len(dialogue_entries)} dialogue lines")
@@ -211,6 +223,10 @@ def dry_run(
         print(f"          stem: {entry['stem_name']}.mp3")
         print()
 
+    # SFX entries — delegate to sfx_common.dry_run_sfx
+    if sfx_entries and sfx_config:
+        dry_run_sfx(sfx_entries, sfx_config, stems_dir)
+
     # Summary
     chars_from_start = sum(len(e["text"]) for e in dialogue_entries if e["seq"] >= start_from)
     tbd_voices = [sp for sp, cfg in config.items() if cfg["id"] == "TBD"]
@@ -226,7 +242,8 @@ def dry_run(
 
 
 def generate_voices(
-    config: dict[str, dict], dialogue_entries: list[dict], start_from: int = 1
+    config: dict[str, dict], dialogue_entries: list[dict],
+    stems_dir: str, start_from: int = 1,
 ) -> None:
     """Generate individual voice stem MP3s via the ElevenLabs TTS API.
 
@@ -237,9 +254,10 @@ def generate_voices(
     Args:
         config: Speaker-to-voice mapping from ``load_production()``.
         dialogue_entries: Dialogue entry dicts from ``load_production()``.
+        stems_dir: Directory to write stem MP3 files into.
         start_from: Sequence number to resume generation from.
     """
-    os.makedirs(STEMS_DIR, exist_ok=True)
+    os.makedirs(stems_dir, exist_ok=True)
 
     # Filter to entries from start_from onward
     entries_to_process = [e for e in dialogue_entries if e["seq"] >= start_from]
@@ -254,7 +272,7 @@ def generate_voices(
         stem_name = entry["stem_name"]
 
         # Skip if stem already exists
-        stem_file = os.path.join(STEMS_DIR, f"{stem_name}.mp3")
+        stem_file = os.path.join(stems_dir, f"{stem_name}.mp3")
         if os.path.exists(stem_file):
             print(f"   Exists: {stem_file} — skipping")
             continue
@@ -284,8 +302,8 @@ def generate_voices(
         print(f"   Saved: {stem_file}")
         generated_count += 1
 
-    stem_count = len([f for f in os.listdir(STEMS_DIR) if f.endswith(".mp3")])
-    print(f"--- Phase 1 Complete: {generated_count} new, {stem_count} total stems in {STEMS_DIR}/ ---")
+    stem_count = len([f for f in os.listdir(stems_dir) if f.endswith(".mp3")])
+    print(f"--- Phase 1 Complete: {generated_count} new, {stem_count} total stems in {stems_dir}/ ---")
 
 
 def main() -> None:
@@ -299,30 +317,57 @@ def main() -> None:
     parser = argparse.ArgumentParser(
         description="THE 413 Voice Generation — generate voice stems via ElevenLabs"
     )
-    parser.add_argument("--script", default="parsed/parsed_the413_ep01.json",
-                        help="Path to parsed script JSON (default: parsed/parsed_the413_ep01.json)")
-    parser.add_argument("--cast", default="cast_the413.json",
-                        help="Path to cast config JSON (default: cast_the413.json)")
+    parser.add_argument("--episode", required=True,
+                        help="Episode tag (e.g. S01E01) — derives cast and SFX config paths")
+    parser.add_argument("--script", default=None,
+                        help="Path to parsed script JSON (default: derived from cast config)")
     parser.add_argument("--dry-run", action="store_true",
                         help="Preview all lines and TTS cost without API calls")
     parser.add_argument("--start-from", type=int, default=1,
                         help="Start generation from sequence number N (for resuming)")
     parser.add_argument("--terse", action="store_true",
                         help="Truncate each line to 3 words to minimize TTS character cost")
+    parser.add_argument("--sfx", action="store_true",
+                        help="Enable sound effect stem generation")
     args = parser.parse_args()
 
-    config, dialogue_entries = load_production(args.script, args.cast)
+    # Derive config paths from --episode
+    cast_path = f"cast_the413_{args.episode}.json"
+    sfx_path = f"sfx_the413_{args.episode}.json"
+
+    # Derive default --script path from cast config metadata
+    if args.script is None:
+        with open(cast_path, "r", encoding="utf-8") as f:
+            cast_data = json.load(f)
+        cast_cfg = CastConfiguration(**cast_data)
+        args.script = f"parsed/parsed_the413_{cast_cfg.tag}.json"
+
+    config, dialogue_entries, tag = load_production(args.script, cast_path)
+    stems_dir = os.path.join(STEMS_DIR, tag)
 
     if args.terse:
         dialogue_entries = [
             {**e, "text": truncate_to_words(e["text"])} for e in dialogue_entries
         ]
 
+    # Load SFX config if --sfx flag is set
+    sfx_entries = None
+    sfx_config_data = None
+    if args.sfx:
+        sfx_entries = load_sfx_entries(args.script, sfx_path)
+        with open(sfx_path, "r", encoding="utf-8") as f:
+            sfx_config_data = json.load(f)
+
     if args.dry_run:
-        dry_run(config, dialogue_entries, start_from=args.start_from)
+        dry_run(config, dialogue_entries, start_from=args.start_from,
+                sfx_entries=sfx_entries, sfx_config=sfx_config_data,
+                stems_dir=stems_dir)
     else:
         check_elevenlabs_quota()
-        generate_voices(config, dialogue_entries, start_from=args.start_from)
+        generate_voices(config, dialogue_entries, stems_dir, start_from=args.start_from)
+        if sfx_entries and sfx_config_data:
+            generate_sfx_stems(sfx_entries, sfx_config_data, stems_dir,
+                               client=client, start_from=args.start_from)
 
 
 if __name__ == "__main__":

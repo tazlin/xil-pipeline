@@ -1,0 +1,371 @@
+"""Shared SFX library utilities.
+
+Provides common functions for managing a shared SFX asset library and
+generating episode-specific stems.  Both ``XILU002_generate_SFX.py`` and
+``XILP002_the413_producer.py`` delegate to this module to avoid code
+duplication and to ensure that each unique sound effect is generated only
+once into the shared ``SFX/`` directory.
+
+Module Attributes:
+    SFX_DIR: Default path for the shared SFX asset library.
+"""
+
+import datetime
+import json
+import os
+import re
+import shutil
+
+from mutagen.id3 import ID3, TALB, TCON, TDRC, TIT2
+from pydub import AudioSegment
+
+from models import SfxConfiguration, SfxEntry
+
+SFX_DIR = "SFX"
+
+
+def slugify_effect_key(text: str) -> str:
+    """Convert direction text to a filesystem-safe slug.
+
+    Rules:
+        1. Lowercase the entire string.
+        2. Replace ``': '`` (colon-space) with ``'_'`` (category separator).
+        3. Replace remaining non-alphanumeric characters with ``'-'``.
+        4. Collapse multiple consecutive hyphens.
+        5. Strip leading/trailing hyphens.
+
+    Examples:
+        >>> slugify_effect_key("BEAT")
+        'beat'
+        >>> slugify_effect_key("SFX: DOOR OPENS, BELL CHIMES")
+        'sfx_door-opens-bell-chimes'
+    """
+    if not text:
+        return ""
+    slug = text.lower()
+    slug = slug.replace(": ", "_")
+    slug = re.sub(r"[^a-z0-9_]+", "-", slug)
+    slug = re.sub(r"-{2,}", "-", slug)
+    slug = slug.strip("-")
+    return slug
+
+
+def shared_sfx_path(sfx_dir: str, effect_key: str) -> str:
+    """Return the shared library file path for an effect key.
+
+    Args:
+        sfx_dir: Base directory for shared SFX assets.
+        effect_key: Direction text key (e.g. ``'BEAT'``).
+
+    Returns:
+        Full path like ``SFX/beat.mp3``.
+    """
+    return os.path.join(sfx_dir, f"{slugify_effect_key(effect_key)}.mp3")
+
+
+def tag_mp3(
+    path: str,
+    show: str = "THE 413",
+    title: str | None = None,
+) -> None:
+    """Write ID3 metadata tags to an MP3 file.
+
+    Sets Album, Genre, and Year.  Optionally sets the Title tag.
+
+    Args:
+        path: Path to the MP3 file.
+        show: Album name (default ``"THE 413"``).
+        title: Optional title tag (e.g. the effect key).
+    """
+    try:
+        tags = ID3(path)
+    except Exception:
+        tags = ID3()
+
+    tags.add(TALB(encoding=3, text=show))
+    tags.add(TCON(encoding=3, text="Podcast"))
+    tags.add(TDRC(encoding=3, text=str(datetime.date.today().year)))
+    if title:
+        tags.add(TIT2(encoding=3, text=title))
+    tags.save(path)
+
+
+def ensure_shared_sfx(
+    effect_key: str,
+    effect: SfxEntry,
+    sfx_dir: str,
+    defaults: dict,
+    client=None,
+    show: str = "THE 413",
+) -> str:
+    """Ensure the shared SFX asset exists, generating if needed.
+
+    For ``type='silence'`` effects, generates silent audio locally via
+    pydub.  For ``type='sfx'`` effects, calls the ElevenLabs Sound
+    Effects API via the provided *client*.  In both cases, ID3 metadata
+    tags (Album, Genre, Year, Title) are written to the resulting MP3.
+
+    Args:
+        effect_key: Direction text key.
+        effect: The ``SfxEntry`` model instance.
+        sfx_dir: Shared SFX library directory.
+        defaults: Config-level defaults (e.g. ``prompt_influence``).
+        client: ElevenLabs client instance.  Required for ``type='sfx'``
+            effects; may be ``None`` for silence-only generation.
+        show: Show name for the Album ID3 tag.
+
+    Returns:
+        The path to the shared asset file.
+
+    Raises:
+        ValueError: If *client* is ``None`` and the effect requires API
+            generation.
+    """
+    path = shared_sfx_path(sfx_dir, effect_key)
+    if os.path.exists(path):
+        return path
+
+    os.makedirs(sfx_dir, exist_ok=True)
+
+    if effect.type == "silence":
+        duration_ms = int(effect.duration_seconds * 1000)
+        silence = AudioSegment.silent(duration=duration_ms)
+        silence.export(path, format="mp3")
+    else:
+        if client is None:
+            raise ValueError(
+                f"client is required to generate SFX for '{effect_key}'"
+            )
+        prompt_influence = effect.prompt_influence
+        if prompt_influence is None:
+            prompt_influence = defaults.get("prompt_influence", 0.3)
+
+        audio_stream = client.text_to_sound_effects.convert(
+            text=effect.prompt,
+            duration_seconds=effect.duration_seconds,
+            prompt_influence=prompt_influence,
+        )
+        with open(path, "wb") as f:
+            for chunk in audio_stream:
+                if chunk:
+                    f.write(chunk)
+
+    tag_mp3(path, show=show, title=effect_key)
+
+    return path
+
+
+def place_episode_stem(shared_path: str, stem_path: str) -> bool:
+    """Copy a shared SFX asset to an episode stem location.
+
+    Args:
+        shared_path: Path to the shared asset in ``SFX/``.
+        stem_path: Destination path in ``stems/<TAG>/``.
+
+    Returns:
+        ``True`` if the file was copied, ``False`` if the stem already
+        existed on disk.
+    """
+    if os.path.exists(stem_path):
+        return False
+    os.makedirs(os.path.dirname(stem_path), exist_ok=True)
+    shutil.copy2(shared_path, stem_path)
+    return True
+
+
+def load_sfx_entries(
+    script_json_path: str,
+    sfx_json_path: str,
+    max_duration: float | None = None,
+) -> list[dict]:
+    """Load direction entries matched against an SFX configuration.
+
+    Reads the parsed script and SFX config, returning only direction
+    entries whose ``text`` field has a matching key in the SFX effects
+    mapping.
+
+    Args:
+        script_json_path: Path to the parsed script JSON.
+        sfx_json_path: Path to the SFX configuration JSON.
+        max_duration: If set, exclude effects with ``duration_seconds``
+            exceeding this value.
+
+    Returns:
+        A list of SFX entry dicts with ``seq``, ``text``, ``stem_name``,
+        ``sfx_type``, ``section``, and ``scene``.
+    """
+    with open(script_json_path, "r", encoding="utf-8") as f:
+        script_data = json.load(f)
+    with open(sfx_json_path, "r", encoding="utf-8") as f:
+        sfx_data = json.load(f)
+
+    sfx_cfg = SfxConfiguration(**sfx_data)
+
+    sfx_entries: list[dict] = []
+    for entry in script_data["entries"]:
+        if entry["type"] != "direction":
+            continue
+        effect = sfx_cfg.effects.get(entry["text"])
+        if effect is None:
+            continue
+        if max_duration is not None and effect.duration_seconds > max_duration:
+            continue
+
+        stem_name = f"{entry['seq']:03d}_{entry['section']}"
+        if entry.get("scene"):
+            stem_name += f"-{entry['scene']}"
+        stem_name += "_sfx"
+
+        sfx_entries.append({
+            "seq": entry["seq"],
+            "text": entry["text"],
+            "stem_name": stem_name,
+            "sfx_type": effect.type,
+            "section": entry["section"],
+            "scene": entry.get("scene"),
+        })
+
+    return sfx_entries
+
+
+def generate_sfx(
+    sfx_entries: list[dict],
+    sfx_config: dict,
+    stems_dir: str,
+    sfx_dir: str = SFX_DIR,
+    client=None,
+    start_from: int = 1,
+) -> None:
+    """Generate SFX stems via a two-phase shared-library workflow.
+
+    **Phase 1** — For each unique effect key, ensure the shared asset
+    exists in *sfx_dir* (generate via API or silence if missing).
+
+    **Phase 2** — For each script entry, copy the shared asset to the
+    episode stems directory with the sequence-numbered filename.
+
+    Args:
+        sfx_entries: SFX entry dicts from :func:`load_sfx_entries`.
+        sfx_config: Raw SFX config dict.
+        stems_dir: Episode stems output directory.
+        sfx_dir: Shared SFX library directory.
+        client: ElevenLabs client (needed for API effects).
+        start_from: Only process entries with ``seq >= start_from``.
+    """
+    os.makedirs(stems_dir, exist_ok=True)
+    sfx_cfg = SfxConfiguration(**sfx_config)
+    defaults = sfx_cfg.defaults
+
+    entries_to_process = [e for e in sfx_entries if e["seq"] >= start_from]
+    print(f"--- SFX: Processing {len(entries_to_process)} entries ---")
+
+    # Phase 1: ensure shared assets for unique effect keys
+    unique_keys = dict.fromkeys(e["text"] for e in entries_to_process)
+    shared_paths: dict[str, str] = {}
+    for key in unique_keys:
+        effect = sfx_cfg.effects[key]
+        path = ensure_shared_sfx(key, effect, sfx_dir, defaults, client,
+                                show=sfx_cfg.show)
+        shared_paths[key] = path
+        print(f"   Shared: {path}")
+
+    # Phase 2: place episode stems
+    copied_count = 0
+    skipped_count = 0
+    for entry in entries_to_process:
+        stem_file = os.path.join(stems_dir, f"{entry['stem_name']}.mp3")
+        shared_path = shared_paths[entry["text"]]
+        if place_episode_stem(shared_path, stem_file):
+            print(f"   Placed: {stem_file}")
+            copied_count += 1
+        else:
+            print(f"   Exists: {stem_file} — skipping")
+            skipped_count += 1
+
+    print(
+        f"--- SFX Complete: {len(unique_keys)} shared assets, "
+        f"{copied_count} placed, {skipped_count} skipped ---"
+    )
+
+
+def dry_run_sfx(
+    sfx_entries: list[dict],
+    sfx_config: dict,
+    stems_dir: str,
+    sfx_dir: str = SFX_DIR,
+) -> None:
+    """Preview SFX generation showing status and credit estimates.
+
+    Each entry is classified as one of:
+    - **EXISTS** — episode stem already in ``stems/<TAG>/``
+    - **CACHED** — shared asset in ``SFX/``, will be copied (no API)
+    - **NEW** — needs API generation to ``SFX/``, then copy
+
+    Args:
+        sfx_entries: SFX entry dicts from :func:`load_sfx_entries`.
+        sfx_config: Raw SFX config dict.
+        stems_dir: Episode stems directory.
+        sfx_dir: Shared SFX library directory.
+    """
+    sfx_cfg = SfxConfiguration(**sfx_config)
+
+    print(f"\n{'='*70}")
+    print(f"SFX DRY RUN — {len(sfx_entries)} entries")
+    print(f"  stems dir: {stems_dir}")
+    print(f"  shared dir: {sfx_dir}")
+    print(f"{'='*70}\n")
+
+    new_duration = 0.0
+    new_count = 0
+    cached_count = 0
+    exists_count = 0
+
+    for entry in sfx_entries:
+        effect = sfx_cfg.effects.get(entry["text"])
+        if effect is None:
+            continue
+
+        stem_file = os.path.join(stems_dir, f"{entry['stem_name']}.mp3")
+        shared_file = shared_sfx_path(sfx_dir, entry["text"])
+
+        if os.path.exists(stem_file):
+            status = "EXISTS"
+            exists_count += 1
+        elif os.path.exists(shared_file):
+            status = "CACHED"
+            cached_count += 1
+        else:
+            status = "   NEW"
+            new_count += 1
+
+        if effect.type == "silence":
+            print(
+                f" [{status}] {entry['seq']:03d} | silence "
+                f"| {effect.duration_seconds:>5.1f}s | {entry['text']}"
+            )
+        else:
+            credits = int(effect.duration_seconds * 40)
+            if status == "   NEW":
+                new_duration += effect.duration_seconds
+            print(
+                f" [{status}] {entry['seq']:03d} | sfx     "
+                f"| {effect.duration_seconds:>5.1f}s | ~{credits:>5} credits "
+                f"| {entry['text']}"
+            )
+            print(f"            prompt: {effect.prompt}")
+
+        print(f"            stem: {entry['stem_name']}.mp3")
+        print(f"            shared: {os.path.basename(shared_file)}")
+        print()
+
+    total_credits = int(new_duration * 40)
+    print(f"{'='*70}")
+    print(
+        f"SUMMARY: {len(sfx_entries)} total — "
+        f"{new_count} new, {cached_count} cached, {exists_count} on disk"
+    )
+    print(
+        f"  New API audio: {new_duration:.1f}s, ~{total_credits} credits "
+        f"(silence & cached are free)"
+    )
+    print(f"{'='*70}\n")

@@ -10,19 +10,19 @@ Documentation of the three-script automated podcast production pipeline for **TH
 flowchart TD
     S["`📄 scripts/*.md
     Production script markdown`"]
-    C["`📋 cast_the413.json
+    C["`📋 cast_the413_S01E01.json
     Voice ID + pan + filter per character`"]
     P1["XILP001_script_parser.py"]
-    J["`📦 parsed/parsed_the413_ep01.json
+    J["`📦 parsed/parsed_the413_S01E01.json
     127 dialogue entries + stats`"]
     P2["XILP002_the413_producer.py"]
     P3["XILP003_the413_audio_assembly.py"]
     DRY["`--dry-run
     Preview lines + TTS cost
     No API calls`"]
-    ST["`🎙️ stems/*.mp3
+    ST["`🎙️ stems/S01E01/*.mp3
     001_cold-open_adam.mp3 …`"]
-    OUT["🎧 the413_ep01_master.mp3"]
+    OUT["🎧 the413_S01E01_master.mp3"]
 
     S --> P1 --> J
     C --> P2
@@ -91,7 +91,7 @@ flowchart TD
     ENTRIES --> STATS["`Compute stats
     total_entries · dialogue_lines
     characters_for_tts · speakers`"]
-    STATS --> JSON["📦 parsed_the413_ep01.json"]
+    STATS --> JSON["📦 parsed_the413_S01E01.json"]
 ```
 
 ### Speaker normalization
@@ -125,7 +125,7 @@ sequenceDiagram
     participant FS as stems directory
 
     User->>M: python XILP002_the413_producer.py
-    M->>LP: load cast_the413.json + parsed script
+    M->>LP: load cast_the413_S01E01.json + parsed script
     LP-->>M: config dict, dialogue_entries list
 
     M->>QG: check_elevenlabs_quota — display status
@@ -159,13 +159,13 @@ sequenceDiagram
 
 ```mermaid
 flowchart TD
-    C2["`📋 cast_the413.json
+    C2["`📋 cast_the413_S01E01.json
     pan + filter per character`"]
     C2 --> CFG_LOAD["`CastConfiguration model
     build config dict`"]
     CFG_LOAD --> ASSMBL
 
-    ST["`stems/*.mp3
+    ST["`stems/S01E01/*.mp3
     sorted alphabetically
     sequence prefix guarantees order`"]
     NONE{"No stems found?"}
@@ -200,12 +200,12 @@ flowchart TD
     ASSMBL --> LOOP2
     LOOP2 --> CONCAT["`full_vocals AudioSegment
     concatenated`"]
-    CONCAT --> EXPORT["export the413_ep01_master.mp3"]
+    CONCAT --> EXPORT["export the413_S01E01_master.mp3"]
     EXPORT --> PLAY["os.system mpg123 — WSL playback"]
 ```
 
-> **Restartability:** XILP003 has no ElevenLabs dependency and reads only `cast_the413.json` and
-> the `stems/` directory. Re-running assembly after adjusting effects or adding missing stems
+> **Restartability:** XILP003 has no ElevenLabs dependency and reads only `cast_the413_S01E01.json` and
+> the `stems/<TAG>/` directory. Re-running assembly after adjusting effects or adding missing stems
 > requires no API key and carries no TTS quota risk.
 
 ---

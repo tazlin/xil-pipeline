@@ -12,10 +12,11 @@ Module Attributes:
 
 import re
 import json
+import csv
 import argparse
 import os
 
-from models import ScriptEntry, ScriptStats, ParsedScript
+from models import ScriptEntry, ScriptStats, ParsedScript, episode_tag
 
 # Known speakers — ordered longest-first so "MR. PATTERSON" matches before "MR."
 KNOWN_SPEAKERS = [
@@ -206,6 +207,48 @@ def parse_scene_header(line: str) -> tuple[int | None, str | None]:
     return None, None
 
 
+_DEBUG_TRUNCATE = 200
+
+
+def write_debug_csv(
+    output_path: str,
+    debug_line_map: list[tuple[int, str, int]],
+    entries: list[dict],
+) -> None:
+    """Write a diagnostic CSV mapping markdown source lines to parsed entries.
+
+    Each row represents one parsed entry, showing the originating markdown
+    line alongside all fields from the parsed JSON output. Text fields are
+    truncated at 200 characters to prevent unpredictable CSV cell sizes.
+
+    Args:
+        output_path: Filesystem path for the output CSV file.
+        debug_line_map: List of ``(1-based line number, raw line text, entry index)``
+            tuples collected during parsing.
+        entries: The fully-parsed entries list (after all continuation merges).
+    """
+    with open(output_path, "w", newline="", encoding="utf-8") as f:
+        writer = csv.writer(f)
+        writer.writerow([
+            "md_line_num", "md_raw", "seq", "type", "section", "scene",
+            "speaker", "direction", "text", "direction_type",
+        ])
+        for line_num, raw_line, entry_idx in debug_line_map:
+            entry = entries[entry_idx]
+            writer.writerow([
+                line_num,
+                raw_line[:_DEBUG_TRUNCATE],
+                entry["seq"],
+                entry["type"],
+                entry.get("section") or "",
+                entry.get("scene") or "",
+                entry.get("speaker") or "",
+                entry.get("direction") or "",
+                (entry.get("text") or "")[:_DEBUG_TRUNCATE],
+                entry.get("direction_type") or "",
+            ])
+
+
 def parse_script_header(line: str) -> tuple[str, int | None, int, str]:
     """Extract show, season, episode, and title from the script header line.
 
@@ -248,7 +291,7 @@ def parse_script_header(line: str) -> tuple[str, int | None, int, str]:
     return show, season, episode, title
 
 
-def parse_script(filepath: str) -> dict:
+def parse_script(filepath: str, debug_output: str | None = None) -> dict:
     """Parse a markdown production script into structured entries.
 
     Reads a markdown file following THE 413 script format, extracts
@@ -257,9 +300,13 @@ def parse_script(filepath: str) -> dict:
 
     Args:
         filepath: Path to the markdown production script file.
+        debug_output: If provided, write a diagnostic CSV to this path
+            mapping each markdown source line to its parsed entry.
+            Text fields are truncated at 200 characters. Defaults to
+            ``None`` (no CSV written).
 
     Returns:
-        Dictionary with keys ``show``, ``episode``, ``title``,
+        Dictionary with keys ``show``, ``season``, ``episode``, ``title``,
         ``source_file``, ``entries`` (list of entry dicts), and
         ``stats`` (aggregate statistics dict). Validates against
         the ``ParsedScript`` model.
@@ -272,6 +319,8 @@ def parse_script(filepath: str) -> dict:
 
     raw = strip_markdown_escapes(raw)
     lines = raw.split("\n")
+    # debug_line_map: (1-based line number, raw line text, entry index)
+    debug_line_map: list[tuple[int, str, int]] = []
 
     entries = []
     seq = 0
@@ -338,6 +387,7 @@ def parse_script(filepath: str) -> dict:
                 "text": line.strip(),
                 "direction_type": None,
             })
+            debug_line_map.append((i + 1, lines[i], len(entries) - 1))
             last_dialogue_idx = None
             continue
 
@@ -346,6 +396,10 @@ def parse_script(filepath: str) -> dict:
             scene_num, scene_name = parse_scene_header(line)
             if scene_num is not None:
                 current_scene = f"scene-{scene_num}"
+
+            # Strip any bracketed directions from the scene header text
+            clean_text = re.sub(r"\s*\[[^\]]+\]", "", line.strip()).strip()
+
             seq += 1
             entries.append({
                 "seq": seq,
@@ -354,9 +408,27 @@ def parse_script(filepath: str) -> dict:
                 "scene": current_scene,
                 "speaker": None,
                 "direction": None,
-                "text": line.strip(),
+                "text": clean_text,
                 "direction_type": None,
             })
+            debug_line_map.append((i + 1, lines[i], len(entries) - 1))
+
+            # Extract embedded bracketed directions (e.g. [AMBIENCE: ...])
+            brackets = re.findall(r"\[([^\]]+)\]", line)
+            for bracket_text in brackets:
+                seq += 1
+                entries.append({
+                    "seq": seq,
+                    "type": "direction",
+                    "section": current_section,
+                    "scene": current_scene,
+                    "speaker": None,
+                    "direction": None,
+                    "text": bracket_text.strip(),
+                    "direction_type": classify_direction(bracket_text),
+                })
+                debug_line_map.append((i + 1, lines[i], len(entries) - 1))
+
             last_dialogue_idx = None
             continue
 
@@ -377,6 +449,7 @@ def parse_script(filepath: str) -> dict:
                     "text": bracket_text.strip(),
                     "direction_type": classify_direction(bracket_text),
                 })
+                debug_line_map.append((i + 1, lines[i], len(entries) - 1))
             last_dialogue_idx = None
             continue
 
@@ -398,6 +471,7 @@ def parse_script(filepath: str) -> dict:
                     "text": spoken_text,
                     "direction_type": None,
                 })
+                debug_line_map.append((i + 1, lines[i], len(entries) - 1))
                 last_dialogue_idx = len(entries) - 1
             continue
 
@@ -433,6 +507,10 @@ def parse_script(filepath: str) -> dict:
         entries=entries,
         stats=stats,
     )
+
+    if debug_output:
+        write_debug_csv(debug_output, debug_line_map, entries)
+
     return parsed.model_dump()
 
 
@@ -446,13 +524,9 @@ def print_summary(parsed: dict) -> None:
         parsed: Output dictionary from ``parse_script()``.
     """
     stats = parsed["stats"]
-    season_label = (
-        f"S{parsed['season']:02d}E{parsed['episode']:02d}"
-        if parsed.get("season") is not None
-        else f"Episode {parsed['episode']}"
-    )
+    tag = episode_tag(parsed.get("season"), parsed["episode"])
     print(f"\n{'='*60}")
-    print(f"PARSED: {parsed['show']} {season_label} — {parsed['title']}")
+    print(f"PARSED: {parsed['show']} {tag} — {parsed['title']}")
     print(f"Source: {parsed['source_file']}")
     print(f"{'='*60}")
     print(f"  Total entries:      {stats['total_entries']}")
@@ -507,15 +581,29 @@ def main() -> None:
     """CLI entry point for script parsing."""
     parser = argparse.ArgumentParser(description="Parse THE 413 production script markdown into structured JSON")
     parser.add_argument("script", help="Path to the production script markdown file")
-    parser.add_argument("--output", "-o", default="parsed/parsed_the413_ep01.json",
-                        help="Output JSON path (default: parsed/parsed_the413_ep01.json)")
+    parser.add_argument("--output", "-o", default=None,
+                        help="Output JSON path (default: parsed/parsed_the413_<TAG>.json)")
     parser.add_argument("--preview", type=int, default=None,
                         help="Show first N dialogue lines (default: show all)")
     parser.add_argument("--quiet", action="store_true",
                         help="Only output JSON, skip summary/preview")
+    parser.add_argument("--debug", action="store_true",
+                        help="Write diagnostic CSV alongside JSON output")
     args = parser.parse_args()
 
+    # Parse first so we can derive the output path from metadata
     parsed = parse_script(args.script)
+
+    # Derive default output path from parsed season/episode
+    if args.output is None:
+        tag = episode_tag(parsed.get("season"), parsed["episode"])
+        args.output = f"parsed/parsed_the413_{tag}.json"
+
+    # Write debug CSV if requested (must happen after output path is resolved)
+    if args.debug:
+        debug_csv_path = os.path.splitext(args.output)[0] + ".csv"
+        # Re-parse with debug output enabled
+        parsed = parse_script(args.script, debug_output=debug_csv_path)
 
     # Write JSON output
     os.makedirs(os.path.dirname(args.output) or ".", exist_ok=True)
@@ -526,6 +614,8 @@ def main() -> None:
         print_summary(parsed)
         print_dialogue_preview(parsed, limit=args.preview)
         print(f"JSON written to: {args.output}")
+        if args.debug:
+            print(f"Debug CSV written to: {os.path.splitext(args.output)[0]}.csv")
 
 
 if __name__ == "__main__":

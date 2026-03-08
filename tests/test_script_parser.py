@@ -285,6 +285,20 @@ class TestParseScriptIntegration:
         assert len(sfx_dirs) >= 1
         assert len(music_dirs) >= 1
 
+    def test_scene_header_ambience_split(self, parsed):
+        """Scene header with embedded [AMBIENCE:...] produces two entries."""
+        scene_headers = [e for e in parsed["entries"] if e["type"] == "scene_header"]
+        assert len(scene_headers) == 1
+        # Scene header text should be clean (no brackets)
+        assert "[" not in scene_headers[0]["text"]
+        assert scene_headers[0]["text"] == "SCENE 1: THE DINER"
+        # A separate AMBIENCE direction entry should follow
+        ambience_dirs = [e for e in parsed["entries"]
+                         if e["type"] == "direction" and e["direction_type"] == "AMBIENCE"]
+        diner_ambience = [d for d in ambience_dirs if "DINER" in d["text"]]
+        assert len(diner_ambience) >= 1
+        assert diner_ambience[0]["scene"] == "scene-1"
+
     def test_metadata_excluded(self, parsed):
         all_text = " ".join(e["text"] for e in parsed["entries"] if e["text"])
         assert "Should not appear in output" not in all_text
@@ -347,6 +361,92 @@ class TestParseFullScript:
 
     def test_season_is_one(self, parsed):
         assert parsed["season"] == 1
+
+
+# ─── Tests: scene header ambience splitting ───
+
+SCRIPT_SCENE_NO_BRACKETS = """\
+THE 413 Season 1: Episode 1: Test
+
+===
+
+ACT ONE
+
+SCENE 1: THE DINER
+
+ADAM Hello.
+
+===
+
+END OF EPISODE 1
+"""
+
+SCRIPT_SCENE_MULTI_BRACKETS = """\
+THE 413 Season 1: Episode 1: Test
+
+===
+
+ACT ONE
+
+SCENE 1: THE DINER [AMBIENCE: DINER SOUNDS] [SFX: DOOR OPENS]
+
+ADAM Hello.
+
+===
+
+END OF EPISODE 1
+"""
+
+
+class TestSceneHeaderAmbienceSplit:
+    """Test splitting embedded directions out of scene headers."""
+
+    def test_scene_no_brackets_single_entry(self, tmp_path):
+        """Scene header without brackets produces only a scene_header entry."""
+        f = tmp_path / "script.md"
+        f.write_text(SCRIPT_SCENE_NO_BRACKETS, encoding="utf-8")
+        parsed = parser.parse_script(str(f))
+        scene_headers = [e for e in parsed["entries"] if e["type"] == "scene_header"]
+        assert len(scene_headers) == 1
+        assert scene_headers[0]["text"] == "SCENE 1: THE DINER"
+        # No direction entries from the scene header line
+        directions = [e for e in parsed["entries"] if e["type"] == "direction"]
+        assert len(directions) == 0
+
+    def test_scene_multi_brackets_split(self, tmp_path):
+        """Scene header with multiple brackets produces scene_header + N direction entries."""
+        f = tmp_path / "script.md"
+        f.write_text(SCRIPT_SCENE_MULTI_BRACKETS, encoding="utf-8")
+        parsed = parser.parse_script(str(f))
+        scene_headers = [e for e in parsed["entries"] if e["type"] == "scene_header"]
+        assert len(scene_headers) == 1
+        assert "[" not in scene_headers[0]["text"]
+        assert scene_headers[0]["text"] == "SCENE 1: THE DINER"
+        # Two direction entries from the brackets
+        directions = [e for e in parsed["entries"] if e["type"] == "direction"]
+        assert len(directions) == 2
+        types = {d["direction_type"] for d in directions}
+        assert "AMBIENCE" in types
+        assert "SFX" in types
+
+    def test_scene_ambience_has_correct_scene_context(self, tmp_path):
+        """Split direction entries inherit the scene context."""
+        f = tmp_path / "script.md"
+        f.write_text(SCRIPT_SCENE_MULTI_BRACKETS, encoding="utf-8")
+        parsed = parser.parse_script(str(f))
+        directions = [e for e in parsed["entries"] if e["type"] == "direction"]
+        for d in directions:
+            assert d["scene"] == "scene-1"
+            assert d["section"] == "act1"
+
+    def test_sequence_numbers_still_ascending(self, tmp_path):
+        """Sequence numbers remain unique and ascending after split."""
+        f = tmp_path / "script.md"
+        f.write_text(SCRIPT_SCENE_MULTI_BRACKETS, encoding="utf-8")
+        parsed = parser.parse_script(str(f))
+        seqs = [e["seq"] for e in parsed["entries"]]
+        assert seqs == sorted(seqs)
+        assert len(seqs) == len(set(seqs))
 
 
 # ─── Tests: script without season in header ───
@@ -515,3 +615,118 @@ class TestParseScriptModelContract:
 
     def test_full_output_is_valid_parsed_script_model(self, parsed):
         models.ParsedScript(**parsed)
+
+
+# ─── Tests: --debug CSV output ───
+
+import csv as csv_module
+
+
+class TestDebugCSV:
+    """Tests for write_debug_csv and parse_script debug_output parameter."""
+
+    SCRIPT = """\
+THE 413 Season 1: Episode 1: Test
+
+CAST:
+
+* ADAM SANTOS (Host)
+
+===
+
+COLD OPEN
+
+[AMBIENCE: RADIO STATION]
+
+ADAM (on-air voice) It's 2:47 AM.
+
+===
+
+END OF EPISODE 1
+"""
+
+    def _parse_with_debug(self, tmp_path):
+        script_file = tmp_path / "debug_script.md"
+        script_file.write_text(self.SCRIPT, encoding="utf-8")
+        csv_path = str(tmp_path / "debug.csv")
+        parser.parse_script(str(script_file), debug_output=csv_path)
+        return csv_path
+
+    def _read_csv(self, csv_path):
+        with open(csv_path, newline="", encoding="utf-8") as f:
+            return list(csv_module.DictReader(f))
+
+    def test_debug_csv_created(self, tmp_path):
+        csv_path = self._parse_with_debug(tmp_path)
+        assert os.path.exists(csv_path)
+
+    def test_no_csv_without_debug_output(self, tmp_path):
+        script_file = tmp_path / "script.md"
+        script_file.write_text(self.SCRIPT, encoding="utf-8")
+        default_csv = str(tmp_path / "parsed.csv")
+        parser.parse_script(str(script_file))
+        assert not os.path.exists(default_csv)
+
+    def test_csv_has_expected_columns(self, tmp_path):
+        csv_path = self._parse_with_debug(tmp_path)
+        rows = self._read_csv(csv_path)
+        assert rows, "CSV should have at least one data row"
+        expected = {"md_line_num", "md_raw", "seq", "type", "section",
+                    "scene", "speaker", "direction", "text", "direction_type"}
+        assert expected == set(rows[0].keys())
+
+    def test_direction_entry_row(self, tmp_path):
+        csv_path = self._parse_with_debug(tmp_path)
+        rows = self._read_csv(csv_path)
+        direction_rows = [r for r in rows if r["type"] == "direction"]
+        assert direction_rows, "Should have at least one direction row"
+        row = direction_rows[0]
+        assert row["direction_type"] == "AMBIENCE"
+        assert "AMBIENCE: RADIO STATION" in row["text"]
+        assert "[AMBIENCE: RADIO STATION]" in row["md_raw"]
+
+    def test_dialogue_entry_row(self, tmp_path):
+        csv_path = self._parse_with_debug(tmp_path)
+        rows = self._read_csv(csv_path)
+        dialogue_rows = [r for r in rows if r["type"] == "dialogue"]
+        assert dialogue_rows, "Should have at least one dialogue row"
+        row = dialogue_rows[0]
+        assert row["speaker"] == "adam"
+        assert "2:47" in row["text"]
+        assert row["direction"] == "on-air voice"
+
+    def test_md_line_num_is_1_based(self, tmp_path):
+        csv_path = self._parse_with_debug(tmp_path)
+        rows = self._read_csv(csv_path)
+        line_nums = [int(r["md_line_num"]) for r in rows]
+        assert all(n >= 1 for n in line_nums), "Line numbers must be 1-based"
+
+    def test_text_truncated_at_200_chars(self, tmp_path):
+        long_line = "A" * 250
+        script = f"THE 413 Season 1: Episode 1: Test\n\n===\n\nCOLD OPEN\n\nADAM {long_line}\n\n===\n\nEND OF EPISODE 1\n"
+        script_file = tmp_path / "long_script.md"
+        script_file.write_text(script, encoding="utf-8")
+        csv_path = str(tmp_path / "long_debug.csv")
+        parser.parse_script(str(script_file), debug_output=csv_path)
+        rows = self._read_csv(csv_path)
+        dialogue_rows = [r for r in rows if r["type"] == "dialogue"]
+        assert dialogue_rows
+        assert len(dialogue_rows[0]["text"]) <= 200
+
+    def test_md_raw_truncated_at_200_chars(self, tmp_path):
+        long_text = "B" * 250
+        script = f"THE 413 Season 1: Episode 1: Test\n\n===\n\nCOLD OPEN\n\nADAM {long_text}\n\n===\n\nEND OF EPISODE 1\n"
+        script_file = tmp_path / "long_script2.md"
+        script_file.write_text(script, encoding="utf-8")
+        csv_path = str(tmp_path / "long_debug2.csv")
+        parser.parse_script(str(script_file), debug_output=csv_path)
+        rows = self._read_csv(csv_path)
+        for row in rows:
+            assert len(row["md_raw"]) <= 200
+
+    def test_section_header_row_present(self, tmp_path):
+        csv_path = self._parse_with_debug(tmp_path)
+        rows = self._read_csv(csv_path)
+        section_rows = [r for r in rows if r["type"] == "section_header"]
+        assert section_rows, "Should have a section_header row"
+        assert section_rows[0]["section"] == "cold-open"

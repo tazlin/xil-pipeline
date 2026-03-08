@@ -16,7 +16,7 @@ entries and are stored on `ScriptEntry` as `direction_type`.
 
 ## Effect in XILP001
 
-### Role 1: Prefix scanner in `classify_direction()` (lines 83–85)
+### Role 1: Prefix scanner in `classify_direction()` (lines 84–86)
 
 ```python
 for dt in DIRECTION_TYPES:
@@ -32,7 +32,7 @@ but the current four are disjoint.
 `is_stage_direction()` fires on any `[...]` line regardless — it does not consult
 `DIRECTION_TYPES`. Classification happens after detection, not before.
 
-### Role 2: `direction_type` field on direction entries only (line 333)
+### Role 2: `direction_type` field on direction entries only (line 429)
 
 ```python
 entries.append({
@@ -51,14 +51,14 @@ All other entry types hardcode `"direction_type": None`:
 | `dialogue` | Always `None` |
 | `direction` | `classify_direction()` result — one of the four values, or `None` |
 
-### The BEAT quirk (lines 86–87)
+### The BEAT quirk (lines 87–88)
 
 ```python
 if text.strip() == "BEAT" or text.strip() == "LONG BEAT":
     return "BEAT"
 ```
 
-`"BEAT"` appears both in `DIRECTION_TYPES` (loop at line 83) and as an explicit
+`"BEAT"` appears both in `DIRECTION_TYPES` (loop at line 84) and as an explicit
 exact-match fallback here. The loop handles `[BEAT: some qualifier]` variants; the
 fallback handles bare `[BEAT]` and `[LONG BEAT]`. Without the fallback, bare `[BEAT]`
 would be caught by the loop (since `"BEAT".startswith("BEAT")` is true), but `[LONG BEAT]`
@@ -83,7 +83,7 @@ configuration.
 
 ---
 
-## The Pydantic Constraint (models.py:46)
+## The Pydantic Constraint (models.py line 46)
 
 ```python
 direction_type: Literal["SFX", "MUSIC", "AMBIENCE", "BEAT"] | None = Field(

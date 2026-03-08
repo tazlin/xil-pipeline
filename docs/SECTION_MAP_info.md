@@ -20,7 +20,7 @@ Keys are the exact strings that appear in the production script markdown. Values
 
 ## Effect in XILP001 — Three Roles
 
-### 1. Gate-keeping (line 145)
+### 1. Gate-keeping (line 137)
 
 ```python
 def is_section_header(line: str) -> bool:
@@ -29,7 +29,7 @@ def is_section_header(line: str) -> bool:
 
 A line is only recognized as a section header if its stripped text exactly matches a key. Unrecognized headers (e.g., `"COLD OPEN 2"`, `"ACT THREE"`) fall through the classifier loop and are **silently skipped** — they generate no entry and do not update the section state.
 
-### 2. State machine reset (lines 282–283)
+### 2. State machine reset (lines 376–378)
 
 ```python
 if is_section_header(line):
@@ -43,7 +43,7 @@ When a section header is matched:
 
 Every subsequent entry inherits `current_section` until the next section header is encountered. Lines appearing before the first section header carry `"section": None`.
 
-### 3. Slug stamped on every entry (lines 289, 308, 328, 349)
+### 3. Slug stamped on every entry (lines 383, 403, 424, 446)
 
 All four entry types receive the current section slug:
 
@@ -54,11 +54,11 @@ All four entry types receive the current section slug:
 | `direction` | Yes |
 | `dialogue` | Yes |
 
-The stats collector at line 379 uses this to build `stats["sections"]` — a sorted list of unique section slugs seen in the script.
+The stats collector at line 477 uses this to build `stats["sections"]` — a sorted list of unique section slugs seen in the script.
 
 ---
 
-## Effect in XILP002 — Stem Filename Composition (lines 160–164)
+## Effect in XILP002 — Stem Filename Composition (lines 161–164)
 
 ```python
 stem_name = f"{entry['seq']:03d}_{entry['section']}"

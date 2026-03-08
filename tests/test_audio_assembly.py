@@ -24,6 +24,7 @@ spec.loader.exec_module(assembly)
 def sample_cast(tmp_path):
     cast = {
         "show": "TEST SHOW",
+        "season": 1,
         "episode": 1,
         "cast": {
             "adam": {"full_name": "Adam Santos", "voice_id": "voice_adam_123",
@@ -97,67 +98,56 @@ class TestApplyPhoneFilter:
 
 class TestAssembleAudio:
     def test_assembles_to_mp3(self, config, stems_with_audio, tmp_path):
-        original_dir = assembly.STEMS_DIR
-        original_cwd = os.getcwd()
-        os.chdir(tmp_path)
-        assembly.STEMS_DIR = str(stems_with_audio)
-        try:
-            with unittest.mock.patch("os.system"):
-                assembly.assemble_audio(config)
-            assert (tmp_path / "the413_ep01_master.mp3").exists()
-        finally:
-            assembly.STEMS_DIR = original_dir
-            os.chdir(original_cwd)
+        output_path = str(tmp_path / "the413_S01E01_master.mp3")
+        with unittest.mock.patch("os.system"):
+            assembly.assemble_audio(config, str(stems_with_audio), output_path)
+        assert os.path.exists(output_path)
 
     def test_no_stems_prints_warning(self, config, tmp_path, capsys):
         empty_dir = tmp_path / "empty_stems"
         empty_dir.mkdir()
-        original_dir = assembly.STEMS_DIR
-        assembly.STEMS_DIR = str(empty_dir)
-        try:
-            assembly.assemble_audio(config)
-        finally:
-            assembly.STEMS_DIR = original_dir
+        assembly.assemble_audio(config, str(empty_dir), str(tmp_path / "out.mp3"))
         out = capsys.readouterr().out
         assert "No stems found" in out
 
     def test_applies_phone_filter_for_frank(self, config, stems_with_audio, tmp_path):
-        original_dir = assembly.STEMS_DIR
-        original_cwd = os.getcwd()
-        os.chdir(tmp_path)
-        assembly.STEMS_DIR = str(stems_with_audio)
-        try:
-            with unittest.mock.patch("os.system"):
-                with unittest.mock.patch.object(
-                    assembly, "apply_phone_filter",
-                    wraps=assembly.apply_phone_filter
-                ) as mock_filter:
-                    assembly.assemble_audio(config)
-                    mock_filter.assert_called_once()  # only frank gets filtered
-        finally:
-            assembly.STEMS_DIR = original_dir
-            os.chdir(original_cwd)
+        output_path = str(tmp_path / "the413_S01E01_master.mp3")
+        with unittest.mock.patch("os.system"):
+            with unittest.mock.patch.object(
+                assembly, "apply_phone_filter",
+                wraps=assembly.apply_phone_filter
+            ) as mock_filter:
+                assembly.assemble_audio(config, str(stems_with_audio), output_path)
+                mock_filter.assert_called_once()  # only frank gets filtered
 
 
 # ─── Tests: standalone config loading from cast file ───
 
 class TestAssembleAudioFromCastFile:
-    """XILP003 builds config directly from cast_the413.json, no load_production()."""
+    """XILP003 builds config directly from cast config, no load_production()."""
 
     def test_main_loads_config_from_cast_json(self, sample_cast, tmp_path, capsys):
         """main() reads cast file and passes config to assemble_audio."""
-        empty_stems = tmp_path / "stems"
-        empty_stems.mkdir()
+        # main() derives stems_dir as stems/S01E01 from cast config
+        # Cast file must match cast_the413_{episode}.json naming convention
+        cast_episode = tmp_path / "cast_the413_S01E01.json"
+        import shutil
+        shutil.copy2(sample_cast, str(cast_episode))
+        episode_stems = tmp_path / "stems" / "S01E01"
+        episode_stems.mkdir(parents=True)
         original_dir = assembly.STEMS_DIR
-        assembly.STEMS_DIR = str(empty_stems)
+        assembly.STEMS_DIR = str(tmp_path / "stems")
+        original_cwd = os.getcwd()
+        os.chdir(str(tmp_path))
         try:
             with unittest.mock.patch(
                 "sys.argv",
-                ["XILP003", "--cast", sample_cast]
+                ["XILP003", "--episode", "S01E01"]
             ):
                 assembly.main()
         finally:
             assembly.STEMS_DIR = original_dir
+            os.chdir(original_cwd)
         out = capsys.readouterr().out
         # Should attempt assembly (no stems = warning), not crash on config load
         assert "No stems found" in out
