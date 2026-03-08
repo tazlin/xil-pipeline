@@ -1,0 +1,329 @@
+"""Generate individual voice stems via the ElevenLabs TTS API.
+
+Reads parsed script JSON and cast configuration to produce one MP3 stem
+per dialogue line. Audio assembly is handled separately by XILP003.
+
+Module Attributes:
+    STEMS_DIR: Directory for generated voice stem MP3 files.
+"""
+
+import os
+import json
+import argparse
+from elevenlabs.client import ElevenLabs
+
+from models import VoiceConfig, DialogueEntry, CastConfiguration
+
+# Setup ElevenLabs Client
+client = ElevenLabs(api_key=os.environ.get("ELEVENLABS_API_KEY"))
+
+STEMS_DIR = "stems"
+
+
+def check_elevenlabs_quota() -> int | None:
+    """Display current ElevenLabs API character usage and return remaining quota.
+
+    Returns:
+        Remaining character count, or ``None`` if the API call fails.
+    """
+    try:
+        user_info = client.user.get()
+        sub = user_info.subscription
+
+        used = sub.character_count
+        limit = sub.character_limit
+        remaining = limit - used
+
+        print(f"\n" + "="*40)
+        print(f"ELEVENLABS API STATUS:")
+        print(f"  Tier:      {sub.tier.upper()}")
+        print(f"  Usage:     {used:,} / {limit:,} characters")
+        print(f"  Remaining: {remaining:,}")
+        print("="*40 + "\n")
+
+        return remaining
+    except Exception as e:
+        print(f"\n[!] API Error: Unable to fetch user subscription data.")
+        print(f"    Details: {e}")
+        return None
+
+
+def has_enough_characters(text_to_generate: str) -> bool:
+    """Check if the ElevenLabs quota can cover the next line of text.
+
+    Args:
+        text_to_generate: The dialogue text about to be synthesized.
+
+    Returns:
+        ``True`` if remaining characters are sufficient (or if the
+        API check fails, as a permissive fallback).
+    """
+    try:
+        user_info = client.user.get()
+        remaining = user_info.subscription.character_limit - user_info.subscription.character_count
+
+        required = len(text_to_generate)
+        if remaining >= required:
+            print(f" [Guard] Quota OK: {required} required, {remaining:,} left.")
+            return True
+        else:
+            print(f" [Guard] STOP: Line requires {required} chars, but only {remaining:,} remain.")
+            return False
+    except Exception as e:
+        print(f" [Guard] Warning: Permission 'user_read' missing. Skipping quota check.")
+        return True
+
+
+def get_best_model_for_budget() -> str:
+    """Select the best ElevenLabs TTS model based on remaining quota.
+
+    Returns:
+        Model ID string: ``"eleven_v3"`` for healthy balance,
+        ``"eleven_flash_v2_5"`` when low, or ``"eleven_multilingual_v2"``
+        as API-error fallback.
+    """
+    SAFE_THRESHOLD = 5000
+
+    try:
+        user_info = client.user.get()
+        remaining = user_info.subscription.character_limit - user_info.subscription.character_count
+
+        if remaining > SAFE_THRESHOLD:
+            print(f" [Budget] Healthy Balance: {remaining:,} left. Using 'eleven_v3'.")
+            return "eleven_v3"
+        else:
+            print(f" [Budget] LOW BALANCE: {remaining:,} left. Switching to 'eleven_flash_v2_5' (50% cheaper).")
+            return "eleven_flash_v2_5"
+
+    except Exception:
+        print(" [Budget] API Check Failed. Defaulting to 'eleven_multilingual_v2'.")
+        return "eleven_multilingual_v2"
+
+
+def truncate_to_words(text: str, n: int = 3) -> str:
+    """Return the first n words of text.
+
+    Used by ``--terse`` mode to reduce TTS character cost during
+    test runs. Punctuation attached to words is preserved.
+
+    Args:
+        text: Input dialogue text.
+        n: Maximum number of words to keep (default: 3).
+
+    Returns:
+        The first ``n`` whitespace-delimited words joined by spaces,
+        or the full text if it contains fewer than ``n`` words.
+    """
+    words = text.split()
+    return " ".join(words[:n])
+
+
+def load_production(
+    script_json_path: str, cast_json_path: str
+) -> tuple[dict[str, dict], list[dict]]:
+    """Load parsed script JSON and cast config for production.
+
+    Reads the cast configuration and parsed script, then builds a
+    simplified voice config per speaker and a list of dialogue entries
+    enriched with stem filenames.
+
+    Args:
+        script_json_path: Path to the parsed script JSON (XILP001 output).
+        cast_json_path: Path to the cast configuration JSON.
+
+    Returns:
+        A tuple of ``(config, dialogue_entries)`` where ``config`` maps
+        speaker keys to ``VoiceConfig`` dicts and ``dialogue_entries``
+        is a list of ``DialogueEntry`` dicts.
+
+    Raises:
+        FileNotFoundError: If either JSON file does not exist.
+    """
+    with open(cast_json_path, "r", encoding="utf-8") as f:
+        cast_data = json.load(f)
+
+    with open(script_json_path, "r", encoding="utf-8") as f:
+        script_data = json.load(f)
+
+    # Build config: speaker_key -> {id, pan, filter}
+    cast_cfg = CastConfiguration(**cast_data)
+    config = {}
+    for key, member in cast_cfg.cast.items():
+        vc = VoiceConfig(id=member.voice_id, pan=member.pan, filter=member.filter)
+        config[key] = vc.model_dump()
+
+    # Extract dialogue entries with stem naming info
+    dialogue_entries = []
+    for entry in script_data["entries"]:
+        if entry["type"] != "dialogue":
+            continue
+        # Build stem name: {seq:03d}_{section}[-{scene}]_{speaker}
+        stem_name = f"{entry['seq']:03d}_{entry['section']}"
+        if entry.get("scene"):
+            stem_name += f"-{entry['scene']}"
+        stem_name += f"_{entry['speaker']}"
+
+        de = DialogueEntry(
+            speaker=entry["speaker"],
+            text=entry["text"],
+            stem_name=stem_name,
+            seq=entry["seq"],
+            direction=entry.get("direction"),
+        )
+        dialogue_entries.append(de.model_dump())
+
+    return config, dialogue_entries
+
+
+def dry_run(
+    config: dict[str, dict], dialogue_entries: list[dict], start_from: int = 1
+) -> None:
+    """Preview all dialogue lines and TTS cost without making API calls.
+
+    Args:
+        config: Speaker-to-voice mapping from ``load_production()``.
+        dialogue_entries: Dialogue entry dicts from ``load_production()``.
+        start_from: Sequence number to start from (lines before this
+            are shown but marked as skipped).
+    """
+    print(f"\n{'='*70}")
+    print(f"DRY RUN — {len(dialogue_entries)} dialogue lines")
+    print(f"{'='*70}\n")
+
+    total_chars = 0
+    lines_to_generate = 0
+
+    for entry in dialogue_entries:
+        char_count = len(entry["text"])
+        total_chars += char_count
+        marker = " " if entry["seq"] >= start_from else "x"
+        if entry["seq"] >= start_from:
+            lines_to_generate += 1
+
+        direction_label = f" ({entry['direction']})" if entry["direction"] else ""
+        text_preview = entry["text"][:75] + "..." if len(entry["text"]) > 75 else entry["text"]
+
+        voice_id = config.get(entry["speaker"], {}).get("id", "???")
+        voice_status = "TBD" if voice_id == "TBD" else "OK"
+
+        print(f" [{marker}] {entry['seq']:03d} | {entry['speaker']:<14} | {char_count:>4} chars | voice: {voice_status}{direction_label}")
+        print(f"          {text_preview}")
+        print(f"          stem: {entry['stem_name']}.mp3")
+        print()
+
+    # Summary
+    chars_from_start = sum(len(e["text"]) for e in dialogue_entries if e["seq"] >= start_from)
+    tbd_voices = [sp for sp, cfg in config.items() if cfg["id"] == "TBD"]
+
+    print(f"{'='*70}")
+    print(f"TOTAL:  {len(dialogue_entries)} lines, {total_chars:,} TTS characters")
+    if start_from > 1:
+        print(f"FROM {start_from}: {lines_to_generate} lines, {chars_from_start:,} TTS characters")
+    if tbd_voices:
+        print(f"\n  WARNING: {len(tbd_voices)} voices still need voice_id assignment: {', '.join(tbd_voices)}")
+        print(f"  Use XILU001_discover_voices_T2S.py to browse voices, then update cast_the413.json")
+    print(f"{'='*70}\n")
+
+
+def generate_voices(
+    config: dict[str, dict], dialogue_entries: list[dict], start_from: int = 1
+) -> None:
+    """Generate individual voice stem MP3s via the ElevenLabs TTS API.
+
+    Iterates through dialogue entries, skipping stems that already exist
+    on disk or have unassigned voice IDs. Halts if the character quota
+    is exhausted.
+
+    Args:
+        config: Speaker-to-voice mapping from ``load_production()``.
+        dialogue_entries: Dialogue entry dicts from ``load_production()``.
+        start_from: Sequence number to resume generation from.
+    """
+    os.makedirs(STEMS_DIR, exist_ok=True)
+
+    # Filter to entries from start_from onward
+    entries_to_process = [e for e in dialogue_entries if e["seq"] >= start_from]
+
+    print(f"--- Phase 1: Generating {len(entries_to_process)} voice stems ---")
+    current_model = get_best_model_for_budget()
+    generated_count = 0
+
+    for entry in entries_to_process:
+        speaker = entry["speaker"]
+        text = entry["text"]
+        stem_name = entry["stem_name"]
+
+        # Skip if stem already exists
+        stem_file = os.path.join(STEMS_DIR, f"{stem_name}.mp3")
+        if os.path.exists(stem_file):
+            print(f"   Exists: {stem_file} — skipping")
+            continue
+
+        # Check voice_id is assigned
+        if config.get(speaker, {}).get("id") == "TBD":
+            print(f" [!] No voice_id for {speaker} — skipping {stem_name}")
+            continue
+
+        # Check quota
+        if not has_enough_characters(text):
+            print(f" !!! Production halted at seq {entry['seq']} to save credits.")
+            break
+
+        print(f" > [{entry['seq']:03d}] {speaker} with {current_model} ({len(text)} chars)...")
+        audio_stream = client.text_to_speech.convert(
+            text=text,
+            voice_id=config[speaker]["id"],
+            model_id=current_model,
+            output_format="mp3_44100_128"
+        )
+
+        with open(stem_file, "wb") as f:
+            for chunk in audio_stream:
+                if chunk:
+                    f.write(chunk)
+        print(f"   Saved: {stem_file}")
+        generated_count += 1
+
+    stem_count = len([f for f in os.listdir(STEMS_DIR) if f.endswith(".mp3")])
+    print(f"--- Phase 1 Complete: {generated_count} new, {stem_count} total stems in {STEMS_DIR}/ ---")
+
+
+def main() -> None:
+    """CLI entry point for voice stem generation.
+
+    Loads the parsed script and cast config, then generates MP3 stems
+    via the ElevenLabs TTS API. Use ``--dry-run`` to preview character
+    costs before committing API quota. For audio assembly, run
+    ``XILP003_the413_audio_assembly.py`` separately.
+    """
+    parser = argparse.ArgumentParser(
+        description="THE 413 Voice Generation — generate voice stems via ElevenLabs"
+    )
+    parser.add_argument("--script", default="parsed/parsed_the413_ep01.json",
+                        help="Path to parsed script JSON (default: parsed/parsed_the413_ep01.json)")
+    parser.add_argument("--cast", default="cast_the413.json",
+                        help="Path to cast config JSON (default: cast_the413.json)")
+    parser.add_argument("--dry-run", action="store_true",
+                        help="Preview all lines and TTS cost without API calls")
+    parser.add_argument("--start-from", type=int, default=1,
+                        help="Start generation from sequence number N (for resuming)")
+    parser.add_argument("--terse", action="store_true",
+                        help="Truncate each line to 3 words to minimize TTS character cost")
+    args = parser.parse_args()
+
+    config, dialogue_entries = load_production(args.script, args.cast)
+
+    if args.terse:
+        dialogue_entries = [
+            {**e, "text": truncate_to_words(e["text"])} for e in dialogue_entries
+        ]
+
+    if args.dry_run:
+        dry_run(config, dialogue_entries, start_from=args.start_from)
+    else:
+        check_elevenlabs_quota()
+        generate_voices(config, dialogue_entries, start_from=args.start_from)
+
+
+if __name__ == "__main__":
+    main()

@@ -1,0 +1,20 @@
+# Python
+venv/
+__pycache__/
+*.pyc
+*.pyo
+.pytest_cache/
+.coverage
+
+# mkdocs build output
+site/
+
+# Generated audio (large binaries, expensive to recreate)
+stems/
+*.mp3
+
+# IDE / tool artifacts
+.qodo/
+
+# Secrets (never commit)
+.env

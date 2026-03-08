@@ -1,0 +1,21 @@
+# Runtime dependencies for gemini-project scripts
+# Install: pip install -r requirements.txt
+
+# ElevenLabs TTS API
+elevenlabs==2.38.1
+
+# Audio processing
+pydub==0.25.1
+
+# Data validation and typed models
+pydantic>=2.0,<3.0
+
+# Google Generative AI
+google-genai==1.66.0
+
+# Text-to-speech alternatives
+gTTS==2.5.4
+pyttsx3==2.99
+
+# Ollama local LLM client
+ollama==0.6.1

@@ -1,0 +1,41 @@
+site_name: The413 SDK Documentation
+
+# Don't fail build on warnings
+strict: false
+
+plugins:
+- search
+- awesome-pages
+- autorefs
+- mkdocstrings:
+    handlers:
+      python:
+        paths: ['.']
+        options:
+          members_order: source
+          docstring_section_style: list
+          show_if_no_docstring: true
+          separate_signature: true
+          show_signature_annotations: true
+        inventories:
+          - https://docs.python.org/3/objects.inv
+    # Allow build to continue despite import errors
+    enable_inventory: true
+markdown_extensions:
+  - pymdownx.highlight:
+      anchor_linenums: true
+      line_spans: __span
+      pygments_lang_class: true
+  - pymdownx.inlinehilite
+  - pymdownx.snippets
+  - pymdownx.superfences:
+      custom_fences:
+        - name: mermaid
+          class: mermaid
+          format: !!python/name:pymdownx.superfences.fence_code_format
+
+theme:
+  name: material
+
+extra_css:
+  - stylesheets/extra.css
