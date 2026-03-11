@@ -1,6 +1,6 @@
 # XILP Pipeline Diagrams
 
-Documentation of the three-script automated podcast production pipeline for **THE 413**.
+Documentation of the five-stage automated podcast production pipeline for **THE 413**.
 
 ---
 
@@ -23,6 +23,7 @@ flowchart TD
     ST["`🎙️ stems/S01E01/*.mp3
     001_cold-open_adam.mp3 …`"]
     OUT["🎧 the413_S01E01_master.mp3"]
+    MIX["mix_common.py"]
 
     S --> P1 --> J
     C --> P2
@@ -30,7 +31,39 @@ flowchart TD
     P2 -->|"--dry-run"| DRY
     P2 --> ST
     C --> P3
-    ST --> P3 --> OUT
+    ST --> P3
+    J --> P3
+    MIX --> P3
+    P3 --> OUT
+
+    P4["XILP004_the413_studio_onboard.py"]
+    STUDIO["`🎬 ElevenLabs Studio Project
+    Chapters with voice-tagged nodes`"]
+    DRY4["`--dry-run
+    Preview chapters + voice map
+    No API calls`"]
+
+    J --> P4
+    C --> P4
+    P4 -->|"--dry-run"| DRY4
+    P4 --> STUDIO
+
+    P5["XILP005_the413_daw_export.py"]
+    DAW["`🎚️ daw/S01E01/
+    layer_dialogue.wav
+    layer_ambience.wav
+    layer_music.wav
+    layer_sfx.wav`"]
+    DRY5["`--dry-run
+    Show stem counts + paths
+    No files written`"]
+
+    ST --> P5
+    J --> P5
+    C --> P5
+    MIX --> P5
+    P5 -->|"--dry-run"| DRY5
+    P5 --> DAW
 ```
 
 ---
@@ -42,18 +75,26 @@ flowchart TD
     IN["📄 Production script .md"]
     ESC["`strip_markdown_escapes()
     Removes backslash escapes: bracket, equals, period`"]
+    FMT["`strip_markdown_formatting()
+    Removes ## headings, **bold**, trailing breaks`"]
     LINES["Split into lines"]
     SKIP["`Skip CAST section
     Skip title line
-    Skip === dividers`"]
+    Skip === / --- dividers`"]
 
     LINES --> SKIP --> LOOP
 
     subgraph LOOP["Line-by-line state machine"]
         direction TB
+        PEND{"`pending_speaker?
+        multi-line dialogue`"}
+        PDIR["`(direction) line
+        update pending direction`"]
+        PTXT["`Spoken text line
+        create dialogue entry`"]
         CHK{"Classify line"}
         SEC["`Section header
-        COLD OPEN / ACT ONE
+        COLD OPEN / OPENING CREDITS / ACT ONE
         update current_section`"]
         SCN["`Scene header
         SCENE N:
@@ -62,14 +103,17 @@ flowchart TD
         SFX / MUSIC / AMBIENCE / BEAT
         direction entry`"]
         DLG["`SPEAKER text
-        dialogue entry
-        speaker + direction + text`"]
+        dialogue entry (single-line)
+        or set pending_speaker (multi-line)`"]
         CONT["`Bare continuation text
-        append to previous dialogue`"]
+        append to previous dialogue
+        filter standalone (parentheticals)`"]
         STOP["`END OF EPISODE
-        or PRODUCTION NOTES
-        break`"]
+        END OF PRODUCTION SCRIPT
+        or PRODUCTION NOTES — break`"]
 
+        PEND -->|"(dir)"| PDIR
+        PEND -->|text| PTXT
         CHK -->|section header| SEC
         CHK -->|scene header| SCN
         CHK -->|bracket line| DIR
@@ -78,7 +122,7 @@ flowchart TD
         CHK -->|metadata or end| STOP
     end
 
-    IN --> ESC --> LINES
+    IN --> ESC --> FMT --> LINES
     LOOP --> ENTRIES
 
     subgraph ENTRIES["Output entries list"]
@@ -99,15 +143,21 @@ flowchart TD
 ```mermaid
 flowchart LR
     RAW["`KNOWN_SPEAKERS list
-    Ordered longest-first`"]
+    Ordered longest-first
+    Compound names before simple`"]
     RAW --> MATCH{"`startswith match
-    space or paren follows?`"}
+    space, paren, or end follows?`"}
     MATCH -->|yes| KEY["`SPEAKER_KEYS lookup
     ADAM → adam
     MR. PATTERSON → mr_patterson
-    RIAN → rian`"]
+    FILM AUDIO (MARGARET'S VOICE) → film_audio
+    STRANGER (MALE VOICE, FLAT) → stranger
+    KAREN → karen · SARAH → sarah`"]
     MATCH -->|no| SKIP2["try next speaker"]
-    KEY --> ENTRY["`dialogue entry
+    KEY --> MODE{"`spoken_text empty?`"}
+    MODE -->|yes| PEND["`pending_speaker state
+    await direction/text on next lines`"]
+    MODE -->|no| ENTRY["`dialogue entry (single-line)
     speaker = normalized key`"]
 ```
 
@@ -155,62 +205,118 @@ sequenceDiagram
 
 ---
 
-## 4. XILP003 — Audio Assembly
+## 4. XILP003 — Audio Assembly (Two-Pass Multi-Track Mix)
 
 ```mermaid
 flowchart TD
     C2["`📋 cast_the413_S01E01.json
     pan + filter per character`"]
+    J2["`📦 parsed_the413_S01E01.json
+    direction_type per entry`"]
+    ST2["`stems/S01E01/*.mp3
+    sorted by seq prefix`"]
+
     C2 --> CFG_LOAD["`CastConfiguration model
     build config dict`"]
-    CFG_LOAD --> ASSMBL
+    J2 --> IDX["`load_entries_index()
+    {seq → entry} dict`"]
+    ST2 --> PLANS["`collect_stem_plans()
+    classify each stem by direction_type`"]
+    IDX --> PLANS
 
-    ST["`stems/S01E01/*.mp3
-    sorted alphabetically
-    sequence prefix guarantees order`"]
-    NONE{"No stems found?"}
-    WARN["`⚠️ Print warning
-    Tell user to run XILP002 first`"]
+    PLANS --> BRANCH{"parsed JSON\navailable?"}
 
-    ST --> NONE
-    NONE -->|yes| WARN
-    NONE -->|no| LOOP2
+    BRANCH -->|no| SEQ["`assemble_audio()
+    sequential concat (fallback)`"]
 
-    subgraph LOOP2["For each stem file"]
+    BRANCH -->|yes| FG
+
+    subgraph FG["Foreground Pass — build_foreground()"]
         direction TB
-        EXT["`Extract speaker from filename
-        rsplit underscore, take last part`"]
-        CFG{"speaker in config?"}
-        FILT{"filter: true?"}
-        PAN["segment.pan(config pan value)"]
-        PHONE["`apply_phone_filter()
-        high-pass 300Hz
-        low-pass 3000Hz
-        +5 dB`"]
-        GAP["+ 600ms silence gap"]
-
-        EXT --> CFG
-        CFG -->|yes| FILT
-        CFG -->|no| PAN
-        FILT -->|yes| PHONE --> PAN
-        FILT -->|no| PAN
-        PAN --> GAP
+        FG1["`Dialogue + SFX + BEAT stems
+        concatenated with 600ms gaps`"]
+        FG2["`timeline dict
+        {seq → start_ms}`"]
+        FG1 --> FG2
     end
 
-    ASSMBL --> LOOP2
-    LOOP2 --> CONCAT["`full_vocals AudioSegment
-    concatenated`"]
-    CONCAT --> EXPORT["export the413_S01E01_master.mp3"]
-    EXPORT --> PLAY["os.system mpg123 — WSL playback"]
+    subgraph BG["Background Pass"]
+        direction TB
+        AMB["`build_ambience_layer()
+        loop each AMBIENCE stem to next cue
+        −10 dB`"]
+        MUS["`build_music_layer()
+        overlay each MUSIC sting at cue
+        −6 dB`"]
+        AMB --> BGMIX["ambience.overlay(music)"]
+        MUS --> BGMIX
+    end
+
+    FG2 --> BG
+    FG1 --> OVERLAY["foreground.overlay(background)"]
+    BGMIX --> OVERLAY
+
+    OVERLAY --> EXPORT2["export the413_S01E01_master.mp3"]
+    SEQ --> EXPORT2
+    EXPORT2 --> PLAY2["os.system mpg123 — WSL playback"]
+
+    CFG_LOAD --> FG
+    CFG_LOAD --> SEQ
 ```
 
-> **Restartability:** XILP003 has no ElevenLabs dependency and reads only `cast_the413_S01E01.json` and
-> the `stems/<TAG>/` directory. Re-running assembly after adjusting effects or adding missing stems
-> requires no API key and carries no TTS quota risk.
+> **Restartability:** XILP003 has no ElevenLabs dependency. Re-running assembly after adjusting
+> effects or adding missing stems requires no API key and carries no TTS quota risk.
 
 ---
 
-## 5. Stem File Naming Convention
+## 5. XILP004 — Studio Project Onboarding
+
+```mermaid
+flowchart TD
+    PARSED["`📦 parsed_the413_S01E02.json
+    Dialogue + section + scene entries`"]
+    CAST["`📋 cast_the413_S01E02.json
+    voice_id per character`"]
+
+    LOAD["`load_episode()
+    Validate no TBD voice_ids`"]
+    BUILD["`build_content_json()
+    Transform entries → chapters/blocks/nodes`"]
+
+    PARSED --> LOAD
+    CAST --> LOAD
+    LOAD --> BUILD
+
+    subgraph MAPPING["Content Mapping Rules"]
+        direction TB
+        SEC["`section_header
+        → new chapter (name)`"]
+        SCN["`scene_header
+        → h2 block (narrator voice)`"]
+        DLG["`dialogue
+        → p block with speaker's voice_id`"]
+        DIR["`direction
+        → skipped (not voiced)`"]
+    end
+
+    BUILD --> MAPPING
+    MAPPING --> MODE{"--dry-run?"}
+    MODE -->|yes| DRY["`dry_run()
+    Print chapter summary
+    Show voice assignments`"]
+    MODE -->|no| API["`create_project()
+    client.studio.projects.create()
+    from_content_json payload`"]
+    API --> PROJ["`🎬 Studio Project
+    project_id returned`"]
+```
+
+> **Speaker-name problem solved:** Each `tts_node` carries its own `voice_id` — speaker names
+> never appear in the text, so TTS won't voice them. No manual post-creation cleanup needed.
+
+---
+
+## 6. Stem File Naming Convention
 
 ```mermaid
 flowchart LR
@@ -239,7 +345,7 @@ flowchart LR
 
 ---
 
-## 6. API Cost Guard Flow
+## 7. API Cost Guard Flow
 
 ```mermaid
 flowchart TD
@@ -276,3 +382,53 @@ flowchart TD
     BUDGET -->|no| FLASH
     BUDGET -->|exception| FALLBACK
 ```
+
+---
+
+## 8. XILP005 — DAW Layer Export
+
+```mermaid
+flowchart TD
+    C5["`📋 cast_the413_S01E01.json`"]
+    J5["`📦 parsed_the413_S01E01.json`"]
+    ST5["`stems/S01E01/*.mp3`"]
+
+    C5 --> L5["`load cast config
+    build speaker effects dict`"]
+    J5 --> IDX5["`load_entries_index()
+    {seq → entry}`"]
+    ST5 --> PLANS5["`collect_stem_plans()
+    classify by direction_type`"]
+    IDX5 --> PLANS5
+
+    PLANS5 --> TL5["`build_foreground()
+    foreground track + {seq → ms} timeline`"]
+    L5 --> TL5
+
+    TL5 --> DLG5["`build_dialogue_layer()
+    dialogue stems at timeline positions
+    phone filter + pan applied`"]
+    TL5 --> AMB5["`build_ambience_layer(level_db=0)
+    AMBIENCE looped to next cue
+    no ducking — producer controls level`"]
+    TL5 --> MUS5["`build_music_layer(level_db=0)
+    MUSIC stings at cue positions`"]
+    TL5 --> SFX5["`build_sfx_layer()
+    SFX + BEAT at timeline positions`"]
+
+    DLG5 --> WAV1["`daw/S01E01/
+    S01E01_layer_dialogue.wav`"]
+    AMB5 --> WAV2["S01E01_layer_ambience.wav"]
+    MUS5 --> WAV3["S01E01_layer_music.wav"]
+    SFX5 --> WAV4["S01E01_layer_sfx.wav"]
+
+    WAV1 --> SCRIPT5["`S01E01_open_in_audacity.py
+    Import helper + pipe automation`"]
+    WAV2 --> SCRIPT5
+    WAV3 --> SCRIPT5
+    WAV4 --> SCRIPT5
+```
+
+> **Audacity alignment:** All four WAV files are exactly the same duration (full episode length).
+> Importing them into Audacity at t=0 produces four perfectly aligned tracks — no repositioning
+> or time-offset metadata required. Run `python S01E01_open_in_audacity.py` for import instructions.

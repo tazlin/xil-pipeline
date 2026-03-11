@@ -15,7 +15,21 @@ Automated podcast/audio production pipeline using ElevenLabs TTS API. The projec
 - ElevenLabs API key via `ELEVENLABS_API_KEY` env var
 - Audio playback via `mpg123` in WSL
 
-## Architecture: Three-Stage Pipeline
+## Pre-Flight Script Scanner
+
+`XILP000_script_scanner.py` — Scans a raw markdown script and reports recognized/unrecognized speakers and sections **before** running XILP001. Use this whenever onboarding a new script to catch missing `KNOWN_SPEAKERS` or `SECTION_MAP` entries early.
+
+```bash
+python XILP000_script_scanner.py "scripts/<script>.md"
+python XILP000_script_scanner.py "scripts/<script>.md" --json
+```
+
+- No `--episode` flag required — reads only the script file, no side effects
+- Exit code 0 = all recognized (safe to run XILP001); exit code 1 = action needed
+- Imports XILP001's pure functions directly — no duplicated logic
+- `--json` outputs machine-readable scan results
+
+## Architecture: Five-Stage Pipeline
 
 ### Stage 1: Script Parsing
 `XILP001_script_parser.py` — Parses markdown production scripts into structured JSON.
@@ -24,13 +38,19 @@ Automated podcast/audio production pipeline using ElevenLabs TTS API. The projec
 python XILP001_script_parser.py "scripts/<script>.md" --episode S01E01 --preview 10
 ```
 
-- Input: Markdown scripts in `scripts/` with dialogue format `SPEAKER (direction) Spoken text`
+- Input: Markdown scripts in `scripts/` — supports both plain text (S01E01) and markdown-formatted (S01E02+) scripts transparently
+- Two-pass normalization: `strip_markdown_escapes()` removes `\[`, `\]`, etc.; `strip_markdown_formatting()` removes `**`, `##`/`###` headings, trailing double-space line breaks
+- Handles both single-line dialogue (`SPEAKER (dir) Text`) and multi-line dialogue (speaker, direction, text on separate lines) via pending-speaker state machine
+- Standalone parenthetical acting notes like `(beat)` or `(pause)` within dialogue continuations are filtered from spoken text
+- Dividers: accepts both `===` (plain text) and `---` (markdown horizontal rules)
+- End markers: stops at `END OF EPISODE` or `END OF PRODUCTION SCRIPT`
 - Output: `parsed/parsed_the413_S01E01.json` — entries with seq, type, section, scene, speaker, direction, text, direction_type
 - Output path derived from script header metadata (season/episode); override with `--output`
 - `--episode S01E01` (optional) validates that the script header matches the intended episode tag
 - When `--episode` is provided and `cast_the413_S01E01.json` / `sfx_the413_S01E01.json` don't exist, auto-generates skeleton configs with `voice_id=TBD` and default SFX prompts
 - Supports `--quiet` (JSON only, skip summary) and `--debug` (write diagnostic CSV alongside JSON)
-- Known speakers defined in `KNOWN_SPEAKERS` list (must be longest-first for multi-word names like "MR. PATTERSON")
+- Known speakers defined in `KNOWN_SPEAKERS` list (must be longest-first for multi-word and compound names like "FILM AUDIO (MARGARET'S VOICE)")
+- Sections: COLD OPEN, OPENING CREDITS, ACT ONE, ACT TWO, MID-EPISODE BREAK, CLOSING
 
 ### Stage 2: Voice Generation
 `XILP002_the413_producer.py` — Calls ElevenLabs API to generate voice stems.
@@ -39,27 +59,72 @@ python XILP001_script_parser.py "scripts/<script>.md" --episode S01E01 --preview
 python XILP002_the413_producer.py --episode S01E01 --dry-run
 ```
 
-- `--episode` (required) derives `cast_the413_S01E01.json` and (with `--sfx`) `sfx_the413_S01E01.json`
+- `--episode` (required) derives `cast_the413_S01E01.json` and (with `--sfx-music`) `sfx_the413_S01E01.json`
 - Reads: parsed JSON + cast config (voice_id/pan/filter per character)
 - Outputs: `stems/<TAG>/{seq:03d}_{section}[-{scene}]_{speaker}.mp3` (e.g. `stems/S01E01/003_cold-open_adam.mp3`)
 - Supports `--start-from N` for resuming interrupted runs
 - Supports `--dry-run` to preview lines and TTS character cost without API calls
 - Supports `--terse` to truncate each line to 3 words (minimizes TTS character cost)
-- Supports `--sfx` flag to generate sound effect stems alongside dialogue
+- Supports `--sfx-music` flag to generate sound effect and music stems alongside dialogue
 - Skips stems that already exist on disk
 
 ### Stage 3: Audio Assembly
-`XILP003_the413_audio_assembly.py` — Concatenates stems with silence gaps into final audio.
+`XILP003_the413_audio_assembly.py` — Two-pass multi-track mix into a final master MP3.
 
 ```bash
 python XILP003_the413_audio_assembly.py --episode S01E01
+python XILP003_the413_audio_assembly.py --episode S01E01 --parsed parsed/parsed_the413_S01E01.json
 ```
 
-- Loads stems alphabetically (sequence prefix ensures order)
+- When a parsed script JSON is available (auto-derived or via `--parsed`), runs a two-pass multi-track mix:
+  - **Foreground pass**: dialogue + one-shot SFX/BEAT stems concatenated sequentially
+  - **Background pass**: AMBIENCE stems looped across scene boundaries (ducked -10 dB); MUSIC stings overlaid at cue points (-6 dB)
+  - Foreground and background combined via `AudioSegment.overlay()`
+- Falls back to single-pass sequential concatenation when no parsed JSON is found
+- Stem classification uses `direction_type` from the parsed JSON, keyed by seq number in the filename
+- Shared mixing logic lives in `mix_common.py` — also used by XILP005
 - Applies per-speaker effects (pan, phone filter) from cast config
-- Extracts speaker from stem filename via `rsplit("_", 1)[-1]`
-- Supports `--output` to set the master MP3 path (default: `the413_S01E01_master.mp3`, derived from cast config)
+- Supports `--output` to set the master MP3 path (default: `the413_S01E01_master.mp3`)
 - No ElevenLabs API key required — safe to re-run freely
+
+### Stage 4: Studio Project Onboarding
+`XILP004_the413_studio_onboard.py` — Creates an ElevenLabs Studio project from parsed episode data.
+
+```bash
+python XILP004_the413_studio_onboard.py --episode S01E02 --dry-run
+python XILP004_the413_studio_onboard.py --episode S01E02
+python XILP004_the413_studio_onboard.py --episode S01E02 --quality high
+```
+
+- `--episode` (required) derives `parsed_the413_S01E02.json` and `cast_the413_S01E02.json`
+- Builds `from_content_json` payload for the Studio Projects API with per-node `voice_id` assignments
+- Solves the speaker-name problem: voice assignments are embedded directly — no speaker names in TTS text
+- Content mapping: sections → chapters, dialogue → `tts_node` blocks, scene headers → `h2` blocks, directions → skipped
+- `--dry-run` displays chapter/block summary with voice assignments without calling the API
+- `--quality` sets quality preset (standard/high/ultra/ultra_lossless, default: standard)
+- `--model` sets TTS model (default: eleven_v3)
+- Validates no TBD voice_ids in cast config before proceeding
+- Requires `ELEVENLABS_API_KEY` env var for non-dry-run mode
+
+### Stage 5: DAW Layer Export
+`XILP005_the413_daw_export.py` — Exports four isolated, full-length WAV layers for human mixing in Audacity.
+
+```bash
+python XILP005_the413_daw_export.py --episode S01E01 --dry-run
+python XILP005_the413_daw_export.py --episode S01E01
+python XILP005_the413_daw_export.py --episode S01E01 --output-dir exports/S01E01/
+```
+
+- `--episode` (required) derives `cast_the413_S01E01.json` and `parsed/parsed_the413_S01E01.json`
+- Outputs four WAV files to `daw/{TAG}/` — all identical duration, all aligned at t=0:
+  - `{TAG}_layer_dialogue.wav` — spoken dialogue (phone filter + pan applied)
+  - `{TAG}_layer_ambience.wav` — environmental background looped to fill scene durations
+  - `{TAG}_layer_music.wav` — music stings/themes at cue positions
+  - `{TAG}_layer_sfx.wav` — one-shot SFX and BEAT silences
+- Generates `{TAG}_open_in_audacity.py` — prints import instructions; attempts pipe automation if Audacity's mod-script-pipe is enabled
+- `--dry-run` shows stem counts and output paths without writing files
+- No ElevenLabs API key required — no API calls made
+- Shared mixing logic imported from `mix_common.py`
 
 ## ElevenLabs API Cost Controls
 
@@ -73,11 +138,15 @@ Always use `--dry-run` before running voice generation on a new script to verify
 ## File Naming Convention
 
 Scripts use prefix `XIL` (ElevenLabs, avoiding numeric prefixes). The suffix pattern is:
+- `XILP000_*` — pre-flight script scanner (no API, no side effects)
 - `11L_*` — legacy standalone utilities (e.g., `XILU001_discover_voices_T2S.py`)
 - `XILU002_*` — standalone SFX stem generation utility
 - `XILP001_*` — script parser
 - `XILP002_*` — voice generation (ElevenLabs TTS)
-- `XILP003_*` — audio assembly (stems → master MP3)
+- `XILP003_*` — audio assembly (stems → master MP3, two-pass multi-track mix)
+- `XILP004_*` — Studio project onboarding (ElevenLabs Studio Projects API)
+- `XILP005_*` — DAW layer export (stems → per-layer WAVs for Audacity)
+- `mix_common.py` — shared mixing utilities (timeline, layer builders) used by XILP003 and XILP005
 
 ## Cast Configuration
 
@@ -108,7 +177,7 @@ Voice IDs are discovered via `XILU001_discover_voices_T2S.py` (filters to premad
 - Keys match the `text` field of parsed direction entries exactly
 - `type: "sfx"` (default) entries call `client.text_to_sound_effects.convert()` with the `prompt`
 - `type: "silence"` entries (BEAT/LONG BEAT) generate local silent audio — no API call
-- `loop: true` entries are intended for ambience (future overlay support)
+- `loop: true` entries mark ambience stems for looping in XILP003's background pass and XILP005's ambience layer
 - SFX stems use `_sfx` suffix: `002_cold-open_sfx.mp3`
 
 ### Shared SFX Library
@@ -171,4 +240,5 @@ python -m pytest tests/ -v
 - `parsed/` — Parser JSON output (generated, cacheable)
 - `stems/<TAG>/` — Individual voice/SFX audio files per episode (generated, expensive to recreate)
 - `SFX/` — Shared SFX asset library (generated once, reused across episodes)
+- `daw/<TAG>/` — Per-layer WAV exports for DAW mixing (generated by XILP005)
 - `venv/` — Python virtualenv (do not commit)

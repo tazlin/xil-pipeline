@@ -327,8 +327,8 @@ def main() -> None:
                         help="Start generation from sequence number N (for resuming)")
     parser.add_argument("--terse", action="store_true",
                         help="Truncate each line to 3 words to minimize TTS character cost")
-    parser.add_argument("--sfx", action="store_true",
-                        help="Enable sound effect stem generation")
+    parser.add_argument("--sfx-music", action="store_true",
+                        help="Enable sound effect and music stem generation")
     args = parser.parse_args()
 
     # Derive config paths from --episode
@@ -350,10 +350,10 @@ def main() -> None:
             {**e, "text": truncate_to_words(e["text"])} for e in dialogue_entries
         ]
 
-    # Load SFX config if --sfx flag is set
+    # Load SFX config if --sfx-music flag is set
     sfx_entries = None
     sfx_config_data = None
-    if args.sfx:
+    if args.sfx_music:
         sfx_entries = load_sfx_entries(args.script, sfx_path)
         with open(sfx_path, "r", encoding="utf-8") as f:
             sfx_config_data = json.load(f)

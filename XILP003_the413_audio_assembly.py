@@ -1,50 +1,60 @@
 """Assemble voice stems into the final master audio file.
 
 Reads cast configuration for per-speaker audio settings (pan, filter),
-applies effects to each stem, and concatenates into a master MP3.
+applies effects to each stem, and produces a master MP3.
+
+When a parsed script JSON is available (either supplied via ``--parsed``
+or auto-derived from the episode tag), the assembler runs a two-pass
+multi-track mix:
+
+- **Foreground pass**: dialogue and one-shot SFX/BEAT stems are
+  concatenated sequentially (original behaviour).  The timestamp of
+  every stem is recorded in a timeline dict.
+- **Background pass**: AMBIENCE stems are looped and overlaid under
+  dialogue at their cue points; MUSIC stings are overlaid without
+  looping.  Both are ducked slightly below the foreground level.
+- Foreground and background are combined with ``AudioSegment.overlay``.
+
+When no parsed JSON is found the assembler falls back to the original
+sequential concatenation (all stems in filename order with silence gaps).
 No ElevenLabs API calls are made — this module is safe to run at any
 time without consuming TTS quota.
 
 Module Attributes:
-    STEMS_DIR: Directory containing generated voice stem MP3 files.
-    SILENCE_GAP_MS: Milliseconds of silence inserted between stems.
+    STEMS_DIR: Default directory containing generated voice stem MP3 files.
+    SILENCE_GAP_MS: Milliseconds of silence inserted between foreground stems.
 """
 
 import os
 import json
 import argparse
-import glob
 
 from pydub import AudioSegment
 
 from models import CastConfiguration, VoiceConfig
+from mix_common import (
+    apply_phone_filter,
+    collect_stem_plans,
+    load_entries_index,
+    build_foreground,
+    build_ambience_layer,
+    build_music_layer,
+)
 
 STEMS_DIR = "stems"
 SILENCE_GAP_MS = 600
 
 
-def apply_phone_filter(segment: AudioSegment) -> AudioSegment:
-    """Apply a phone-speaker audio filter to an audio segment.
-
-    Cuts frequencies below 300 Hz and above 3000 Hz, then boosts
-    volume by 5 dB to simulate a phone speaker.
-
-    Args:
-        segment: Input audio segment to filter.
-
-    Returns:
-        Filtered audio segment.
-    """
-    return segment.high_pass_filter(300).low_pass_filter(3000) + 5
-
-
 def assemble_audio(config: dict[str, dict], stems_dir: str, final_output: str) -> None:
-    """Assemble voice stems into a final master audio file.
+    """Assemble voice stems sequentially into a master audio file.
 
     Loads all MP3 stems from the stems directory sorted by filename
     (sequence prefix ensures correct episode order), applies per-speaker
     audio effects (phone filter, stereo panning), concatenates with
     silence gaps, and exports the master file.
+
+    This is the original single-pass assembler.  Used as a fallback
+    when no parsed script JSON is available for two-pass mixing.
 
     Args:
         config: Mapping of speaker keys to voice settings dicts with
@@ -53,12 +63,13 @@ def assemble_audio(config: dict[str, dict], stems_dir: str, final_output: str) -
         stems_dir: Directory containing voice stem MP3 files.
         final_output: Path for the master MP3 output file.
     """
+    import glob
     stem_files = sorted(glob.glob(os.path.join(stems_dir, "*.mp3")))
     if not stem_files:
         print(f" [!] No stems found in {stems_dir}/. Run XILP002 first.")
         return
 
-    print(f"--- Phase 2: Assembling {len(stem_files)} stems ---")
+    print(f"--- Phase 2: Assembling {len(stem_files)} stems (sequential) ---")
     full_vocals = AudioSegment.empty()
 
     for stem_file in stem_files:
@@ -82,12 +93,68 @@ def assemble_audio(config: dict[str, dict], stems_dir: str, final_output: str) -
     os.system(f"mpg123 {os.path.abspath(final_output)}")
 
 
+def assemble_multitrack(
+    config: dict[str, dict],
+    stems_dir: str,
+    parsed_path: str,
+    final_output: str,
+) -> None:
+    """Assemble stems using a two-pass multi-track mix.
+
+    Builds a foreground track (dialogue + SFX/BEAT) and a background
+    layer (AMBIENCE looped across scenes, MUSIC stings at cue points),
+    then overlays them for the final master.
+
+    Requires a parsed script JSON to classify stems by direction_type.
+    Falls back to :func:`assemble_audio` if the stems directory is empty.
+
+    Args:
+        config: Per-speaker voice settings from cast config.
+        stems_dir: Directory containing episode stem MP3 files.
+        parsed_path: Path to the parsed script JSON (XILP001 output).
+        final_output: Output path for the master MP3.
+    """
+    entries_index = load_entries_index(parsed_path)
+    stem_plans = collect_stem_plans(stems_dir, entries_index)
+
+    if not stem_plans:
+        print(f" [!] No stems found in {stems_dir}/. Run XILP002 first.")
+        return
+
+    print(f"--- Phase 2: Assembling {len(stem_plans)} stems (multi-track) ---")
+
+    foreground, timeline = build_foreground(
+        stem_plans, config, apply_phone_filter, gap_ms=SILENCE_GAP_MS
+    )
+
+    if len(foreground) == 0:
+        print(" [!] No foreground stems found — only background stems present.")
+        return
+
+    total_ms = len(foreground)
+    bg_plans = [p for p in stem_plans if p.is_background]
+    if bg_plans:
+        print(f"   Mixing {len(bg_plans)} background stems (ambience/music)...")
+        ambience = build_ambience_layer(stem_plans, timeline, total_ms)
+        music = build_music_layer(stem_plans, timeline, total_ms)
+        background = ambience.overlay(music)
+        master = foreground.overlay(background)
+    else:
+        print("   No background stems found — skipping overlay pass.")
+        master = foreground
+
+    master.export(final_output, format="mp3")
+    print(f"--- Success! Created: {final_output} (Duration: {len(master)/1000:.1f}s) ---")
+    os.system(f"mpg123 {os.path.abspath(final_output)}")
+
+
 def main() -> None:
     """CLI entry point for audio assembly.
 
-    Loads cast configuration to determine per-speaker audio settings,
-    then assembles all stems in the stems directory into a master MP3.
-    Does not require an ElevenLabs API key.
+    Loads cast configuration to determine per-speaker audio settings.
+    If a parsed script JSON exists (auto-derived or via ``--parsed``),
+    runs two-pass multi-track mixing.  Otherwise falls back to sequential
+    concatenation.  Does not require an ElevenLabs API key.
     """
     parser = argparse.ArgumentParser(
         description="THE 413 Audio Assembly — assemble voice stems into master MP3"
@@ -99,6 +166,10 @@ def main() -> None:
     parser.add_argument(
         "--output", default=None,
         help="Output master MP3 path (default: the413_<TAG>_master.mp3)"
+    )
+    parser.add_argument(
+        "--parsed", default=None,
+        help="Path to parsed script JSON (default: parsed/parsed_the413_<TAG>.json)"
     )
     args = parser.parse_args()
 
@@ -116,7 +187,12 @@ def main() -> None:
     stems_dir = os.path.join(STEMS_DIR, tag)
     output = args.output or f"the413_{tag}_master.mp3"
 
-    assemble_audio(config, stems_dir, output)
+    parsed_path = args.parsed or f"parsed/parsed_the413_{tag}.json"
+    if os.path.exists(parsed_path):
+        assemble_multitrack(config, stems_dir, parsed_path, output)
+    else:
+        print(f"   [info] No parsed JSON at {parsed_path!r} — using sequential assembly.")
+        assemble_audio(config, stems_dir, output)
 
 
 if __name__ == "__main__":
