@@ -159,9 +159,15 @@ class TestParseScriptHeader:
         _, _, episode, _ = parser.parse_script_header(self.FULL)
         assert episode == 1
 
-    def test_full_header_extracts_title_from_last_quoted_string(self):
+    def test_full_header_extracts_episode_title(self):
+        """First quoted string after 'Episode N:' is the episode title, not the arc."""
         _, _, _, title = parser.parse_script_header(self.FULL)
-        assert title == "The Holiday Shift"
+        assert title == "The Empty Booth"
+
+    def test_arc_title_not_used_as_episode_title(self):
+        header = 'THE 413 Season 1: Episode 2: "Reel to Real" Arc: "The Holiday Shift" (2 of 3) Runtime: ~30 minutes'
+        _, _, _, title = parser.parse_script_header(header)
+        assert title == "Reel to Real"
 
     def test_minimal_header_extracts_season(self):
         _, season, _, _ = parser.parse_script_header(self.MINIMAL)
@@ -933,3 +939,509 @@ class TestGenerateSfxConfig:
         # AMBIENCE: DINER appears via scene header split
         effect_keys = list(config["effects"].keys())
         assert len(effect_keys) == len(set(effect_keys))
+
+
+# ─── Tests: strip_markdown_formatting ───
+
+class TestStripMarkdownFormatting:
+    def test_removes_bold_markers(self):
+        assert parser.strip_markdown_formatting("**COLD OPEN**") == "COLD OPEN"
+
+    def test_removes_h2_prefix(self):
+        assert parser.strip_markdown_formatting("## **COLD OPEN**") == "COLD OPEN"
+
+    def test_removes_h3_prefix(self):
+        assert parser.strip_markdown_formatting("### **SCENE 1: THE THEATER**") == "SCENE 1: THE THEATER"
+
+    def test_removes_h1_prefix(self):
+        assert parser.strip_markdown_formatting("# THE 413 Season 1") == "THE 413 Season 1"
+
+    def test_plain_text_unchanged(self):
+        assert parser.strip_markdown_formatting("COLD OPEN") == "COLD OPEN"
+
+    def test_bold_brackets(self):
+        """Bold-wrapped brackets should become bare brackets."""
+        assert parser.strip_markdown_formatting("**[SFX: DOOR]**") == "[SFX: DOOR]"
+
+    def test_trailing_double_space_stripped(self):
+        assert parser.strip_markdown_formatting("**MAYA**  ") == "MAYA"
+
+    def test_multiline(self):
+        """Full text with multiple lines is normalized."""
+        text = "## **COLD OPEN**\n**[BEAT]**\n**MAYA**  \nPlain text"
+        result = parser.strip_markdown_formatting(text)
+        lines = result.split("\n")
+        assert lines[0] == "COLD OPEN"
+        assert lines[1] == "[BEAT]"
+        assert lines[2] == "MAYA"
+        assert lines[3] == "Plain text"
+
+
+# ─── Tests: is_divider with markdown ───
+
+class TestIsDividerMarkdown:
+    def test_triple_dash_is_divider(self):
+        assert parser.is_divider("---") is True
+
+    def test_triple_equals_still_works(self):
+        assert parser.is_divider("===") is True
+
+    def test_regular_text_not_divider(self):
+        assert parser.is_divider("some text") is False
+
+
+# ─── Tests: end-of-episode variants ───
+
+class TestEndOfEpisodeVariants:
+    def test_end_of_production_script_stops_parsing(self, tmp_path):
+        script = (
+            "THE 413 Season 1: Episode 1: Test\n\n===\n\nCOLD OPEN\n\n"
+            "ADAM Hello there.\n\nEND OF PRODUCTION SCRIPT\n\n"
+            "ADAM This should not be parsed.\n"
+        )
+        script_file = tmp_path / "test.md"
+        script_file.write_text(script, encoding="utf-8")
+        parsed = parser.parse_script(str(script_file))
+        all_text = " ".join(e["text"] for e in parsed["entries"] if e.get("text"))
+        assert "Hello there" in all_text
+        assert "should not be parsed" not in all_text
+
+
+# ─── Tests: compound speaker matching ───
+
+class TestTryMatchSpeakerCompound:
+    def test_film_audio_compound(self):
+        result = parser.try_match_speaker("FILM AUDIO (MARGARET'S VOICE)")
+        assert result is not None
+        assert result[0] == "film_audio"
+
+    def test_stranger_compound(self):
+        result = parser.try_match_speaker("STRANGER (MALE VOICE, FLAT)")
+        assert result is not None
+        assert result[0] == "stranger"
+
+    def test_stranger_simple(self):
+        result = parser.try_match_speaker("STRANGER Hello.")
+        assert result is not None
+        assert result[0] == "stranger"
+        assert result[2] == "Hello."
+
+    def test_karen_simple(self):
+        result = parser.try_match_speaker("KAREN (clipped) Is this the young man?")
+        assert result is not None
+        assert result[0] == "karen"
+        assert result[1] == "clipped"
+
+    def test_sarah_simple(self):
+        result = parser.try_match_speaker("SARAH (quiet) I'm here.")
+        assert result is not None
+        assert result[0] == "sarah"
+
+
+# ─── Tests: OPENING CREDITS section ───
+
+class TestSectionMapOpeningCredits:
+    def test_opening_credits_recognized(self):
+        assert parser.is_section_header("OPENING CREDITS") is True
+
+    def test_opening_credits_slug(self):
+        assert parser.SECTION_MAP["OPENING CREDITS"] == "opening-credits"
+
+
+# ─── Integration: markdown-format script parsing ───
+
+MARKDOWN_SCRIPT = """\
+# THE 413 Season 1: Episode 2: "Reel to Real"
+
+## **Full Production Script with SFX, Music Cues & Production Notes**
+
+---
+
+## **COLD OPEN**
+
+**[AMBIENCE: MOVIE THEATER]**
+
+**MAYA**
+ (narration, internal voice)
+ Here's the thing about working at a movie theater.
+
+But tonight, I actually watched the movie.
+
+**[SFX: FILM AUDIO]**
+
+**FILM AUDIO (MARGARET'S VOICE)**
+ (distant, through speakers)
+ The menu was always yours.
+
+**[BEAT]**
+
+---
+
+## **OPENING CREDITS**
+
+**[SFX: RADIO STATIC]**
+
+---
+
+## **ACT ONE**
+
+### **SCENE 1: THE THEATER**
+
+**ADAM**
+ (narration)
+ I got to the theater at 2:30.
+
+**KAREN**
+ (clipped)
+ Is this the young man?
+
+(pause)
+
+My name is Karen Ellis.
+
+**STRANGER (MALE VOICE, FLAT)**
+ I'm looking for the people asking about Margaret Ellis.
+
+**[BEAT]**
+
+**STRANGER**
+ (speaking carefully)
+ Some stories aren't meant to be told.
+
+(beat)
+
+Karen Ellis has spent forty years protecting her family.
+
+---
+
+## **END OF EPISODE 2**
+
+---
+
+## **PRODUCTION NOTES**
+
+Should not appear.
+"""
+
+
+class TestParseMarkdownScript:
+    @pytest.fixture
+    def parsed(self, tmp_path):
+        script_file = tmp_path / "test_md.md"
+        script_file.write_text(MARKDOWN_SCRIPT, encoding="utf-8")
+        return parser.parse_script(str(script_file))
+
+    def test_top_level_metadata(self, parsed):
+        assert parsed["show"] == "THE 413"
+        assert parsed["season"] == 1
+        assert parsed["episode"] == 2
+
+    def test_dialogue_count(self, parsed):
+        dialogue = [e for e in parsed["entries"] if e["type"] == "dialogue"]
+        # MAYA x1, FILM AUDIO x1, ADAM x1, KAREN x1, STRANGER x2 = 6
+        assert len(dialogue) == 6
+
+    def test_speakers_found(self, parsed):
+        expected = {"maya", "film_audio", "adam", "karen", "stranger"}
+        assert set(parsed["stats"]["speakers"]) == expected
+
+    def test_maya_continuation_merged(self, parsed):
+        dialogue = [e for e in parsed["entries"] if e["type"] == "dialogue"]
+        maya_line = [d for d in dialogue if d["speaker"] == "maya"][0]
+        assert "working at a movie theater" in maya_line["text"]
+        assert "actually watched the movie" in maya_line["text"]
+
+    def test_maya_direction(self, parsed):
+        dialogue = [e for e in parsed["entries"] if e["type"] == "dialogue"]
+        maya_line = [d for d in dialogue if d["speaker"] == "maya"][0]
+        assert maya_line["direction"] == "narration, internal voice"
+
+    def test_film_audio_direction(self, parsed):
+        dialogue = [e for e in parsed["entries"] if e["type"] == "dialogue"]
+        fa_line = [d for d in dialogue if d["speaker"] == "film_audio"][0]
+        assert fa_line["direction"] == "distant, through speakers"
+
+    def test_inline_direction_not_in_text(self, parsed):
+        """Standalone (pause) and (beat) should not appear in dialogue text."""
+        dialogue = [e for e in parsed["entries"] if e["type"] == "dialogue"]
+        karen_line = [d for d in dialogue if d["speaker"] == "karen"][0]
+        assert "(pause)" not in karen_line["text"]
+        assert "Karen Ellis" in karen_line["text"]
+
+    def test_stranger_no_direction_line(self, parsed):
+        """STRANGER (MALE VOICE, FLAT) with no separate direction line."""
+        dialogue = [e for e in parsed["entries"] if e["type"] == "dialogue"]
+        stranger_lines = [d for d in dialogue if d["speaker"] == "stranger"]
+        first = stranger_lines[0]
+        assert "looking for" in first["text"]
+
+    def test_stranger_with_direction(self, parsed):
+        """STRANGER with a (direction) on separate line."""
+        dialogue = [e for e in parsed["entries"] if e["type"] == "dialogue"]
+        stranger_lines = [d for d in dialogue if d["speaker"] == "stranger"]
+        second = stranger_lines[1]
+        assert second["direction"] == "speaking carefully"
+        assert "stories aren't meant" in second["text"]
+
+    def test_stranger_beat_continuation_filtered(self, parsed):
+        """Standalone (beat) within STRANGER continuation not in text."""
+        dialogue = [e for e in parsed["entries"] if e["type"] == "dialogue"]
+        stranger_lines = [d for d in dialogue if d["speaker"] == "stranger"]
+        second = stranger_lines[1]
+        assert "(beat)" not in second["text"]
+        assert "Karen Ellis" in second["text"]
+
+    def test_opening_credits_section(self, parsed):
+        assert "opening-credits" in parsed["stats"]["sections"]
+
+    def test_sections_tracked(self, parsed):
+        sections = parsed["stats"]["sections"]
+        assert "cold-open" in sections
+        assert "opening-credits" in sections
+        assert "act1" in sections
+
+    def test_metadata_excluded(self, parsed):
+        all_text = " ".join(e["text"] for e in parsed["entries"] if e.get("text"))
+        assert "Should not appear" not in all_text
+
+    def test_no_bold_markers_in_output(self, parsed):
+        """No ** markers should leak into any entry text."""
+        for entry in parsed["entries"]:
+            if entry.get("text"):
+                assert "**" not in entry["text"], f"Bold in seq {entry['seq']}: {entry['text'][:50]}"
+
+    def test_sequence_numbers_ascending(self, parsed):
+        seqs = [e["seq"] for e in parsed["entries"]]
+        assert seqs == sorted(seqs)
+        assert len(seqs) == len(set(seqs))
+
+
+# ─── Integration: full production script E02 ───
+
+FULL_SCRIPT_E02_PATH = os.path.join(
+    os.path.dirname(__file__),
+    "..",
+    "scripts",
+    "Full Production Script THE 413 Season 1 _ Episode 2_ _Reel to Real_ Arc_ _The Holiday Shift_ 1_11_26 CLAUDE.AI PROJECT THE 413.md"
+)
+
+
+@pytest.mark.skipif(not os.path.exists(FULL_SCRIPT_E02_PATH), reason="E02 production script not present")
+class TestParseFullScriptE02:
+    @pytest.fixture
+    def parsed(self):
+        return parser.parse_script(FULL_SCRIPT_E02_PATH)
+
+    def test_speakers_include_new_characters(self, parsed):
+        speakers = set(parsed["stats"]["speakers"])
+        assert "karen" in speakers
+        assert "stranger" in speakers
+        assert "film_audio" in speakers
+
+    def test_dialogue_line_count_in_range(self, parsed):
+        assert 50 <= parsed["stats"]["dialogue_lines"] <= 120
+
+    def test_six_sections(self, parsed):
+        # COLD OPEN, OPENING CREDITS, ACT ONE, MID-EPISODE BREAK, ACT TWO, CLOSING
+        assert len(parsed["stats"]["sections"]) == 6
+
+    def test_season_and_episode(self, parsed):
+        assert parsed["season"] == 1
+        assert parsed["episode"] == 2
+
+    def test_no_bold_markers_in_dialogue(self, parsed):
+        dialogue = [e for e in parsed["entries"] if e["type"] == "dialogue"]
+        for d in dialogue:
+            assert "**" not in d["text"], f"Bold in seq {d['seq']}: {d['text'][:50]}"
+
+
+# ─── Integration: full production script E03 ───
+
+FULL_SCRIPT_E03_PATH = os.path.join(
+    os.path.dirname(__file__),
+    "..",
+    "scripts",
+    "Full Production Script THE 413 Season 1 _ Episode 3_ _The Long Way Home_ Arc_ _The Holiday Shift_ 1_11_26 CLAUDE.AI PROJECT THE 413.md"
+)
+
+
+@pytest.mark.skipif(not os.path.exists(FULL_SCRIPT_E03_PATH), reason="E03 production script not present")
+class TestParseFullScriptE03:
+    @pytest.fixture
+    def parsed(self):
+        return parser.parse_script(FULL_SCRIPT_E03_PATH)
+
+    def test_speakers_include_sarah(self, parsed):
+        assert "sarah" in set(parsed["stats"]["speakers"])
+
+    def test_dialogue_line_count_in_range(self, parsed):
+        assert 50 <= parsed["stats"]["dialogue_lines"] <= 200
+
+    def test_season_and_episode(self, parsed):
+        assert parsed["season"] == 1
+        assert parsed["episode"] == 3
+
+    def test_no_bold_markers_in_dialogue(self, parsed):
+        dialogue = [e for e in parsed["entries"] if e["type"] == "dialogue"]
+        for d in dialogue:
+            assert "**" not in d["text"], f"Bold in seq {d['seq']}: {d['text'][:50]}"
+
+
+# ─── Unit: S02 new speakers and sections ───
+
+class TestS02Speakers:
+    def test_tina_in_known_speakers(self):
+        assert "TINA" in parser.KNOWN_SPEAKERS
+
+    def test_martha_in_known_speakers(self):
+        assert "MARTHA" in parser.KNOWN_SPEAKERS
+
+    def test_gerald_in_known_speakers(self):
+        assert "GERALD" in parser.KNOWN_SPEAKERS
+
+    def test_elena_in_known_speakers(self):
+        assert "ELENA" in parser.KNOWN_SPEAKERS
+
+    def test_rian_s02_spelling_in_known_speakers(self):
+        assert "RÍÁN" in parser.KNOWN_SPEAKERS
+
+    def test_tina_speaker_key(self):
+        assert parser.SPEAKER_KEYS["TINA"] == "tina"
+
+    def test_martha_speaker_key(self):
+        assert parser.SPEAKER_KEYS["MARTHA"] == "martha"
+
+    def test_gerald_speaker_key(self):
+        assert parser.SPEAKER_KEYS["GERALD"] == "gerald"
+
+    def test_elena_speaker_key(self):
+        assert parser.SPEAKER_KEYS["ELENA"] == "elena"
+
+    def test_rian_s02_spelling_maps_to_rian(self):
+        assert parser.SPEAKER_KEYS["RÍÁN"] == "rian"
+
+    def test_post_interview_in_section_map(self):
+        assert "POST-INTERVIEW" in parser.SECTION_MAP
+
+    def test_post_interview_slug(self):
+        assert parser.SECTION_MAP["POST-INTERVIEW"] == "post-interview"
+
+    def test_closing_radio_station_in_section_map(self):
+        assert "CLOSING — RADIO STATION" in parser.SECTION_MAP
+
+    def test_closing_radio_station_slug(self):
+        assert parser.SECTION_MAP["CLOSING — RADIO STATION"] == "closing"
+
+
+POST_INTERVIEW_SCRIPT = """\
+# THE 413 Season 2: Episode 1: "The Return"
+
+===
+
+## POST-INTERVIEW
+
+**ADAM**
+Hi. I am Adam Santos, and I am here with Tina Brissette.
+
+Tina, this episode feels different from Season 1.
+
+**TINA**
+That's intentional. Season 2 is about return.
+
+**ADAM**
+Sarah came back with letters.
+
+**TINA**
+And that's a different kind of mystery.
+"""
+
+
+class TestPostInterviewParse:
+    @pytest.fixture
+    def parsed(self, tmp_path):
+        script_file = tmp_path / "test_s02e01.md"
+        script_file.write_text(POST_INTERVIEW_SCRIPT, encoding="utf-8")
+        return parser.parse_script(str(script_file))
+
+    def test_section_is_post_interview(self, parsed):
+        dialogue = [e for e in parsed["entries"] if e["type"] == "dialogue"]
+        for d in dialogue:
+            assert d["section"] == "post-interview", (
+                f"seq {d['seq']} has section={d['section']!r}, expected 'post-interview'"
+            )
+
+    def test_tina_lines_parse_as_tina(self, parsed):
+        dialogue = [e for e in parsed["entries"] if e["type"] == "dialogue"]
+        tina_lines = [d for d in dialogue if d["speaker"] == "tina"]
+        assert len(tina_lines) == 2
+
+    def test_adam_lines_parse_as_adam(self, parsed):
+        dialogue = [e for e in parsed["entries"] if e["type"] == "dialogue"]
+        adam_lines = [d for d in dialogue if d["speaker"] == "adam"]
+        assert len(adam_lines) == 2
+
+    def test_tina_text_not_in_adam_dialogue(self, parsed):
+        """Tina's spoken lines must not be appended to Adam's text."""
+        dialogue = [e for e in parsed["entries"] if e["type"] == "dialogue"]
+        adam_lines = [d for d in dialogue if d["speaker"] == "adam"]
+        for d in adam_lines:
+            assert "That's intentional" not in d["text"]
+            assert "different kind of mystery" not in d["text"]
+
+    def test_no_speaker_names_in_dialogue_text(self, parsed):
+        dialogue = [e for e in parsed["entries"] if e["type"] == "dialogue"]
+        for d in dialogue:
+            assert "TINA" not in d["text"], f"Speaker name in text: {d['text'][:60]}"
+            assert "ADAM" not in d["text"], f"Speaker name in text: {d['text'][:60]}"
+
+
+# ─── Unit: S02E03 new speakers, sections, divider fix ───
+
+class TestS02E03Fixtures:
+    def test_margaret_vo_in_known_speakers(self):
+        assert "MARGARET (V.O.)" in parser.KNOWN_SPEAKERS
+
+    def test_margaret_vo_before_plain_margaret(self):
+        # Compound name must appear before plain MARGARET for longest-first matching
+        idx_vo = parser.KNOWN_SPEAKERS.index("MARGARET (V.O.)")
+        idx_plain = parser.KNOWN_SPEAKERS.index("MARGARET")
+        assert idx_vo < idx_plain
+
+    def test_margaret_vo_speaker_key(self):
+        assert parser.SPEAKER_KEYS["MARGARET (V.O.)"] == "margaret"
+
+    def test_clerk_in_known_speakers(self):
+        assert "CLERK" in parser.KNOWN_SPEAKERS
+
+    def test_clerk_speaker_key(self):
+        assert parser.SPEAKER_KEYS["CLERK"] == "clerk"
+
+    def test_post_credits_scene_in_section_map(self):
+        assert "POST-CREDITS SCENE" in parser.SECTION_MAP
+
+    def test_post_credits_scene_slug(self):
+        assert parser.SECTION_MAP["POST-CREDITS SCENE"] == "post-credits"
+
+    def test_dez_closing_narration_in_section_map(self):
+        assert "DEZ'S CLOSING NARRATION" in parser.SECTION_MAP
+
+    def test_dez_closing_narration_slug(self):
+        assert parser.SECTION_MAP["DEZ'S CLOSING NARRATION"] == "dez-closing"
+
+    def test_production_notes_in_section_map(self):
+        assert "PRODUCTION NOTES" in parser.SECTION_MAP
+
+    def test_five_dash_divider_recognized(self):
+        assert parser.is_divider("-----") is True
+
+    def test_five_equals_divider_recognized(self):
+        assert parser.is_divider("=====") is True
+
+    def test_three_dash_divider_still_recognized(self):
+        assert parser.is_divider("---") is True
+
+    def test_three_equals_divider_still_recognized(self):
+        assert parser.is_divider("===") is True
+
+    def test_mixed_divider_not_recognized(self):
+        assert parser.is_divider("-==-") is False

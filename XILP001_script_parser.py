@@ -19,35 +19,70 @@ import sys
 
 from models import ScriptEntry, ScriptStats, ParsedScript, episode_tag
 
-# Known speakers — ordered longest-first so "MR. PATTERSON" matches before "MR."
+# Known speakers — ordered longest-first so compound names match before short ones
 KNOWN_SPEAKERS = [
+    "FILM AUDIO (MARGARET'S VOICE)",
+    "STRANGER (MALE VOICE, FLAT)",
+    "MARGARET (V.O.)",
     "MR. PATTERSON",
+    "FILM AUDIO",
+    "STRANGER",
+    "MARGARET",
+    "MARTHA",
+    "GERALD",
+    "KAREN",
+    "SARAH",
+    "ELENA",
+    "CLERK",
     "ADAM",
     "DEZ",
     "MAYA",
     "AVA",
-    "RÍAN",
+    "RÍAN",   # S01 spelling
+    "RÍÁN",   # S02 spelling
     "FRANK",
+    "TINA",
 ]
 
 # Map display names to normalized keys for cast_config lookup
 SPEAKER_KEYS = {
+    "FILM AUDIO (MARGARET'S VOICE)": "film_audio",
+    "STRANGER (MALE VOICE, FLAT)": "stranger",
+    "MR. PATTERSON": "mr_patterson",
+    "FILM AUDIO": "film_audio",
+    "STRANGER": "stranger",
+    "MARGARET (V.O.)": "margaret",
+    "MARGARET": "margaret",
+    "MARTHA": "martha",
+    "GERALD": "gerald",
+    "CLERK": "clerk",
+    "KAREN": "karen",
+    "SARAH": "sarah",
+    "ELENA": "elena",
     "ADAM": "adam",
     "DEZ": "dez",
     "MAYA": "maya",
     "AVA": "ava",
     "RÍAN": "rian",
+    "RÍÁN": "rian",
     "FRANK": "frank",
-    "MR. PATTERSON": "mr_patterson",
+    "TINA": "tina",
 }
 
 # Section detection
 SECTION_MAP = {
     "COLD OPEN": "cold-open",
+    "OPENING CREDITS": "opening-credits",
     "ACT ONE": "act1",
     "ACT TWO": "act2",
     "MID-EPISODE BREAK": "mid-break",
     "CLOSING": "closing",
+    "CLOSING — RADIO STATION": "closing",       # S02E01 variant
+    "POST-INTERVIEW": "post-interview",
+    "POST-CREDITS SCENE": "post-credits",       # S01E03
+    "DEZ'S CLOSING NARRATION": "dez-closing",       # S02E03 straight apostrophe
+    "DEZ\u2019S CLOSING NARRATION": "dez-closing",  # S02E03 curly apostrophe
+    "PRODUCTION NOTES": "production-notes",     # S02E03 preamble
 }
 
 # Direction subtypes
@@ -70,6 +105,33 @@ def strip_markdown_escapes(text: str) -> str:
     # Remove all remaining backslash escapes (e.g., \. \~ \* \& \!)
     text = re.sub(r"\\(.)", r"\1", text)
     return text
+
+
+def strip_markdown_formatting(text: str) -> str:
+    """Remove markdown formatting syntax (bold, headings, trailing breaks).
+
+    Intended to run AFTER ``strip_markdown_escapes()`` so that backslash
+    escapes are already resolved.  Operates per-line to correctly strip
+    ``#`` heading prefixes while leaving other content intact.
+
+    Args:
+        text: Text with markdown formatting (``**``, ``##``, etc.).
+
+    Returns:
+        Text with formatting removed.  Plain-text input passes through
+        unchanged.
+    """
+    lines = text.split("\n")
+    cleaned = []
+    for line in lines:
+        # Remove heading prefixes (# through ######)
+        line = re.sub(r"^#{1,6}\s*", "", line)
+        # Remove bold markers
+        line = line.replace("**", "")
+        # Strip trailing double-space (markdown line break) and whitespace
+        line = line.rstrip()
+        cleaned.append(line)
+    return "\n".join(cleaned)
 
 
 def classify_direction(text: str) -> str | None:
@@ -160,15 +222,15 @@ def is_scene_header(line: str) -> bool:
 
 
 def is_divider(line: str) -> bool:
-    """Check if a line is a section divider (``===``).
+    """Check if a line is a section divider (``===`` or ``---``).
 
     Args:
         line: A stripped line from the script.
 
     Returns:
-        ``True`` if the stripped line equals ``"==="``.
+        ``True`` if the stripped line equals ``"==="`` or ``"---"``.
     """
-    return line.strip() == "==="
+    return bool(re.match(r"^={3,}$|^-{3,}$", line.strip()))
 
 
 def is_metadata_section(line: str) -> bool:
@@ -258,8 +320,9 @@ def parse_script_header(line: str) -> tuple[str, int | None, int, str]:
         SHOW [Season N:] Episode N: ["Arc Title" Arc:] "Episode Title" ...
 
     Season is optional — scripts without a season declaration return ``None``.
-    Title is the last double-quoted string if present, otherwise the bare text
-    following ``Episode N:``.
+    Title is the first double-quoted string after ``Episode N:``, which is the
+    episode title (not the arc title that may follow).  Falls back to bare text
+    after ``Episode N:`` when no quoted strings are present.
 
     Args:
         line: The first non-empty line of the production script, after
@@ -281,13 +344,17 @@ def parse_script_header(line: str) -> tuple[str, int | None, int, str]:
     ep_match = re.search(r"Episode\s+(\d+)", line)
     episode = int(ep_match.group(1)) if ep_match else 1
 
-    # Title: last double-quoted string, or bare text after "Episode N: "
-    quoted = re.findall(r'"([^"]+)"', line)
-    if quoted:
-        title = quoted[-1]
+    # Title: first double-quoted string after "Episode N:", or bare text
+    ep_rest = re.search(r"Episode\s+\d+[:\s]+(.*)", line)
+    if ep_rest:
+        rest_text = ep_rest.group(1)
+        quoted_after_ep = re.search(r'"([^"]+)"', rest_text)
+        if quoted_after_ep:
+            title = quoted_after_ep.group(1)
+        else:
+            title = rest_text.strip()
     else:
-        ep_rest = re.search(r"Episode\s+\d+[:\s]+(.+)", line)
-        title = ep_rest.group(1).strip() if ep_rest else ""
+        title = ""
 
     return show, season, episode, title
 
@@ -319,6 +386,7 @@ def parse_script(filepath: str, debug_output: str | None = None) -> dict:
         raw = f.read()
 
     raw = strip_markdown_escapes(raw)
+    raw = strip_markdown_formatting(raw)
     lines = raw.split("\n")
     # debug_line_map: (1-based line number, raw line text, entry index)
     debug_line_map: list[tuple[int, str, int]] = []
@@ -329,6 +397,7 @@ def parse_script(filepath: str, debug_output: str | None = None) -> dict:
     current_scene = None
     in_metadata = False
     last_dialogue_idx = None  # Index into entries for continuation handling
+    pending_speaker = None  # (speaker_key, direction_or_None) for multi-line dialogue
 
     # Parse metadata from the header line, then skip it
     start = 0
@@ -358,6 +427,31 @@ def parse_script(filepath: str, debug_output: str | None = None) -> dict:
         if not line:
             continue
 
+        # Handle multi-line dialogue: pending speaker awaiting direction/text
+        if pending_speaker is not None:
+            p_speaker_key, p_direction = pending_speaker
+            # Standalone parenthetical → direction line
+            if line.startswith("(") and line.endswith(")"):
+                p_direction = line[1:-1].strip()
+                pending_speaker = (p_speaker_key, p_direction)
+                continue
+            # Otherwise this line is the spoken text
+            seq += 1
+            entries.append({
+                "seq": seq,
+                "type": "dialogue",
+                "section": current_section,
+                "scene": current_scene,
+                "speaker": p_speaker_key,
+                "direction": p_direction,
+                "text": line,
+                "direction_type": None,
+            })
+            debug_line_map.append((i + 1, lines[i], len(entries) - 1))
+            last_dialogue_idx = len(entries) - 1
+            pending_speaker = None
+            continue
+
         if is_divider(line):
             continue
 
@@ -369,8 +463,8 @@ def parse_script(filepath: str, debug_output: str | None = None) -> dict:
             # Check if we've left metadata (shouldn't happen, metadata is at the end)
             continue
 
-        # Also stop at END OF EPISODE
-        if line.startswith("END OF EPISODE"):
+        # Also stop at END OF EPISODE / END OF PRODUCTION SCRIPT
+        if line.startswith("END OF EPISODE") or line.startswith("END OF PRODUCTION"):
             break
 
         # Section headers
@@ -474,11 +568,18 @@ def parse_script(filepath: str, debug_output: str | None = None) -> dict:
                 })
                 debug_line_map.append((i + 1, lines[i], len(entries) - 1))
                 last_dialogue_idx = len(entries) - 1
+            else:
+                # Multi-line format: speaker name only, direction/text on next lines
+                pending_speaker = (speaker_key, direction)
+                last_dialogue_idx = None
             continue
 
         # Continuation text (no speaker prefix, no brackets)
         # Append to previous dialogue entry
         if last_dialogue_idx is not None and entries[last_dialogue_idx]["type"] == "dialogue":
+            # Filter standalone parentheticals — acting notes, not spoken text
+            if line.startswith("(") and line.endswith(")"):
+                continue
             entries[last_dialogue_idx]["text"] += " " + line
             continue
 

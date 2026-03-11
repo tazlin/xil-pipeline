@@ -7,6 +7,7 @@ Defined in `XILP001_script_parser.py` at module level:
 ```python
 SECTION_MAP = {
     "COLD OPEN":         "cold-open",
+    "OPENING CREDITS":   "opening-credits",
     "ACT ONE":           "act1",
     "ACT TWO":           "act2",
     "MID-EPISODE BREAK": "mid-break",
@@ -14,7 +15,9 @@ SECTION_MAP = {
 }
 ```
 
-Keys are the exact strings that appear in the production script markdown. Values are URL-safe slugs stamped onto every parsed entry and embedded in every stem filename.
+Keys are the exact strings that appear in the production script (after markdown formatting is stripped). Values are URL-safe slugs stamped onto every parsed entry and embedded in every stem filename.
+
+Note: Section headers may appear as plain text (`COLD OPEN`) in S01E01-style scripts or as markdown headings (`## **COLD OPEN**`) in S01E02+ scripts. The `strip_markdown_formatting()` pass normalizes both to bare text before `is_section_header()` checks against these keys.
 
 ---
 
