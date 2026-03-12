@@ -50,6 +50,7 @@ class StemPlan:
     filepath: str
     direction_type: str | None
     entry_type: str | None
+    text: str | None = None
 
     @property
     def is_background(self) -> bool:
@@ -115,6 +116,7 @@ def collect_stem_plans(
             filepath=filepath,
             direction_type=entry.get("direction_type"),
             entry_type=entry.get("type"),
+            text=entry.get("text"),
         ))
     return plans
 
@@ -230,16 +232,19 @@ def build_ambience_layer(
             Negative values duck the ambience below dialogue.
 
     Returns:
-        Full-length :class:`~pydub.AudioSegment` with ambience looped
-        at each cue point. Silent where no ambience is active.
+        Tuple of ``(layer, labels)`` where *layer* is a full-length
+        :class:`~pydub.AudioSegment` with ambience looped at each cue
+        point, and *labels* is a list of ``(start_sec, end_sec, text)``
+        tuples spanning each looped region.
     """
     layer = AudioSegment.silent(duration=total_ms)
+    labels: list[tuple[float, float, str]] = []
     ambience_plans = sorted(
         (p for p in stem_plans if p.direction_type == "AMBIENCE"),
         key=lambda p: p.seq,
     )
     if not ambience_plans:
-        return layer
+        return layer, labels
 
     # All background cue ms values (AMBIENCE + MUSIC) sorted by position.
     bg_cues: list[tuple[int, int]] = sorted(
@@ -272,8 +277,10 @@ def build_ambience_layer(
             clip = clip + level_db
         looped = _loop_clip(clip, duration_needed)
         layer = layer.overlay(looped, position=start_ms)
+        label_text = plan.text or plan.direction_type or "AMBIENCE"
+        labels.append((start_ms / 1000.0, end_ms / 1000.0, label_text))
 
-    return layer
+    return layer, labels
 
 
 def build_music_layer(
@@ -294,10 +301,13 @@ def build_music_layer(
         level_db: Volume adjustment applied before overlaying.
 
     Returns:
-        Full-length :class:`~pydub.AudioSegment` with music stings
-        overlaid at their cue positions. Silent where no music is cued.
+        Tuple of ``(layer, labels)`` where *layer* is a full-length
+        :class:`~pydub.AudioSegment` with music stings overlaid at
+        their cue positions, and *labels* is a list of
+        ``(start_sec, end_sec, text)`` tuples for each sting.
     """
     layer = AudioSegment.silent(duration=total_ms)
+    labels: list[tuple[float, float, str]] = []
     for plan in sorted(stem_plans, key=lambda p: p.seq):
         if plan.direction_type != "MUSIC":
             continue
@@ -308,7 +318,9 @@ def build_music_layer(
         if level_db != 0:
             clip = clip + level_db
         layer = layer.overlay(clip, position=start_ms)
-    return layer
+        label_text = plan.text or plan.direction_type or "MUSIC"
+        labels.append((start_ms / 1000.0, (start_ms + len(clip)) / 1000.0, label_text))
+    return layer, labels
 
 
 def build_dialogue_layer(
@@ -317,7 +329,7 @@ def build_dialogue_layer(
     total_ms: int,
     cast_config: dict,
     apply_effects_fn=None,
-) -> AudioSegment:
+) -> tuple:
     """Build an isolated dialogue layer for DAW export.
 
     Places only dialogue stems (``entry_type == "dialogue"``) at their
@@ -332,10 +344,13 @@ def build_dialogue_layer(
         apply_effects_fn: Optional phone filter callable.
 
     Returns:
-        Full-length :class:`~pydub.AudioSegment` with dialogue stems
-        at their timeline positions.
+        Tuple of ``(layer, labels)`` where *layer* is a full-length
+        :class:`~pydub.AudioSegment` with dialogue stems at their
+        timeline positions, and *labels* is a list of
+        ``(start_sec, end_sec, speaker)`` tuples for Audacity label export.
     """
     layer = AudioSegment.silent(duration=total_ms)
+    labels: list[tuple[float, float, str]] = []
     for plan in sorted(stem_plans, key=lambda p: p.seq):
         if plan.entry_type != "dialogue":
             continue
@@ -347,8 +362,10 @@ def build_dialogue_layer(
             if cast_config[speaker].get("filter") and apply_effects_fn:
                 segment = apply_effects_fn(segment)
             segment = segment.pan(cast_config[speaker].get("pan", 0.0))
+        end_ms = start_ms + len(segment)
+        labels.append((start_ms / 1000.0, end_ms / 1000.0, speaker))
         layer = layer.overlay(segment, position=start_ms)
-    return layer
+    return layer, labels
 
 
 def build_sfx_layer(
@@ -367,14 +384,19 @@ def build_sfx_layer(
         total_ms: Total track length in milliseconds.
 
     Returns:
-        Full-length :class:`~pydub.AudioSegment` with SFX stems
-        at their timeline positions.
+        Tuple of ``(layer, labels)`` where *layer* is a full-length
+        :class:`~pydub.AudioSegment` with SFX stems at their timeline
+        positions, and *labels* is a list of ``(start_sec, end_sec, text)``
+        tuples for each one-shot effect.
     """
     layer = AudioSegment.silent(duration=total_ms)
+    labels: list[tuple[float, float, str]] = []
     for plan in sorted(stem_plans, key=lambda p: p.seq):
         if plan.direction_type not in ("SFX", "BEAT"):
             continue
         start_ms = timeline.get(plan.seq, 0)
         segment = AudioSegment.from_file(plan.filepath)
         layer = layer.overlay(segment, position=start_ms)
-    return layer
+        label_text = plan.text or plan.direction_type or "SFX"
+        labels.append((start_ms / 1000.0, (start_ms + len(segment)) / 1000.0, label_text))
+    return layer, labels

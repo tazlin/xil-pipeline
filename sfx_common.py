@@ -122,7 +122,7 @@ def ensure_shared_sfx(
             generation.
     """
     path = shared_sfx_path(sfx_dir, effect_key)
-    if os.path.exists(path):
+    if os.path.exists(path) and os.path.getsize(path) > 0:
         return path
 
     os.makedirs(sfx_dir, exist_ok=True)
@@ -145,10 +145,12 @@ def ensure_shared_sfx(
             duration_seconds=effect.duration_seconds,
             prompt_influence=prompt_influence,
         )
-        with open(path, "wb") as f:
+        tmp_path = path + ".tmp"
+        with open(tmp_path, "wb") as f:
             for chunk in audio_stream:
                 if chunk:
                     f.write(chunk)
+        os.rename(tmp_path, path)
 
     tag_mp3(path, show=show, title=effect_key)
 
@@ -166,7 +168,7 @@ def place_episode_stem(shared_path: str, stem_path: str) -> bool:
         ``True`` if the file was copied, ``False`` if the stem already
         existed on disk.
     """
-    if os.path.exists(stem_path):
+    if os.path.exists(stem_path) and os.path.getsize(stem_path) > 0:
         return False
     os.makedirs(os.path.dirname(stem_path), exist_ok=True)
     shutil.copy2(shared_path, stem_path)

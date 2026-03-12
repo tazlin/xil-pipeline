@@ -296,7 +296,7 @@ class TestBuildAmbienceLayer:
         plans = mix_common.collect_stem_plans(str(stems_with_bg), parsed_entries_index)
         _, timeline = mix_common.build_foreground(plans, config, gap_ms=0)
         total_ms = 600  # two 300ms dialogue stems
-        layer = mix_common.build_ambience_layer(plans, timeline, total_ms)
+        layer, _ = mix_common.build_ambience_layer(plans, timeline, total_ms)
         assert len(layer) == total_ms
 
     def test_no_ambience_returns_silence(self, tmp_path, config):
@@ -306,18 +306,19 @@ class TestBuildAmbienceLayer:
         idx = {1: {"seq": 1, "type": "dialogue", "direction_type": None}}
         plans = mix_common.collect_stem_plans(str(stems_dir), idx)
         _, timeline = mix_common.build_foreground(plans, config, gap_ms=0)
-        layer = mix_common.build_ambience_layer(plans, timeline, 300)
+        layer, labels = mix_common.build_ambience_layer(plans, timeline, 300)
         # Should be full silence (not all-zero exactly due to float, but very quiet)
         assert len(layer) == 300
+        assert labels == []
 
     def test_level_db_zero_preserves_amplitude(self, stems_with_bg, parsed_entries_index, config):
         plans = mix_common.collect_stem_plans(str(stems_with_bg), parsed_entries_index)
         _, timeline = mix_common.build_foreground(plans, config, gap_ms=0)
         total_ms = 600
-        layer_ducked = mix_common.build_ambience_layer(
+        layer_ducked, _ = mix_common.build_ambience_layer(
             plans, timeline, total_ms, level_db=mix_common.AMBIENCE_LEVEL_DB
         )
-        layer_full = mix_common.build_ambience_layer(
+        layer_full, _ = mix_common.build_ambience_layer(
             plans, timeline, total_ms, level_db=0
         )
         # Ducked layer should be quieter (lower dBFS)
@@ -331,7 +332,7 @@ class TestBuildMusicLayer:
         plans = mix_common.collect_stem_plans(str(stems_with_bg), parsed_entries_index)
         _, timeline = mix_common.build_foreground(plans, config, gap_ms=0)
         total_ms = 600
-        layer = mix_common.build_music_layer(plans, timeline, total_ms)
+        layer, _ = mix_common.build_music_layer(plans, timeline, total_ms)
         assert len(layer) == total_ms
 
     def test_no_music_returns_silence(self, tmp_path, config):
@@ -341,8 +342,9 @@ class TestBuildMusicLayer:
         idx = {1: {"seq": 1, "type": "dialogue", "direction_type": None}}
         plans = mix_common.collect_stem_plans(str(stems_dir), idx)
         _, timeline = mix_common.build_foreground(plans, config, gap_ms=0)
-        layer = mix_common.build_music_layer(plans, timeline, 300)
+        layer, labels = mix_common.build_music_layer(plans, timeline, 300)
         assert len(layer) == 300
+        assert labels == []
 
 
 # ─── Tests: XILP003 assemble_audio (original sequential) ───

@@ -59,6 +59,13 @@ LAYERS: list[tuple[str, str, str]] = [
 ]
 
 
+def _write_labels(output_dir: str, fname: str, labels: list[tuple[float, float, str]]) -> None:
+    """Write an Audacity label file (tab-separated start, end, text)."""
+    with open(os.path.join(output_dir, fname), "w", encoding="utf-8") as lf:
+        for start_s, end_s, text in labels:
+            lf.write(f"{start_s:.3f}\t{end_s:.3f}\t{text}\n")
+
+
 def _make_audacity_script(tag: str, layer_files: list[tuple[str, str]]) -> str:
     """Generate the content of the Audacity import helper script.
 
@@ -228,7 +235,7 @@ def export_daw_layers(
 
     # --- Dialogue layer ---
     print("--- Building dialogue layer ---")
-    dlg = build_dialogue_layer(
+    dlg, labels = build_dialogue_layer(
         stem_plans, timeline, total_ms, config, apply_phone_filter
     )
     fname = f"{tag}_layer_dialogue.wav"
@@ -236,29 +243,43 @@ def export_daw_layers(
     layer_files.append(("Dialogue", fname))
     print(f"    Written: {output_dir}/{fname}")
 
+    # --- Dialogue label track ---
+    _write_labels(output_dir, f"{tag}_labels_dialogue.txt", labels)
+    layer_files.append(("Labels (Dialogue)", f"{tag}_labels_dialogue.txt"))
+    print(f"    Written: {output_dir}/{tag}_labels_dialogue.txt")
+
     # --- Ambience layer ---
     print("--- Building ambience layer ---")
-    amb = build_ambience_layer(stem_plans, timeline, total_ms, level_db=0)
+    amb, amb_labels = build_ambience_layer(stem_plans, timeline, total_ms, level_db=0)
     fname = f"{tag}_layer_ambience.wav"
     amb.export(os.path.join(output_dir, fname), format="wav")
     layer_files.append(("Ambience", fname))
     print(f"    Written: {output_dir}/{fname}")
+    _write_labels(output_dir, f"{tag}_labels_ambience.txt", amb_labels)
+    layer_files.append(("Labels (Ambience)", f"{tag}_labels_ambience.txt"))
+    print(f"    Written: {output_dir}/{tag}_labels_ambience.txt")
 
     # --- Music layer ---
     print("--- Building music layer ---")
-    mus = build_music_layer(stem_plans, timeline, total_ms, level_db=0)
+    mus, mus_labels = build_music_layer(stem_plans, timeline, total_ms, level_db=0)
     fname = f"{tag}_layer_music.wav"
     mus.export(os.path.join(output_dir, fname), format="wav")
     layer_files.append(("Music", fname))
     print(f"    Written: {output_dir}/{fname}")
+    _write_labels(output_dir, f"{tag}_labels_music.txt", mus_labels)
+    layer_files.append(("Labels (Music)", f"{tag}_labels_music.txt"))
+    print(f"    Written: {output_dir}/{tag}_labels_music.txt")
 
     # --- SFX layer ---
     print("--- Building SFX layer ---")
-    sfx = build_sfx_layer(stem_plans, timeline, total_ms)
+    sfx, sfx_labels = build_sfx_layer(stem_plans, timeline, total_ms)
     fname = f"{tag}_layer_sfx.wav"
     sfx.export(os.path.join(output_dir, fname), format="wav")
     layer_files.append(("SFX", fname))
     print(f"    Written: {output_dir}/{fname}")
+    _write_labels(output_dir, f"{tag}_labels_sfx.txt", sfx_labels)
+    layer_files.append(("Labels (SFX)", f"{tag}_labels_sfx.txt"))
+    print(f"    Written: {output_dir}/{tag}_labels_sfx.txt")
 
     # --- Audacity helper script ---
     script_fname = f"{tag}_open_in_audacity.py"

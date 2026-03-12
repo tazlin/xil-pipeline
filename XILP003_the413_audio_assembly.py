@@ -135,8 +135,8 @@ def assemble_multitrack(
     bg_plans = [p for p in stem_plans if p.is_background]
     if bg_plans:
         print(f"   Mixing {len(bg_plans)} background stems (ambience/music)...")
-        ambience = build_ambience_layer(stem_plans, timeline, total_ms)
-        music = build_music_layer(stem_plans, timeline, total_ms)
+        ambience, _ = build_ambience_layer(stem_plans, timeline, total_ms)
+        music, _ = build_music_layer(stem_plans, timeline, total_ms)
         background = ambience.overlay(music)
         master = foreground.overlay(background)
     else:
