@@ -9,7 +9,9 @@ Module Attributes:
 
 import os
 import json
+import shutil
 import argparse
+from elevenlabs import VoiceSettings
 from elevenlabs.client import ElevenLabs
 
 from models import VoiceConfig, DialogueEntry, CastConfiguration, episode_tag
@@ -17,6 +19,7 @@ from sfx_common import (
     load_sfx_entries,
     generate_sfx as generate_sfx_stems,
     dry_run_sfx,
+    tag_mp3,
 )
 
 # Setup ElevenLabs Client
@@ -83,7 +86,7 @@ def get_best_model_for_budget() -> str:
     """Select the best ElevenLabs TTS model based on remaining quota.
 
     Returns:
-        Model ID string: ``"eleven_v3"`` for healthy balance,
+        Model ID string: ``"eleven_multilingual_v2"`` for healthy balance,
         ``"eleven_flash_v2_5"`` when low, or ``"eleven_multilingual_v2"``
         as API-error fallback.
     """
@@ -94,8 +97,8 @@ def get_best_model_for_budget() -> str:
         remaining = user_info.subscription.character_limit - user_info.subscription.character_count
 
         if remaining > SAFE_THRESHOLD:
-            print(f" [Budget] Healthy Balance: {remaining:,} left. Using 'eleven_v3'.")
-            return "eleven_v3"
+            print(f" [Budget] Healthy Balance: {remaining:,} left. Using 'eleven_multilingual_v2'.")
+            return "eleven_multilingual_v2"
         else:
             print(f" [Budget] LOW BALANCE: {remaining:,} left. Switching to 'eleven_flash_v2_5' (50% cheaper).")
             return "eleven_flash_v2_5"
@@ -157,7 +160,7 @@ def load_production(
     config = {}
     for key, member in cast_cfg.cast.items():
         vc = VoiceConfig(id=member.voice_id, pan=member.pan, filter=member.filter)
-        config[key] = vc.model_dump()
+        config[key] = {**vc.model_dump(), "full_name": member.full_name}
 
     # Extract dialogue entries with stem naming info
     dialogue_entries = []
@@ -184,6 +187,7 @@ def load_production(
 
 def dry_run(
     config: dict[str, dict], dialogue_entries: list[dict], start_from: int = 1,
+    stop_at: int | None = None,
     sfx_entries: list[dict] | None = None, sfx_config: dict | None = None,
     stems_dir: str = "",
 ) -> None:
@@ -194,6 +198,8 @@ def dry_run(
         dialogue_entries: Dialogue entry dicts from ``load_production()``.
         start_from: Sequence number to start from (lines before this
             are shown but marked as skipped).
+        stop_at: Sequence number to stop at, inclusive (lines after this
+            are shown but marked as skipped). ``None`` means no upper limit.
         sfx_entries: Optional SFX entry dicts from ``load_sfx_entries()``.
         sfx_config: Optional raw SFX config dict.
         stems_dir: Episode stems directory (for SFX shared-library status).
@@ -208,8 +214,9 @@ def dry_run(
     for entry in dialogue_entries:
         char_count = len(entry["text"])
         total_chars += char_count
-        marker = " " if entry["seq"] >= start_from else "x"
-        if entry["seq"] >= start_from:
+        in_range = entry["seq"] >= start_from and (stop_at is None or entry["seq"] <= stop_at)
+        marker = " " if in_range else "x"
+        if in_range:
             lines_to_generate += 1
 
         direction_label = f" ({entry['direction']})" if entry["direction"] else ""
@@ -228,13 +235,22 @@ def dry_run(
         dry_run_sfx(sfx_entries, sfx_config, stems_dir)
 
     # Summary
-    chars_from_start = sum(len(e["text"]) for e in dialogue_entries if e["seq"] >= start_from)
+    chars_in_range = sum(
+        len(e["text"]) for e in dialogue_entries
+        if e["seq"] >= start_from and (stop_at is None or e["seq"] <= stop_at)
+    )
     tbd_voices = [sp for sp, cfg in config.items() if cfg["id"] == "TBD"]
 
     print(f"{'='*70}")
     print(f"TOTAL:  {len(dialogue_entries)} lines, {total_chars:,} TTS characters")
-    if start_from > 1:
-        print(f"FROM {start_from}: {lines_to_generate} lines, {chars_from_start:,} TTS characters")
+    if start_from > 1 or stop_at is not None:
+        if stop_at is not None and start_from > 1:
+            range_label = f"FROM {start_from}–{stop_at}"
+        elif stop_at is not None:
+            range_label = f"THRU {stop_at}"
+        else:
+            range_label = f"FROM {start_from}"
+        print(f"{range_label}: {lines_to_generate} lines, {chars_in_range:,} TTS characters")
     if tbd_voices:
         print(f"\n  WARNING: {len(tbd_voices)} voices still need voice_id assignment: {', '.join(tbd_voices)}")
         print(f"  Use XILU001_discover_voices_T2S.py to browse voices, then update cast_the413.json")
@@ -243,7 +259,7 @@ def dry_run(
 
 def generate_voices(
     config: dict[str, dict], dialogue_entries: list[dict],
-    stems_dir: str, start_from: int = 1,
+    stems_dir: str, start_from: int = 1, stop_at: int | None = None,
 ) -> None:
     """Generate individual voice stem MP3s via the ElevenLabs TTS API.
 
@@ -256,13 +272,23 @@ def generate_voices(
         dialogue_entries: Dialogue entry dicts from ``load_production()``.
         stems_dir: Directory to write stem MP3 files into.
         start_from: Sequence number to resume generation from.
+        stop_at: Sequence number to stop at, inclusive. ``None`` means
+            process all entries from ``start_from`` onward.
     """
     os.makedirs(stems_dir, exist_ok=True)
 
-    # Filter to entries from start_from onward
-    entries_to_process = [e for e in dialogue_entries if e["seq"] >= start_from]
+    # Filter to entries in the requested range
+    entries_to_process = [
+        e for e in dialogue_entries
+        if e["seq"] >= start_from and (stop_at is None or e["seq"] <= stop_at)
+    ]
 
-    print(f"--- Phase 1: Generating {len(entries_to_process)} voice stems ---")
+    range_note = ""
+    if stop_at is not None:
+        range_note = f" (seq {start_from}–{stop_at})"
+    elif start_from > 1:
+        range_note = f" (from seq {start_from})"
+    print(f"--- Phase 1: Generating {len(entries_to_process)} voice stems{range_note} ---")
     current_model = get_best_model_for_budget()
     generated_count = 0
 
@@ -299,6 +325,15 @@ def generate_voices(
             for chunk in audio_stream:
                 if chunk:
                     f.write(chunk)
+
+        full_name = config.get(speaker, {}).get("full_name", speaker.title())
+        first_five = " ".join(text.split()[:5])
+        tag_mp3(
+            stem_file,
+            title=f"{full_name}: {first_five}",
+            artist=full_name,
+            lyrics=text,
+        )
         print(f"   Saved: {stem_file}")
         generated_count += 1
 
@@ -325,6 +360,8 @@ def main() -> None:
                         help="Preview all lines and TTS cost without API calls")
     parser.add_argument("--start-from", type=int, default=1,
                         help="Start generation from sequence number N (for resuming)")
+    parser.add_argument("--stop-at", type=int, default=None,
+                        help="Stop generation at sequence number N, inclusive (for previewing a section)")
     parser.add_argument("--terse", action="store_true",
                         help="Truncate each line to 3 words to minimize TTS character cost")
     parser.add_argument("--sfx-music", action="store_true",
@@ -335,11 +372,13 @@ def main() -> None:
     cast_path = f"cast_the413_{args.episode}.json"
     sfx_path = f"sfx_the413_{args.episode}.json"
 
+    # Always load cast_cfg for metadata (preamble, season_title, tag)
+    with open(cast_path, "r", encoding="utf-8") as f:
+        cast_data = json.load(f)
+    cast_cfg = CastConfiguration(**cast_data)
+
     # Derive default --script path from cast config metadata
     if args.script is None:
-        with open(cast_path, "r", encoding="utf-8") as f:
-            cast_data = json.load(f)
-        cast_cfg = CastConfiguration(**cast_data)
         args.script = f"parsed/parsed_the413_{cast_cfg.tag}.json"
 
     config, dialogue_entries, tag = load_production(args.script, cast_path)
@@ -357,14 +396,65 @@ def main() -> None:
         sfx_entries = load_sfx_entries(args.script, sfx_path)
         with open(sfx_path, "r", encoding="utf-8") as f:
             sfx_config_data = json.load(f)
+        # Pre-filter SFX entries to the requested range
+        if args.stop_at is not None:
+            sfx_entries = [e for e in sfx_entries if e["seq"] <= args.stop_at]
+
+    # --- Preamble ---
+    preamble_voice_stem = os.path.join(stems_dir, "preamble_tina.mp3")
+    preamble_music_stem = os.path.join(stems_dir, "preamble_music.mp3")
+    preamble_text = None
+    if cast_cfg.preamble:
+        preamble_text = cast_cfg.preamble.text.format(
+            season_title=cast_cfg.season_title or "",
+            episode=cast_cfg.episode,
+            title=cast_cfg.title or "",
+        )
 
     if args.dry_run:
+        if cast_cfg.preamble and preamble_text is not None:
+            print(f" [PREAMBLE] {cast_cfg.preamble.speaker} | {len(preamble_text)} chars")
+            print(f"   stem: preamble_tina.mp3\n")
         dry_run(config, dialogue_entries, start_from=args.start_from,
+                stop_at=args.stop_at,
                 sfx_entries=sfx_entries, sfx_config=sfx_config_data,
                 stems_dir=stems_dir)
     else:
         check_elevenlabs_quota()
-        generate_voices(config, dialogue_entries, stems_dir, start_from=args.start_from)
+        if cast_cfg.preamble and preamble_text is not None:
+            os.makedirs(stems_dir, exist_ok=True)
+            # Generate Tina's voice stem (skip if exists and non-zero)
+            if os.path.exists(preamble_voice_stem) and os.path.getsize(preamble_voice_stem) > 0:
+                print(f"   Exists: {preamble_voice_stem} — skipping")
+            else:
+                speaker = cast_cfg.preamble.speaker
+                voice_id = config.get(speaker, {}).get("id", "TBD")
+                if voice_id == "TBD":
+                    print(f" [!] No voice_id for {speaker} — skipping preamble_tina.mp3")
+                elif has_enough_characters(preamble_text):
+                    current_model = get_best_model_for_budget()
+                    print(f" > [PREAMBLE] {speaker} with {current_model} ({len(preamble_text)} chars)...")
+                    voice_settings = None
+                    if cast_cfg.preamble.speed is not None:
+                        voice_settings = VoiceSettings(speed=cast_cfg.preamble.speed)
+                    audio_stream = client.text_to_speech.convert(
+                        text=preamble_text,
+                        voice_id=voice_id,
+                        model_id=current_model,
+                        output_format="mp3_44100_128",
+                        voice_settings=voice_settings,
+                    )
+                    with open(preamble_voice_stem, "wb") as f:
+                        for chunk in audio_stream:
+                            if chunk:
+                                f.write(chunk)
+                    print(f"   Saved: {preamble_voice_stem}")
+            # Copy intro music if configured
+            if cast_cfg.preamble.intro_music_source and not os.path.exists(preamble_music_stem):
+                shutil.copy2(cast_cfg.preamble.intro_music_source, preamble_music_stem)
+                print(f"   Saved: {preamble_music_stem}")
+        generate_voices(config, dialogue_entries, stems_dir,
+                        start_from=args.start_from, stop_at=args.stop_at)
         if sfx_entries and sfx_config_data:
             generate_sfx_stems(sfx_entries, sfx_config_data, stems_dir,
                                client=client, start_from=args.start_from)

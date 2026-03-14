@@ -8,7 +8,7 @@ type annotations that render as rich API documentation via mkdocstrings.
 
 from typing import Literal, Optional
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 
 def episode_tag(season: int | None, episode: int) -> str:
@@ -138,6 +138,29 @@ class CastMember(BaseModel):
     role: str = Field(..., description="Character role description")
 
 
+class Preamble(BaseModel):
+    """Broadcast introduction prepended to every episode.
+
+    Attributes:
+        text: Intro text with optional {season_title}, {episode}, {title} placeholders.
+        speaker: Cast key for the reader (e.g. "tina").
+        intro_music_source: Optional path to a pre-existing audio file played
+            sequentially after the spoken intro.
+        speed: TTS speaking rate passed to ElevenLabs VoiceSettings (0.7–1.2,
+            default 1.0). Values below 1.0 slow the reader down.
+    """
+
+    text: str = Field(..., description="Intro text (may use {season_title}, {episode}, {title})")
+    speaker: str = Field(..., description="Cast member key for TTS generation")
+    intro_music_source: str | None = Field(
+        default=None, description="Path to pre-existing intro music file"
+    )
+    speed: float | None = Field(
+        default=None, ge=0.7, le=1.2,
+        description="TTS speaking rate (0.7–1.2); None uses the voice default"
+    )
+
+
 class CastConfiguration(BaseModel):
     """Complete cast configuration for a production episode.
 
@@ -149,6 +172,8 @@ class CastConfiguration(BaseModel):
         season: Season number, or ``None`` if not set in the cast file.
         episode: Episode number.
         title: Episode title (optional, not used during production).
+        season_title: Season subtitle/arc title (e.g., ``"The Letters"``).
+        preamble: Broadcast intro configuration, or ``None`` if not configured.
         cast: Mapping of speaker keys to their voice configurations.
     """
 
@@ -156,6 +181,8 @@ class CastConfiguration(BaseModel):
     season: int | None = Field(default=None, description="Season number")
     episode: int = Field(..., description="Episode number")
     title: str | None = Field(default=None, description="Episode title")
+    season_title: str | None = Field(default=None, description="Season subtitle/arc title")
+    preamble: Preamble | None = Field(default=None, description="Broadcast intro config")
     cast: dict[str, CastMember] = Field(..., description="Speaker-to-config mapping")
 
     @property
@@ -203,7 +230,7 @@ class DialogueEntry(BaseModel):
     speaker: str = Field(..., description="Speaker key")
     text: str = Field(..., description="Dialogue text for TTS")
     stem_name: str = Field(..., description="Output audio stem name")
-    seq: int = Field(..., gt=0, description="1-based sequence number")
+    seq: int = Field(..., ge=0, description="1-based sequence number (0 allowed for preamble)")
     direction: str | None = Field(default=None, description="Acting direction")
 
 
@@ -234,13 +261,27 @@ class SfxEntry(BaseModel):
         default="sfx", description="Effect type: API-generated or local silence"
     )
     duration_seconds: float = Field(
-        default=5.0, ge=0.5, le=30.0, description="Audio duration in seconds"
+        default=5.0, ge=0.5, description="Audio duration in seconds"
     )
     prompt_influence: float | None = Field(
         default=None, ge=0.0, le=1.0,
         description="Prompt adherence (0.0–1.0), None for config default",
     )
     loop: bool = Field(default=False, description="Generate loopable audio")
+    source: str | None = Field(
+        default=None,
+        description="Path to a pre-existing audio file (bypasses API generation)",
+    )
+
+    @model_validator(mode="after")
+    def _check_api_duration_cap(self) -> "SfxEntry":
+        """Enforce the 30 s ElevenLabs API cap for effects that need generation."""
+        if self.type == "sfx" and self.source is None and self.duration_seconds > 30.0:
+            raise ValueError(
+                f"duration_seconds must be ≤ 30.0 for API-generated effects "
+                f"(got {self.duration_seconds}); set source= for pre-existing files"
+            )
+        return self
 
 
 class SfxConfiguration(BaseModel):

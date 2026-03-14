@@ -139,6 +139,33 @@ class TestDryRun:
         # Only seq 6 and 7 are >= 6
         assert "2 lines" in output
 
+    def test_stop_at_filters_count(self, sample_script, sample_cast, capsys):
+        config, entries, _tag = producer.load_production(sample_script, sample_cast)
+        # entries at seq 3, 4, 6, 7 — stop_at=4 keeps seq 3 and 4 only
+        producer.dry_run(config, entries, stop_at=4)
+        output = capsys.readouterr().out
+        assert "THRU 4:" in output
+        assert "2 lines" in output
+
+    def test_stop_at_and_start_from_combined(self, sample_script, sample_cast, capsys):
+        config, entries, _tag = producer.load_production(sample_script, sample_cast)
+        # entries at seq 3, 4, 6, 7 — start_from=4, stop_at=6 keeps seq 4 and 6 only
+        producer.dry_run(config, entries, start_from=4, stop_at=6)
+        output = capsys.readouterr().out
+        assert "FROM 4" in output
+        assert "6" in output
+        assert "2 lines" in output
+
+    def test_stop_at_marks_out_of_range_skipped(self, sample_script, sample_cast, capsys):
+        config, entries, _tag = producer.load_production(sample_script, sample_cast)
+        # stop_at=4: seq 6 and 7 should be marked [x]
+        producer.dry_run(config, entries, stop_at=4)
+        output = capsys.readouterr().out
+        lines = output.splitlines()
+        # Find lines with [x] markers for seq 006 and 007
+        skipped = [l for l in lines if "[x]" in l and ("006" in l or "007" in l)]
+        assert len(skipped) == 2
+
     def test_shows_stem_names(self, sample_script, sample_cast, capsys):
         config, entries, _tag = producer.load_production(sample_script, sample_cast)
         producer.dry_run(config, entries)
@@ -255,10 +282,10 @@ class TestGetBestModelForBudget:
         user_info.subscription = sub
         producer.client.user.get.return_value = user_info
 
-    def test_returns_v3_when_healthy(self):
+    def test_returns_multilingual_v2_when_healthy(self):
         self._set_quota(50000)
         model = producer.get_best_model_for_budget()
-        assert model == "eleven_v3"
+        assert model == "eleven_multilingual_v2"
 
     def test_returns_flash_when_low(self):
         self._set_quota(100)
@@ -341,6 +368,47 @@ class TestGenerateVoices:
         out = capsys.readouterr().out
         # adam (seq=3) should not appear in generation output
         assert "003" not in out
+
+    def test_stop_at_skips_later_entries(self, config, entries, tmp_path, capsys):
+        self._setup_api()
+        stems_dir = str(tmp_path)
+        # entries: seq 3 (adam, valid), seq 6 (dez, TBD) — stop at 4 excludes seq 6
+        producer.generate_voices(config, entries, stems_dir, stop_at=4)
+
+        out = capsys.readouterr().out
+        # seq 6 (dez) should not appear in output at all
+        assert "006" not in out
+        # adam (seq=3) should have been processed
+        assert (tmp_path / "003_cold-open_adam.mp3").exists()
+
+    def test_stop_at_combined_with_start_from(self, config, entries, tmp_path, capsys):
+        self._setup_api()
+        stems_dir = str(tmp_path)
+        # start_from=6 AND stop_at=4 → empty range, nothing to process
+        producer.generate_voices(config, entries, stems_dir, start_from=6, stop_at=4)
+
+        out = capsys.readouterr().out
+        assert "Generating 0 voice stems" in out
+
+    def test_tags_dialogue_stem(self, sample_script, sample_cast, tmp_path):
+        """Generated stems carry ID3 tags: title (song), artist, and lyrics."""
+        self._setup_api()
+        config, entries, _tag = producer.load_production(sample_script, sample_cast)
+        stems_dir = str(tmp_path)
+        producer.generate_voices(config, entries, stems_dir)
+
+        from mutagen.id3 import ID3
+        stem_path = tmp_path / "003_cold-open_adam.mp3"
+        assert stem_path.exists()
+        tags = ID3(str(stem_path))
+
+        # TIT2 (song): full_name + first five words of spoken text
+        assert str(tags.get("TIT2")) == "Adam Santos: Hello listeners."
+        # TPE1 (artist): speaker's full name
+        assert str(tags.get("TPE1")) == "Adam Santos"
+        # USLT (lyrics): full dialogue text
+        uslt_frames = tags.getall("USLT")
+        assert any(f.text == "Hello listeners." for f in uslt_frames)
 
 
 # ─── Contract Tests: load_production output validates against Pydantic models ───
@@ -692,3 +760,89 @@ class TestDryRunWithSfx:
         out = capsys.readouterr().out
         # Should show duration or credit cost info
         assert "2.0" in out or "credits" in out.lower()
+
+
+# ─── Tests: Preamble dry-run ───
+
+class TestPreambleDryRun:
+    """Verify [PREAMBLE] line appears in dry-run output when preamble is configured."""
+
+    def _make_cast_file(self, tmp_path, with_preamble=True):
+        cast = {
+            "show": "TEST", "season": 1, "episode": 3, "title": "The Bridge",
+            "season_title": "The Letters",
+            "cast": {
+                "tina": {
+                    "full_name": "Tina", "voice_id": "voice_tina",
+                    "pan": 0.0, "filter": False, "role": "Producer",
+                },
+            },
+        }
+        if with_preamble:
+            cast["preamble"] = {
+                "text": "Today on The 4 1 3, {season_title}, Episode {episode}, {title}.",
+                "speaker": "tina",
+            }
+        f = tmp_path / "cast_the413_S01E03.json"
+        f.write_text(json.dumps(cast), encoding="utf-8")
+        return str(f)
+
+    def _make_script_file(self, tmp_path):
+        script = {
+            "show": "TEST", "episode": 3, "title": "The Bridge",
+            "entries": [],
+            "stats": {"dialogue_lines": 0},
+        }
+        f = tmp_path / "parsed_the413_S01E03.json"
+        f.write_text(json.dumps(script), encoding="utf-8")
+        return str(f)
+
+    def test_preamble_line_printed_before_main_dry_run(self, tmp_path, capsys):
+        cast_file = self._make_cast_file(tmp_path)
+        script_file = self._make_script_file(tmp_path)
+        original_cwd = os.getcwd()
+        os.chdir(str(tmp_path))
+        try:
+            with unittest.mock.patch("sys.argv", [
+                "XILP002", "--episode", "S01E03",
+                "--script", script_file, "--dry-run",
+            ]):
+                producer.main()
+        finally:
+            os.chdir(original_cwd)
+        out = capsys.readouterr().out
+        assert "[PREAMBLE]" in out
+        assert "tina" in out
+
+    def test_preamble_shows_char_count(self, tmp_path, capsys):
+        cast_file = self._make_cast_file(tmp_path)
+        script_file = self._make_script_file(tmp_path)
+        original_cwd = os.getcwd()
+        os.chdir(str(tmp_path))
+        try:
+            with unittest.mock.patch("sys.argv", [
+                "XILP002", "--episode", "S01E03",
+                "--script", script_file, "--dry-run",
+            ]):
+                producer.main()
+        finally:
+            os.chdir(original_cwd)
+        out = capsys.readouterr().out
+        # Preamble text has template vars replaced; should show char count
+        assert "chars" in out
+
+    def test_no_preamble_no_preamble_line(self, tmp_path, capsys):
+        cast_file = self._make_cast_file(tmp_path, with_preamble=False)
+        script_file = self._make_script_file(tmp_path)
+        original_cwd = os.getcwd()
+        os.chdir(str(tmp_path))
+        try:
+            with unittest.mock.patch("sys.argv", [
+                "XILP002", "--episode", "S01E03",
+                "--script", script_file, "--dry-run",
+            ]):
+                producer.main()
+        finally:
+            os.chdir(original_cwd)
+        out = capsys.readouterr().out
+        assert "[PREAMBLE]" not in out

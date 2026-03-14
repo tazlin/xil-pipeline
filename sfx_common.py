@@ -16,7 +16,7 @@ import os
 import re
 import shutil
 
-from mutagen.id3 import ID3, TALB, TCON, TDRC, TIT2
+from mutagen.id3 import ID3, TALB, TCON, TDRC, TIT2, TPE1, USLT
 from pydub import AudioSegment
 
 from models import SfxConfiguration, SfxEntry
@@ -67,15 +67,22 @@ def tag_mp3(
     path: str,
     show: str = "THE 413",
     title: str | None = None,
+    artist: str | None = None,
+    lyrics: str | None = None,
 ) -> None:
     """Write ID3 metadata tags to an MP3 file.
 
-    Sets Album, Genre, and Year.  Optionally sets the Title tag.
+    Sets Album, Genre, and Year.  Optionally sets Title, Artist, and
+    Lyrics tags.
 
     Args:
         path: Path to the MP3 file.
         show: Album name (default ``"THE 413"``).
-        title: Optional title tag (e.g. the effect key).
+        title: Optional TIT2 title tag (e.g. the effect key or dialogue
+            song label).
+        artist: Optional TPE1 artist tag (e.g. the speaker's full name).
+        lyrics: Optional USLT unsynchronised lyrics tag (full dialogue
+            text).
     """
     try:
         tags = ID3(path)
@@ -87,6 +94,10 @@ def tag_mp3(
     tags.add(TDRC(encoding=3, text=str(datetime.date.today().year)))
     if title:
         tags.add(TIT2(encoding=3, text=title))
+    if artist:
+        tags.add(TPE1(encoding=3, text=artist))
+    if lyrics:
+        tags.add(USLT(encoding=3, lang="eng", desc="", text=lyrics))
     tags.save(path)
 
 
@@ -127,7 +138,9 @@ def ensure_shared_sfx(
 
     os.makedirs(sfx_dir, exist_ok=True)
 
-    if effect.type == "silence":
+    if effect.source is not None:
+        shutil.copy2(effect.source, path)
+    elif effect.type == "silence":
         duration_ms = int(effect.duration_seconds * 1000)
         silence = AudioSegment.silent(duration=duration_ms)
         silence.export(path, format="mp3")

@@ -257,3 +257,186 @@ class TestDawExportMain:
             os.chdir(original_cwd)
         out = capsys.readouterr().out
         assert "not found" in out or "Run XILP001" in out
+
+
+# ─── Tests: _make_audacity_script save_aup3 ───
+
+class TestMakeAudacityScriptSaveAup3:
+    def test_save_aup3_includes_save_command(self):
+        result = daw._make_audacity_script("S01E01", [("Dialogue", "d.wav")], save_aup3=True)
+        assert "SaveProject2" in result
+
+    def test_save_aup3_false_excludes_save_command(self):
+        result = daw._make_audacity_script("S01E01", [("Dialogue", "d.wav")], save_aup3=False)
+        assert "SaveProject2" not in result
+
+    def test_save_aup3_includes_aup3_path(self):
+        result = daw._make_audacity_script("S01E01", [("Dialogue", "d.wav")], save_aup3=True)
+        assert "S01E01.aup3" in result
+
+    def test_pipe_send_reads_until_blank_line(self):
+        result = daw._make_audacity_script("S01E01", [("Dialogue", "d.wav")], save_aup3=False)
+        # send() must use a loop, not a single readline
+        assert "while True" in result
+        assert "readline()" in result
+
+    def test_wsl_detection_present(self):
+        result = daw._make_audacity_script("S01E01", [("Dialogue", "d.wav")])
+        assert "WSL_DISTRO_NAME" in result
+        assert "wslpath" in result
+        assert "python.exe" in result
+
+
+# ─── Tests: export_daw_layers save_aup3 ───
+
+class TestExportDawLayersSaveAup3:
+    def test_export_daw_layers_save_aup3_flag_forwarded(self, config, stems_dir, parsed_file, tmp_path):
+        output_dir = str(tmp_path / "daw" / "S01E01")
+        daw.export_daw_layers(config, stems_dir, parsed_file, output_dir, "S01E01", save_aup3=True)
+        script = open(os.path.join(output_dir, "S01E01_open_in_audacity.py")).read()
+        assert "SaveProject2" in script
+
+    def test_export_daw_layers_default_no_save(self, config, stems_dir, parsed_file, tmp_path):
+        output_dir = str(tmp_path / "daw" / "S01E01")
+        daw.export_daw_layers(config, stems_dir, parsed_file, output_dir, "S01E01")
+        script = open(os.path.join(output_dir, "S01E01_open_in_audacity.py")).read()
+        assert "SaveProject2" not in script
+
+
+# ─── Tests: generate_audacity_macro ───
+
+class TestGenerateAudacityMacro:
+    """Tests for generate_audacity_macro() — uses mocked helpers to avoid
+    filesystem/WSL dependencies."""
+
+    def _run(self, tmp_path, layer_files=None, tag="S01E01"):
+        if layer_files is None:
+            layer_files = [
+                ("Dialogue", "S01E01_layer_dialogue.wav"),
+                ("Labels (Dialogue)", "S01E01_labels_dialogue.txt"),
+            ]
+        output_dir = str(tmp_path / "daw" / tag)
+        os.makedirs(output_dir)
+        macros_dir = str(tmp_path / "Macros")
+        os.makedirs(macros_dir)
+        with (
+            unittest.mock.patch.object(daw, "_find_audacity_macros_dir", return_value=macros_dir),
+            unittest.mock.patch.object(daw, "_to_windows_path", side_effect=lambda p: p.replace("/", "\\")),
+        ):
+            macro_path = daw.generate_audacity_macro(output_dir, tag, layer_files)
+        return macro_path, macros_dir, output_dir
+
+    def test_returns_macro_path(self, tmp_path):
+        macro_path, macros_dir, _ = self._run(tmp_path)
+        assert macro_path == os.path.join(macros_dir, "THE413_S01E01.txt")
+
+    def test_creates_macro_file(self, tmp_path):
+        macro_path, _, _ = self._run(tmp_path)
+        assert os.path.exists(macro_path)
+
+    def test_macro_contains_import2_only_for_wav(self, tmp_path):
+        # layer_files has 1 WAV + 1 TXT — only the WAV should appear
+        macro_path, _, _ = self._run(tmp_path)
+        content = open(macro_path).read()
+        assert content.count("Import2:") == 1
+
+    def test_macro_contains_wav_filename(self, tmp_path):
+        macro_path, _, _ = self._run(tmp_path)
+        content = open(macro_path).read()
+        assert "S01E01_layer_dialogue.wav" in content
+
+    def test_macro_excludes_label_txt_files(self, tmp_path):
+        macro_path, _, _ = self._run(tmp_path)
+        content = open(macro_path).read()
+        assert "S01E01_labels_dialogue.txt" not in content
+
+    def test_returns_none_when_macros_dir_not_found(self, tmp_path):
+        output_dir = str(tmp_path / "daw" / "S01E01")
+        os.makedirs(output_dir)
+        with unittest.mock.patch.object(daw, "_find_audacity_macros_dir", return_value=None):
+            result = daw.generate_audacity_macro(output_dir, "S01E01", [])
+        assert result is None
+
+    def test_export_daw_layers_macro_flag_writes_macro(self, config, stems_dir, parsed_file, tmp_path):
+        output_dir = str(tmp_path / "daw" / "S01E01")
+        macros_dir = str(tmp_path / "Macros")
+        os.makedirs(macros_dir)
+        with (
+            unittest.mock.patch.object(daw, "_find_audacity_macros_dir", return_value=macros_dir),
+            unittest.mock.patch.object(daw, "_to_windows_path", side_effect=lambda p: p.replace("/", "\\")),
+        ):
+            daw.export_daw_layers(config, stems_dir, parsed_file, output_dir, "S01E01", macro=True)
+        macro_path = os.path.join(macros_dir, "THE413_S01E01.txt")
+        assert os.path.exists(macro_path)
+        content = open(macro_path).read()
+        assert content.count("Import2:") == 4
+
+    def test_export_daw_layers_no_macro_by_default(self, config, stems_dir, parsed_file, tmp_path):
+        output_dir = str(tmp_path / "daw" / "S01E01")
+        macros_dir = str(tmp_path / "Macros")
+        os.makedirs(macros_dir)
+        with unittest.mock.patch.object(daw, "_find_audacity_macros_dir", return_value=macros_dir) as mock_find:
+            daw.export_daw_layers(config, stems_dir, parsed_file, output_dir, "S01E01")
+        mock_find.assert_not_called()
+
+
+# ─── Tests: Preamble in DAW export ───
+
+class TestPreambleInDawExport:
+    """Verify preamble_tina.mp3 and preamble_music.mp3 appear in the correct layers."""
+
+    def _make_preamble(self):
+        from models import Preamble
+        return Preamble(text="Hello, listeners.", speaker="tina")
+
+    def test_preamble_voice_appears_in_dialogue_layer(
+        self, config, stems_dir, parsed_file, tmp_path
+    ):
+        """preamble_tina.mp3 is placed in the dialogue layer at t=0."""
+        _write_mp3(os.path.join(stems_dir, "preamble_tina.mp3"), duration_ms=400)
+        output_dir = str(tmp_path / "daw" / "S01E01")
+
+        daw.export_daw_layers(
+            config, stems_dir, parsed_file, output_dir, "S01E01",
+            preamble_cfg=self._make_preamble(),
+        )
+
+        labels_path = os.path.join(output_dir, "S01E01_labels_dialogue.txt")
+        content = open(labels_path).read()
+        assert "tina" in content
+        # tina should be the first label (earliest start time)
+        first_label = content.strip().splitlines()[0]
+        assert "tina" in first_label
+
+    def test_preamble_music_appears_in_music_layer(
+        self, config, stems_dir, parsed_file, tmp_path
+    ):
+        """preamble_music.mp3 is placed in the music layer with INTRO MUSIC label."""
+        _write_mp3(os.path.join(stems_dir, "preamble_tina.mp3"), duration_ms=300)
+        _write_mp3(os.path.join(stems_dir, "preamble_music.mp3"), duration_ms=500)
+        output_dir = str(tmp_path / "daw" / "S01E01")
+
+        daw.export_daw_layers(
+            config, stems_dir, parsed_file, output_dir, "S01E01",
+            preamble_cfg=self._make_preamble(),
+        )
+
+        labels_path = os.path.join(output_dir, "S01E01_labels_music.txt")
+        content = open(labels_path).read()
+        assert "INTRO MUSIC" in content
+
+    def test_no_preamble_cfg_no_preamble_in_labels(
+        self, config, stems_dir, parsed_file, tmp_path
+    ):
+        """Without preamble_cfg, preamble stems on disk are NOT picked up by collect_stem_plans."""
+        _write_mp3(os.path.join(stems_dir, "preamble_tina.mp3"), duration_ms=400)
+        output_dir = str(tmp_path / "daw" / "S01E01")
+
+        # No preamble_cfg → preamble files silently ignored
+        daw.export_daw_layers(
+            config, stems_dir, parsed_file, output_dir, "S01E01",
+        )
+
+        labels_path = os.path.join(output_dir, "S01E01_labels_dialogue.txt")
+        content = open(labels_path).read()
+        assert "tina" not in content

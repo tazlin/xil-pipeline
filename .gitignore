@@ -12,6 +12,7 @@ site/
 # Generated audio (large binaries, expensive to recreate)
 stems/
 *.mp3
+.wav
 
 # IDE / tool artifacts
 .qodo/

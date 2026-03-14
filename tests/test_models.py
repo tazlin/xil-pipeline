@@ -334,6 +334,68 @@ class TestCastMember:
         assert models.CastMember(**raw).model_dump() == raw
 
 
+class TestPreamble:
+    """Tests for the Preamble model."""
+
+    def _make(self, **overrides):
+        defaults = {
+            "text": "This is Tina Brissette, the producer of The 413. Today on The 4 1 3, {season_title}, Episode {episode}, {title}.",
+            "speaker": "tina",
+        }
+        defaults.update(overrides)
+        return models.Preamble(**defaults)
+
+    def test_valid_preamble(self):
+        p = self._make()
+        assert p.speaker == "tina"
+        assert p.intro_music_source is None
+
+    def test_with_intro_music_source(self):
+        p = self._make(intro_music_source="SFX/The Porch Light.mp3")
+        assert p.intro_music_source == "SFX/The Porch Light.mp3"
+
+    def test_text_with_template_vars(self):
+        p = self._make()
+        formatted = p.text.format(season_title="The Letters", episode=3, title="The Bridge")
+        assert "The Letters" in formatted
+        assert "3" in formatted
+        assert "The Bridge" in formatted
+
+    def test_model_dump_roundtrip(self):
+        raw = {
+            "text": "Today on The 4 1 3, {season_title}, Episode {episode}, {title}.",
+            "speaker": "tina",
+            "intro_music_source": "SFX/The Porch Light.mp3",
+            "speed": 0.85,
+        }
+        assert models.Preamble(**raw).model_dump() == raw
+
+    def test_speed_default_is_none(self):
+        p = self._make()
+        assert p.speed is None
+
+    def test_speed_accepted(self):
+        p = self._make(speed=0.85)
+        assert p.speed == 0.85
+
+    def test_speed_range_validated(self):
+        self._make(speed=0.7)   # boundary OK
+        self._make(speed=1.2)   # boundary OK
+        with pytest.raises(ValidationError):
+            self._make(speed=0.6)
+        with pytest.raises(ValidationError):
+            self._make(speed=1.3)
+
+    def test_model_dump_roundtrip_no_music(self):
+        raw = {
+            "text": "Hello, listeners.",
+            "speaker": "tina",
+            "intro_music_source": None,
+            "speed": None,
+        }
+        assert models.Preamble(**raw).model_dump() == raw
+
+
 class TestCastConfiguration:
     """Tests for the CastConfiguration model."""
 
@@ -366,9 +428,37 @@ class TestCastConfiguration:
     def test_model_dump_roundtrip(self):
         raw = {
             "show": "THE 413", "episode": 1, "season": None, "title": "Test",
+            "season_title": None, "preamble": None,
             "cast": self._make_cast(),
         }
         assert models.CastConfiguration(**raw).model_dump() == raw
+
+    def test_season_title_optional(self):
+        cc = models.CastConfiguration(
+            show="THE 413", episode=1, cast=self._make_cast(),
+        )
+        assert cc.season_title is None
+
+    def test_season_title_accepted(self):
+        cc = models.CastConfiguration(
+            show="THE 413", episode=1, cast=self._make_cast(),
+            season_title="The Letters",
+        )
+        assert cc.season_title == "The Letters"
+
+    def test_preamble_optional(self):
+        cc = models.CastConfiguration(
+            show="THE 413", episode=1, cast=self._make_cast(),
+        )
+        assert cc.preamble is None
+
+    def test_preamble_accepted(self):
+        cc = models.CastConfiguration(
+            show="THE 413", episode=1, cast=self._make_cast(),
+            preamble={"text": "Hello, listeners.", "speaker": "tina"},
+        )
+        assert isinstance(cc.preamble, models.Preamble)
+        assert cc.preamble.speaker == "tina"
 
     def test_season_optional_in_cast_config(self):
         """Existing cast files without season still validate."""
@@ -429,9 +519,10 @@ class TestDialogueEntry:
         assert de.speaker == "adam"
         assert de.stem_name == "003_cold-open_adam"
 
-    def test_seq_must_be_positive(self):
+    def test_seq_must_be_non_negative(self):
+        self._make(seq=0)  # seq=0 allowed (preamble entries use ge=0)
         with pytest.raises(ValidationError):
-            self._make(seq=0)
+            self._make(seq=-1)
 
     def test_model_dump_roundtrip(self):
         raw = {
@@ -485,9 +576,19 @@ class TestSfxEntry:
             self._make(duration_seconds=0.1)
 
     def test_duration_range_max(self):
-        self._make(duration_seconds=30.0)  # boundary OK
+        self._make(duration_seconds=30.0)  # boundary OK for API effects
         with pytest.raises(ValidationError):
-            self._make(duration_seconds=31.0)
+            self._make(duration_seconds=31.0)  # fails: API-generated, no source
+
+    def test_source_bypasses_api_duration_cap(self):
+        # Pre-existing file: duration_seconds > 30 is valid when source is set
+        entry = self._make(duration_seconds=90.0, source="SFX/theme.mp3")
+        assert entry.duration_seconds == 90.0
+        assert entry.source == "SFX/theme.mp3"
+
+    def test_source_default_is_none(self):
+        entry = self._make()
+        assert entry.source is None
 
     def test_prompt_influence_range(self):
         self._make(prompt_influence=0.0)  # boundary OK
@@ -520,6 +621,7 @@ class TestSfxEntry:
             "duration_seconds": 4.0,
             "prompt_influence": 0.5,
             "loop": False,
+            "source": None,
         }
         assert models.SfxEntry(**raw).model_dump() == raw
 
@@ -530,6 +632,18 @@ class TestSfxEntry:
             "duration_seconds": 1.0,
             "prompt_influence": None,
             "loop": False,
+            "source": None,
+        }
+        assert models.SfxEntry(**raw).model_dump() == raw
+
+    def test_model_dump_roundtrip_source(self):
+        raw = {
+            "prompt": "Eerie indie folk theme",
+            "type": "sfx",
+            "duration_seconds": 90.0,
+            "prompt_influence": None,
+            "loop": False,
+            "source": "SFX/theme.mp3",
         }
         assert models.SfxEntry(**raw).model_dump() == raw
 
@@ -614,6 +728,7 @@ class TestSfxConfiguration:
                     "prompt": None, "type": "silence",
                     "duration_seconds": 1.0,
                     "prompt_influence": None, "loop": False,
+                    "source": None,
                 },
             },
         }

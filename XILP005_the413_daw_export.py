@@ -30,6 +30,7 @@ No ElevenLabs API calls are made — this stage is safe to run freely.
 import json
 import os
 import argparse
+import subprocess
 import textwrap
 
 from pydub import AudioSegment
@@ -38,6 +39,7 @@ from models import CastConfiguration, VoiceConfig
 from mix_common import (
     apply_phone_filter,
     collect_stem_plans,
+    collect_preamble_plans,
     load_entries_index,
     build_foreground,
     build_ambience_layer,
@@ -66,18 +68,96 @@ def _write_labels(output_dir: str, fname: str, labels: list[tuple[float, float, 
             lf.write(f"{start_s:.3f}\t{end_s:.3f}\t{text}\n")
 
 
-def _make_audacity_script(tag: str, layer_files: list[tuple[str, str]]) -> str:
+def _find_audacity_macros_dir() -> str | None:
+    """Return the Audacity Macros directory as a Linux path, or None if not found.
+
+    Works in WSL (queries APPDATA via cmd.exe) and native Windows Python
+    (reads os.environ['APPDATA'] directly).
+    """
+    appdata = os.environ.get("APPDATA")
+    if appdata:
+        # Native Windows Python — APPDATA is already set.
+        macros_dir = os.path.join(appdata, "audacity", "Macros")
+        return macros_dir if os.path.isdir(macros_dir) else None
+    # WSL: ask Windows for APPDATA, then convert to a Linux path.
+    try:
+        win_appdata = subprocess.check_output(
+            ["cmd.exe", "/c", "echo %APPDATA%"], stderr=subprocess.DEVNULL
+        ).decode().strip()
+        linux_appdata = subprocess.check_output(
+            ["wslpath", "-u", win_appdata], stderr=subprocess.DEVNULL
+        ).decode().strip()
+        macros_dir = os.path.join(linux_appdata, "audacity", "Macros")
+        return macros_dir if os.path.isdir(macros_dir) else None
+    except Exception:
+        return None
+
+
+def _to_windows_path(linux_path: str) -> str:
+    """Convert an absolute Linux (WSL) path to a Windows path string.
+
+    Falls back to returning the original path unchanged if ``wslpath`` is
+    unavailable (e.g. native Linux or Windows Python environments).
+    """
+    try:
+        return subprocess.check_output(
+            ["wslpath", "-w", linux_path], stderr=subprocess.DEVNULL
+        ).decode().strip()
+    except Exception:
+        return linux_path
+
+
+def generate_audacity_macro(
+    output_dir: str,
+    tag: str,
+    layer_files: list[tuple[str, str]],
+) -> str | None:
+    """Write an Audacity macro file that imports all layer WAVs and label tracks.
+
+    The macro is written to the Audacity Macros directory
+    (``%APPDATA%\\audacity\\Macros\\THE413_<TAG>.txt``) so it appears
+    immediately under Tools → Macros without restarting Audacity.
+
+    Args:
+        output_dir: Directory containing the exported layer files.
+        tag: Episode tag used to name the macro (e.g. ``"S02E03"``).
+        layer_files: List of ``(track_name, filename)`` pairs to import.
+
+    Returns:
+        Path to the written macro file, or ``None`` if the Audacity Macros
+        directory could not be located.
+    """
+    macros_dir = _find_audacity_macros_dir()
+    if macros_dir is None:
+        return None
+
+    abs_output = os.path.abspath(output_dir)
+    lines = []
+    for _, filename in layer_files:
+        if not filename.endswith(".wav"):
+            continue
+        win_path = _to_windows_path(os.path.join(abs_output, filename))
+        lines.append(f'Import2: Filename="{win_path}"')
+
+    macro_path = os.path.join(macros_dir, f"THE413_{tag}.txt")
+    with open(macro_path, "w", encoding="utf-8") as f:
+        f.write("\n".join(lines) + "\n")
+    return macro_path
+
+
+def _make_audacity_script(tag: str, layer_files: list[tuple[str, str]], save_aup3: bool = False) -> str:
     """Generate the content of the Audacity import helper script.
 
     Args:
         tag: Episode tag (e.g. ``"S01E01"``).
         layer_files: List of ``(track_name, relative_filename)`` pairs.
+        save_aup3: When True, include a SaveProject2 command after imports.
 
     Returns:
         Python source code for the helper script as a string.
     """
     layers_repr = repr(layer_files)
-    return textwrap.dedent(f"""\
+    script = textwrap.dedent(f"""\
         #!/usr/bin/env python3
         \"\"\"Open THE 413 {tag} DAW layers in Audacity.
 
@@ -99,6 +179,20 @@ def _make_audacity_script(tag: str, layer_files: list[tuple[str, str]]) -> str:
         def try_pipe_import(layers):
             \"\"\"Attempt Audacity import via mod-script-pipe named pipe.\"\"\"
             import platform
+            import subprocess
+            # On WSL, Audacity's pipe is a Windows kernel object unreachable from Linux
+            # Python.  Re-invoke this script via Windows python.exe so it uses the
+            # Windows pipe paths.
+            if platform.system() != "Windows" and "WSL_DISTRO_NAME" in os.environ:
+                try:
+                    win_script = subprocess.check_output(
+                        ["wslpath", "-w", os.path.abspath(__file__)]
+                    ).decode().strip()
+                    result = subprocess.run(["python.exe", win_script])
+                    return result.returncode == 0
+                except Exception as exc:
+                    print(f"[!] WSL re-invoke failed: {{exc}}")
+                    return False
             if platform.system() == "Windows":
                 tofile = r"\\\\.\\pipe\\ToSrvPipe"
                 fromfile = r"\\\\.\\pipe\\FromSrvPipe"
@@ -110,13 +204,17 @@ def _make_audacity_script(tag: str, layer_files: list[tuple[str, str]]) -> str:
                 return False
 
             try:
-                import time
                 with open(tofile, "w") as pipe_to, open(fromfile, "r") as pipe_from:
                     def send(cmd):
                         pipe_to.write(cmd + "\\n")
                         pipe_to.flush()
-                        time.sleep(0.1)
-                        return pipe_from.readline().strip()
+                        lines = []
+                        while True:
+                            line = pipe_from.readline()
+                            if line in ("", "\\n"):
+                                break
+                            lines.append(line.rstrip())
+                        return lines
 
                     send("New:")
                     for name, filename in layers:
@@ -124,6 +222,7 @@ def _make_audacity_script(tag: str, layer_files: list[tuple[str, str]]) -> str:
                         send(f"Import2: Filename={{full_path}}")
                         send(f"SetTrackStatus: Name={{name}}")
                     print(f"[✓] Imported {{len(layers)}} tracks into Audacity.")
+                    # _SAVE_PLACEHOLDER_
                 return True
             except Exception as exc:
                 print(f"[!] Pipe import failed: {{exc}}")
@@ -158,6 +257,18 @@ def _make_audacity_script(tag: str, layer_files: list[tuple[str, str]]) -> str:
             if not try_pipe_import(LAYERS):
                 print_instructions(LAYERS)
         """)
+
+    if save_aup3:
+        aup3_save_code = (
+            f'            aup3_path = os.path.join(BASE_DIR, "{tag}.aup3")\n'
+            '            send(f"SaveProject2: Filename={aup3_path}")\n'
+            '            print(f"[\u2713] Saved project: {aup3_path}")\n'
+        )
+        script = script.replace("            # _SAVE_PLACEHOLDER_\n", aup3_save_code)
+    else:
+        script = script.replace("            # _SAVE_PLACEHOLDER_\n", "")
+
+    return script
 
 
 def dry_run_daw(tag: str, stem_plans, entries_index: dict, output_dir: str) -> None:
@@ -200,6 +311,9 @@ def export_daw_layers(
     parsed_path: str,
     output_dir: str,
     tag: str,
+    save_aup3: bool = False,
+    macro: bool = False,
+    preamble_cfg=None,
 ) -> None:
     """Build and export all four DAW layer WAV files.
 
@@ -209,9 +323,15 @@ def export_daw_layers(
         parsed_path: Path to the parsed script JSON (XILP001 output).
         output_dir: Directory to write the layer WAV files.
         tag: Episode tag used to name output files.
+        save_aup3: When True, include a SaveProject2 step in the helper script.
+        macro: When True, write an Audacity macro file to the Audacity Macros dir.
+        preamble_cfg: Optional :class:`~models.Preamble` instance; when set,
+            preamble stems are prepended at seq -2 (voice) and -1 (music).
     """
     entries_index = load_entries_index(parsed_path)
     stem_plans = collect_stem_plans(stems_dir, entries_index)
+    if preamble_cfg is not None:
+        stem_plans = collect_preamble_plans(preamble_cfg, stems_dir) + stem_plans
 
     if not stem_plans:
         print(f" [!] No stems found in {stems_dir}/. Run XILP002 first.")
@@ -285,13 +405,25 @@ def export_daw_layers(
     script_fname = f"{tag}_open_in_audacity.py"
     script_path = os.path.join(output_dir, script_fname)
     with open(script_path, "w", encoding="utf-8") as f:
-        f.write(_make_audacity_script(tag, layer_files))
+        f.write(_make_audacity_script(tag, layer_files, save_aup3=save_aup3))
     os.chmod(script_path, 0o755)
     print(f"    Written: {output_dir}/{script_fname}")
+
+    # --- Audacity macro (optional) ---
+    if macro:
+        macro_path = generate_audacity_macro(output_dir, tag, layer_files)
+        if macro_path:
+            print(f"    Written: {macro_path}")
+        else:
+            print(" [!] Audacity Macros directory not found — macro not written.")
 
     print()
     print(f"--- Done! {len(layer_files)} layer WAVs in {output_dir}/ ---")
     print(f"    Import into Audacity: python {output_dir}/{script_fname}")
+    if macro:
+        print(f"    Audacity macro:       Tools → Macros → THE413_{tag} → Apply to Project")
+    if save_aup3:
+        print(f"    Will save project:    {output_dir}/{tag}.aup3")
 
 
 def main() -> None:
@@ -320,6 +452,14 @@ def main() -> None:
         "--dry-run", action="store_true",
         help="Show export summary without writing files"
     )
+    parser.add_argument(
+        "--save-aup3", action="store_true",
+        help="Include SaveProject2 step in the Audacity helper script (requires mod-script-pipe)"
+    )
+    parser.add_argument(
+        "--macro", action="store_true",
+        help="Write an Audacity macro to %%APPDATA%%\\audacity\\Macros\\ for one-click import"
+    )
     args = parser.parse_args()
 
     cast_path = f"cast_the413_{args.episode}.json"
@@ -343,12 +483,19 @@ def main() -> None:
 
     entries_index = load_entries_index(parsed_path)
     stem_plans = collect_stem_plans(stems_dir, entries_index)
+    if cast_cfg.preamble is not None:
+        stem_plans = collect_preamble_plans(cast_cfg.preamble, stems_dir) + stem_plans
 
     if args.dry_run:
         dry_run_daw(tag, stem_plans, entries_index, output_dir)
         return
 
-    export_daw_layers(config, stems_dir, parsed_path, output_dir, tag)
+    export_daw_layers(
+        config, stems_dir, parsed_path, output_dir, tag,
+        save_aup3=args.save_aup3,
+        macro=args.macro,
+        preamble_cfg=cast_cfg.preamble,
+    )
 
 
 if __name__ == "__main__":

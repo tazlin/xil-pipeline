@@ -35,6 +35,7 @@ from models import CastConfiguration, VoiceConfig
 from mix_common import (
     apply_phone_filter,
     collect_stem_plans,
+    collect_preamble_plans,
     load_entries_index,
     build_foreground,
     build_ambience_layer,
@@ -98,6 +99,7 @@ def assemble_multitrack(
     stems_dir: str,
     parsed_path: str,
     final_output: str,
+    preamble_cfg=None,
 ) -> None:
     """Assemble stems using a two-pass multi-track mix.
 
@@ -113,9 +115,13 @@ def assemble_multitrack(
         stems_dir: Directory containing episode stem MP3 files.
         parsed_path: Path to the parsed script JSON (XILP001 output).
         final_output: Output path for the master MP3.
+        preamble_cfg: Optional :class:`~models.Preamble` instance; when set,
+            preamble stems are prepended at seq -2 (voice) and -1 (music).
     """
     entries_index = load_entries_index(parsed_path)
     stem_plans = collect_stem_plans(stems_dir, entries_index)
+    if preamble_cfg is not None:
+        stem_plans = collect_preamble_plans(preamble_cfg, stems_dir) + stem_plans
 
     if not stem_plans:
         print(f" [!] No stems found in {stems_dir}/. Run XILP002 first.")
@@ -189,7 +195,7 @@ def main() -> None:
 
     parsed_path = args.parsed or f"parsed/parsed_the413_{tag}.json"
     if os.path.exists(parsed_path):
-        assemble_multitrack(config, stems_dir, parsed_path, output)
+        assemble_multitrack(config, stems_dir, parsed_path, output, preamble_cfg=cast_cfg.preamble)
     else:
         print(f"   [info] No parsed JSON at {parsed_path!r} — using sequential assembly.")
         assemble_audio(config, stems_dir, output)

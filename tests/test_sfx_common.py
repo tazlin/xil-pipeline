@@ -176,6 +176,41 @@ class TestTagMp3:
         tags = ID3(str(mp3_path))
         assert str(tags.get("TIT2")) == "BEAT"
 
+    def test_tags_with_artist(self, tmp_path):
+        from pydub import AudioSegment
+        mp3_path = tmp_path / "test.mp3"
+        AudioSegment.silent(duration=500).export(str(mp3_path), format="mp3")
+
+        sfx_common.tag_mp3(str(mp3_path), artist="Adam Santos")
+
+        from mutagen.id3 import ID3
+        tags = ID3(str(mp3_path))
+        assert str(tags.get("TPE1")) == "Adam Santos"
+
+    def test_tags_with_lyrics(self, tmp_path):
+        from pydub import AudioSegment
+        mp3_path = tmp_path / "test.mp3"
+        AudioSegment.silent(duration=500).export(str(mp3_path), format="mp3")
+
+        sfx_common.tag_mp3(str(mp3_path), lyrics="Hello listeners, welcome to the show.")
+
+        from mutagen.id3 import ID3
+        tags = ID3(str(mp3_path))
+        uslt_frames = tags.getall("USLT")
+        assert any(f.text == "Hello listeners, welcome to the show." for f in uslt_frames)
+
+    def test_artist_and_lyrics_not_written_when_none(self, tmp_path):
+        from pydub import AudioSegment
+        mp3_path = tmp_path / "test.mp3"
+        AudioSegment.silent(duration=500).export(str(mp3_path), format="mp3")
+
+        sfx_common.tag_mp3(str(mp3_path))
+
+        from mutagen.id3 import ID3
+        tags = ID3(str(mp3_path))
+        assert tags.get("TPE1") is None
+        assert tags.getall("USLT") == []
+
 
 class TestEnsureSharedSfx:
     def test_silence_creates_file_without_api(self, tmp_path):

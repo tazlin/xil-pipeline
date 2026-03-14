@@ -44,6 +44,10 @@ class StemPlan:
             or ``None`` for dialogue stems.
         entry_type: Parsed entry classification (``"dialogue"``,
             ``"direction"``, etc.), or ``None`` if not in index.
+        foreground_override: When ``True``, forces the stem into the
+            foreground timeline even if ``direction_type`` would normally
+            route it to the background (e.g. preamble intro music that
+            must play sequentially, not as an overlay).
     """
 
     seq: int
@@ -51,10 +55,13 @@ class StemPlan:
     direction_type: str | None
     entry_type: str | None
     text: str | None = None
+    foreground_override: bool = False
 
     @property
     def is_background(self) -> bool:
         """True if this stem belongs in the background layer."""
+        if self.foreground_override:
+            return False
         return self.direction_type in BACKGROUND_DIRECTION_TYPES
 
 
@@ -109,13 +116,33 @@ def collect_stem_plans(
     stem_files = sorted(glob.glob(os.path.join(stems_dir, "*.mp3")))
     plans = []
     for filepath in stem_files:
-        seq = extract_seq(filepath)
+        try:
+            seq = extract_seq(filepath)
+        except ValueError:
+            continue  # preamble_*.mp3 and other non-seq files handled separately
         entry = entries_index.get(seq, {})
+        entry_type = entry.get("type")
+
+        # Cross-check filename suffix vs parsed entry type to catch stale stems.
+        # SFX/direction stems always end with `_sfx`; dialogue stems end with a
+        # speaker key (never `_sfx`).
+        suffix = os.path.splitext(os.path.basename(filepath))[0].rsplit("_", 1)[-1]
+        is_sfx_stem = suffix == "sfx"
+
+        if is_sfx_stem and entry_type == "dialogue":
+            print(f" [W] Stale stem skipped: {os.path.basename(filepath)} "
+                  f"(seq {seq} is now a dialogue entry)")
+            continue
+        if not is_sfx_stem and entry_type == "direction":
+            print(f" [W] Stale stem skipped: {os.path.basename(filepath)} "
+                  f"(seq {seq} is now a direction entry)")
+            continue
+
         plans.append(StemPlan(
             seq=seq,
             filepath=filepath,
             direction_type=entry.get("direction_type"),
-            entry_type=entry.get("type"),
+            entry_type=entry_type,
             text=entry.get("text"),
         ))
     return plans
@@ -366,6 +393,46 @@ def build_dialogue_layer(
         labels.append((start_ms / 1000.0, end_ms / 1000.0, speaker))
         layer = layer.overlay(segment, position=start_ms)
     return layer, labels
+
+
+def collect_preamble_plans(
+    preamble_cfg,
+    stems_dir: str,
+) -> list[StemPlan]:
+    """Return StemPlan objects for preamble stems at seq -2 (voice) and -1 (music).
+
+    Only included if the corresponding file exists in stems_dir.
+    seq -2 → preamble_tina.mp3  (entry_type="dialogue", direction_type=None)
+    seq -1 → preamble_music.mp3 (entry_type="direction", direction_type="MUSIC")
+
+    Negative seqs sort before all parsed seqs (≥ 1) so the preamble always
+    comes first in any layer built from ``sorted(..., key=lambda p: p.seq)``.
+
+    Args:
+        preamble_cfg: :class:`~models.Preamble` instance, or ``None``.
+        stems_dir: Directory containing episode stem MP3 files.
+
+    Returns:
+        List of up to two :class:`StemPlan` instances for preamble stems
+        that exist on disk.
+    """
+    plans = []
+    voice_path = os.path.join(stems_dir, "preamble_tina.mp3")
+    if os.path.exists(voice_path):
+        plans.append(StemPlan(
+            seq=-2, filepath=voice_path,
+            direction_type=None, entry_type="dialogue",
+            text=preamble_cfg.text if preamble_cfg else None,
+        ))
+    music_path = os.path.join(stems_dir, "preamble_music.mp3")
+    if os.path.exists(music_path):
+        plans.append(StemPlan(
+            seq=-1, filepath=music_path,
+            direction_type="MUSIC", entry_type="direction",
+            text="INTRO MUSIC",
+            foreground_override=True,  # plays sequentially after voice, not as overlay
+        ))
+    return plans
 
 
 def build_sfx_layer(

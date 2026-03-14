@@ -1,6 +1,6 @@
 # XILP Pipeline Diagrams
 
-Documentation of the five-stage automated podcast production pipeline for **THE 413**.
+Documentation of the six-stage automated podcast production pipeline for **THE 413**, including the cues sheet ingester pre-processing step.
 
 ---
 
@@ -15,6 +15,20 @@ flowchart TD
     P1["XILP001_script_parser.py"]
     J["`📦 parsed/parsed_the413_S01E01.json
     127 dialogue entries + stats`"]
+
+    CQ["`📋 cues/*.md
+    Sound cues & music prompts`"]
+    P6["XILP006_the413_cues_ingester.py"]
+    SFXCFG["`📋 sfx_the413_S01E01.json
+    SFX config (prompts + durations)`"]
+    SFXLIB["`🎵 SFX/*.mp3
+    Shared SFX asset library`"]
+    MNFST6["`📦 cues/cues_manifest_*.json
+    Structured asset catalog`"]
+    DRY6["`--dry-run
+    Audit report, no API calls
+    Manifest always written`"]
+
     P2["XILP002_the413_producer.py"]
     P3["XILP003_the413_audio_assembly.py"]
     DRY["`--dry-run
@@ -26,6 +40,14 @@ flowchart TD
     MIX["mix_common.py"]
 
     S --> P1 --> J
+    CQ --> P6
+    P6 --> MNFST6
+    P6 -->|"--generate"| SFXLIB
+    P6 -->|"--enrich-sfx-config"| SFXCFG
+    P6 -->|"--dry-run"| DRY6
+    SFXCFG --> P2
+    SFXLIB --> ST
+
     C --> P2
     J --> P2
     P2 -->|"--dry-run"| DRY
@@ -432,3 +454,147 @@ flowchart TD
 > **Audacity alignment:** All four WAV files are exactly the same duration (full episode length).
 > Importing them into Audacity at t=0 produces four perfectly aligned tracks — no repositioning
 > or time-offset metadata required. Run `python S01E01_open_in_audacity.py` for import instructions.
+
+---
+
+## 9. XILP006 — Cues Sheet Ingester
+
+Pre-processing step that bridges a human-authored sound cues & music prompts document into the
+automated pipeline.  Sits **after XILP001** and **before XILU002 / XILP002** — enriching the SFX
+config and populating the shared asset library before stem generation begins.
+
+### 9a. Overall flow
+
+```mermaid
+flowchart TD
+    CQ["`📋 cues/*.md
+    Sound cues & music prompts
+    (MUSIC / AMBIENCE / SFX sections)`"]
+    PARSE["parse_cues_markdown()"]
+    ASSETS["`Asset list
+    asset_id · category · reuse
+    prompt · duration_seconds
+    loop · scene`"]
+    MANIFEST["`📦 cues/cues_manifest_<TAG>.json
+    Always written — structured catalog`"]
+    AUDIT["dry_run_report()"]
+
+    CQ --> PARSE --> ASSETS
+    ASSETS --> MANIFEST
+    ASSETS --> AUDIT
+
+    ASSETS --> GEN_BRANCH{"--generate?"}
+    GEN_BRANCH -->|"yes, not dry-run"| GEN["generate_new_assets()"]
+    GEN_BRANCH -->|"--dry-run"| SKIP_GEN["`Skip API calls
+    Show credit estimate`"]
+    GEN --> SFXLIB["`🎵 SFX/mus-theme-main-01.mp3
+    SFX/sfx-boots-stamp-01.mp3 …
+    Named by asset ID (lowercase)`"]
+
+    ASSETS --> ENR_BRANCH{"--enrich-sfx-config?"}
+    ENR_BRANCH -->|"yes, not dry-run"| ENR["enrich_sfx_config()"]
+    ENR_BRANCH -->|"--dry-run"| DIFF["`Show prompt + duration diff
+    No file written`"]
+    ENR --> SFXCFG["`📋 sfx_the413_<TAG>.json
+    Updated prompts + durations
+    loop flag set for ambience`"]
+```
+
+### 9b. Cues markdown parsing
+
+```mermaid
+flowchart TD
+    MD["cues/*.md"]
+    SEC{"`## heading?`"}
+
+    MD --> LINES["Read line by line"]
+    LINES --> SEC
+
+    SEC -->|"MUSIC CUES"| MUSIC_LOOP
+    SEC -->|"AMBIENCE"| AMB_LOOP
+    SEC -->|"SOUND EFFECTS"| SFX_LOOP
+    SEC -->|"other"| NULL["section = None\nskip lines"]
+
+    subgraph MUSIC_LOOP["MUSIC / AMBIENCE section"]
+        direction TB
+        H3["`### ASSET-ID (REUSE|NEW)
+        → pending asset dict`"]
+        PLINE["`**Prompt:** … **Duration:** … **Used:** …
+        → fill pending, append to list`"]
+        H3 --> PLINE
+    end
+
+    subgraph SFX_LOOP["SOUND EFFECTS section"]
+        direction TB
+        SCENE_H["`### Scene N: Name
+        → current_scene label`"]
+        ROW["`| ASSET-ID (REUSE|NEW) | Prompt | Placement |
+        → append asset dict with scene`"]
+        SCENE_H --> ROW
+    end
+
+    MUSIC_LOOP --> OUT2["asset list"]
+    AMB_LOOP --> OUT2
+    SFX_LOOP --> OUT2
+```
+
+### 9c. Library audit status codes
+
+| Status | Meaning |
+|--------|---------|
+| `EXISTS` | `SFX/<asset-id>.mp3` is present and non-empty |
+| `REUSE` | Asset is marked *(REUSE)* in the cues sheet but not yet in `SFX/` — must be sourced or regenerated |
+| `NEW` | Asset is marked *(NEW)* — needs ElevenLabs API generation via `--generate` |
+
+### 9d. SFX config enrichment matching
+
+```mermaid
+flowchart LR
+    AID["`asset_id
+    e.g. MUS-THEME-MAIN-01`"]
+    KEYS["`sfx config keys
+    (direction text)`"]
+    MATCH{"`asset_id substring
+    found in key?`"}
+    UPDATE["`Update entry:
+    prompt ← cues sheet prompt
+    duration_seconds ← min(dur, 30s)
+    loop ← True (ambience only)`"]
+    SKIP["No match — skip"]
+
+    AID --> MATCH
+    KEYS --> MATCH
+    MATCH -->|yes| UPDATE
+    MATCH -->|no| SKIP
+```
+
+> **Duration cap:** ElevenLabs Sound Effects API accepts at most 30 seconds per call.
+> Assets with longer cues-sheet durations (e.g. 3-minute underscore) are generated at 30s
+> and flagged `[CAPPED]` in the audit report.  Looping in XILP003/XILP005 handles extension.
+
+### 9e. Recommended run order for a new episode
+
+```bash
+# 1. Parse script and generate skeleton configs
+python XILP001_script_parser.py "scripts/<script>.md" --episode S02E03
+
+# 2. Ingest cues sheet — enrich sfx config + audit (no API calls yet)
+python XILP006_the413_cues_ingester.py --episode S02E03 \
+    --cues "cues/<cues-file>.md" --enrich-sfx-config
+
+# 3. Preview what needs generating
+python XILP006_the413_cues_ingester.py --episode S02E03 \
+    --cues "cues/<cues-file>.md" --generate --dry-run
+
+# 4. Generate new SFX/music assets into SFX/ library
+python XILP006_the413_cues_ingester.py --episode S02E03 \
+    --cues "cues/<cues-file>.md" --generate
+
+# 5. Generate voice stems (sfx config already enriched)
+python XILP002_the413_producer.py --episode S02E03 --dry-run
+python XILP002_the413_producer.py --episode S02E03
+
+# 6. Assemble master MP3 or export DAW layers
+python XILP003_the413_audio_assembly.py --episode S02E03
+python XILP005_the413_daw_export.py --episode S02E03
+```
