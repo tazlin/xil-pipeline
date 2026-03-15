@@ -74,11 +74,20 @@ SECTION_MAP = {
     "COLD OPEN": "cold-open",
     "OPENING CREDITS": "opening-credits",
     "ACT ONE": "act1",
+    "ACT 1": "act1",                            # numeral variant
     "ACT TWO": "act2",
+    "ACT 2": "act2",                            # numeral variant
+    "ACT THREE": "act3",
+    "ACT 3": "act3",                            # S02E02 three-act structure
+    "ACT FOUR": "act4",
+    "ACT 4": "act4",
     "MID-EPISODE BREAK": "mid-break",
     "CLOSING": "closing",
     "CLOSING — RADIO STATION": "closing",       # S02E01 variant
+    "CLOSING — ADAM'S SIGN-OFF": "closing",     # S02E02 variant straight apostrophe
+    "CLOSING \u2014 ADAM\u2019S SIGN-OFF": "closing",  # S02E02 variant curly apostrophe
     "POST-INTERVIEW": "post-interview",
+    "POST-INTERVIEW: ADAM & TINA": "post-interview",  # S02E02 variant
     "POST-CREDITS SCENE": "post-credits",       # S01E03
     "DEZ'S CLOSING NARRATION": "dez-closing",       # S02E03 straight apostrophe
     "DEZ\u2019S CLOSING NARRATION": "dez-closing",  # S02E03 curly apostrophe
@@ -294,7 +303,7 @@ def write_debug_csv(
         writer = csv.writer(f)
         writer.writerow([
             "md_line_num", "md_raw", "seq", "type", "section", "scene",
-            "speaker", "direction", "text", "direction_type",
+            "speaker", "direction", "direction_type", "text",
         ])
         for line_num, raw_line, entry_idx in debug_line_map:
             entry = entries[entry_idx]
@@ -307,8 +316,8 @@ def write_debug_csv(
                 entry.get("scene") or "",
                 entry.get("speaker") or "",
                 entry.get("direction") or "",
-                (entry.get("text") or "")[:_DEBUG_TRUNCATE],
                 entry.get("direction_type") or "",
+                (entry.get("text") or "")[:_DEBUG_TRUNCATE],
             ])
 
 

@@ -17,10 +17,16 @@ Module Attributes:
 
 import glob
 import json
+import math
 import os
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 from pydub import AudioSegment
+
+try:
+    from mutagen.mp3 import MP3 as _MutagenMP3
+except ImportError:  # pragma: no cover
+    _MutagenMP3 = None
 
 # Background direction types — excluded from the foreground timeline,
 # overlaid at their cue positions in a separate background pass.
@@ -56,6 +62,11 @@ class StemPlan:
     entry_type: str | None
     text: str | None = None
     foreground_override: bool = False
+    volume_percentage: float | None = None
+    ramp_in_seconds: float | None = None
+    ramp_out_seconds: float | None = None
+    play_duration: float | None = None
+    pre_trimmed: bool = False
 
     @property
     def is_background(self) -> bool:
@@ -68,17 +79,21 @@ class StemPlan:
 def extract_seq(filepath: str) -> int:
     """Extract the sequence number from a stem filename.
 
-    Stems are named ``{seq:03d}_{section}[-{scene}]_{speaker}.mp3``.
-    The leading zero-padded integer is the sequence number.
+    Positive stems are named ``{seq:03d}_{section}[-{scene}]_{speaker}.mp3``.
+    Negative (preamble) stems use an ``n`` prefix: ``n{abs(seq):03d}_...mp3``.
 
     Args:
-        filepath: Path like ``stems/S01E01/003_cold-open_adam.mp3``.
+        filepath: Path like ``stems/S01E01/003_cold-open_adam.mp3`` or
+            ``stems/S02E03/n002_preamble_tina.mp3``.
 
     Returns:
-        Integer sequence number (e.g. ``"003"`` → ``3``).
+        Integer sequence number (e.g. ``"003"`` → ``3``, ``"n002"`` → ``-2``).
     """
     basename = os.path.splitext(os.path.basename(filepath))[0]
-    return int(basename.split("_")[0])
+    prefix = basename.split("_")[0]
+    if prefix.startswith("n") and prefix[1:].isdigit():
+        return -int(prefix[1:])
+    return int(prefix)
 
 
 def load_entries_index(parsed_path: str) -> dict[int, dict]:
@@ -95,8 +110,96 @@ def load_entries_index(parsed_path: str) -> dict[int, dict]:
     return {entry["seq"]: entry for entry in data["entries"]}
 
 
+def _volume_pct_to_db(volume_percentage: float) -> float:
+    """Convert a volume percentage to a dB offset.
+
+    Args:
+        volume_percentage: Volume as a percentage (100 = unity gain).
+
+    Returns:
+        dB offset: ``20 * log10(volume_percentage / 100)``.
+        Returns ``-inf`` (silence) for zero or negative values.
+    """
+    if volume_percentage <= 0:
+        return -math.inf
+    return 20.0 * math.log10(volume_percentage / 100.0)
+
+
+def _apply_clip_effects(
+    clip: AudioSegment,
+    volume_percentage: float | None,
+    ramp_in_ms: int,
+    ramp_out_ms: int,
+    level_db: float = 0,
+) -> AudioSegment:
+    """Apply volume percentage (as dB), then level_db offset, then ramp in/out.
+
+    Args:
+        clip: Input audio segment.
+        volume_percentage: Volume as a percentage (100 = unity); ``None`` skips
+            volume adjustment.
+        ramp_in_ms: Fade-in duration in milliseconds (0 = no fade).
+        ramp_out_ms: Fade-out duration in milliseconds (0 = no fade).
+        level_db: Additional dB offset applied after volume percentage.
+
+    Returns:
+        Processed audio segment.
+    """
+    if volume_percentage is not None:
+        clip = clip + _volume_pct_to_db(volume_percentage)
+    if level_db != 0:
+        clip = clip + level_db
+    if ramp_in_ms > 0:
+        clip = clip.fade_in(ramp_in_ms)
+    if ramp_out_ms > 0:
+        clip = clip.fade_out(ramp_out_ms)
+    return clip
+
+
+def _resolve_audio_params(
+    plan: "StemPlan",
+    sfx_config,
+) -> tuple[float | None, float | None, float | None, float | None]:
+    """Resolve volume/ramp/play_duration values from per-effect override or category defaults.
+
+    Args:
+        plan: The stem plan whose direction_type determines the category prefix.
+        sfx_config: An :class:`~models.SfxConfiguration` instance, or ``None``.
+
+    Returns:
+        Tuple of ``(volume_percentage, ramp_in_seconds, ramp_out_seconds, play_duration)``,
+        each ``None`` if no value is configured. ``play_duration`` is only resolved
+        for MUSIC entries (not AMBIENCE).
+    """
+    if sfx_config is None or plan.direction_type not in ("MUSIC", "AMBIENCE"):
+        return None, None, None, None
+    prefix = "music" if plan.direction_type == "MUSIC" else "ambience"
+    defaults = sfx_config.defaults
+    entry = sfx_config.effects.get(plan.text or "")
+    vol = (
+        entry.volume_percentage
+        if entry and entry.volume_percentage is not None
+        else defaults.get(f"{prefix}_volume_percentage")
+    )
+    ri = (
+        entry.ramp_in_seconds
+        if entry and entry.ramp_in_seconds is not None
+        else defaults.get(f"{prefix}_ramp_in_seconds")
+    )
+    ro = (
+        entry.ramp_out_seconds
+        if entry and entry.ramp_out_seconds is not None
+        else defaults.get(f"{prefix}_ramp_out_seconds")
+    )
+    # play_duration applies to MUSIC only (looped ambience has no meaningful truncation)
+    pd = None
+    if plan.direction_type == "MUSIC" and entry and entry.play_duration is not None:
+        pd = entry.play_duration
+    return vol, ri, ro, pd
+
+
 def collect_stem_plans(
-    stems_dir: str, entries_index: dict[int, dict]
+    stems_dir: str, entries_index: dict[int, dict], sfx_config=None
 ) -> list[StemPlan]:
     """Collect and classify all MP3 stems in a stems directory.
 
@@ -109,6 +212,9 @@ def collect_stem_plans(
         stems_dir: Directory containing episode stem MP3 files.
         entries_index: ``{seq: entry}`` mapping from
             :func:`load_entries_index`.
+        sfx_config: Optional :class:`~models.SfxConfiguration`; when provided,
+            resolves per-effect or category-default volume/ramp values into
+            MUSIC and AMBIENCE plans.
 
     Returns:
         List of :class:`StemPlan` instances sorted by sequence number.
@@ -138,13 +244,26 @@ def collect_stem_plans(
                   f"(seq {seq} is now a direction entry)")
             continue
 
-        plans.append(StemPlan(
+        plan = StemPlan(
             seq=seq,
             filepath=filepath,
             direction_type=entry.get("direction_type"),
             entry_type=entry_type,
             text=entry.get("text"),
-        ))
+        )
+        if plan.seq < 0 and plan.direction_type == "MUSIC":
+            plan.foreground_override = True
+        vol, ri, ro, pd = _resolve_audio_params(plan, sfx_config)
+        plan.volume_percentage = vol
+        plan.ramp_in_seconds = ri
+        plan.ramp_out_seconds = ro
+        plan.play_duration = pd
+        # Source-based stems are pre-trimmed by XILP002; don't trim again at mix time
+        if sfx_config and plan.text and plan.text in sfx_config.effects:
+            src_entry = sfx_config.effects[plan.text]
+            if src_entry.source is not None and pd is not None:
+                plan.pre_trimmed = True
+        plans.append(plan)
     return plans
 
 
@@ -300,12 +419,18 @@ def build_ambience_layer(
             continue
 
         clip = AudioSegment.from_file(plan.filepath)
-        if level_db != 0:
-            clip = clip + level_db
+        ramp_in_ms = int((plan.ramp_in_seconds or 0) * 1000)
+        ramp_out_ms = int((plan.ramp_out_seconds or 0) * 1000)
         looped = _loop_clip(clip, duration_needed)
+        looped = _apply_clip_effects(
+            looped, plan.volume_percentage, ramp_in_ms, ramp_out_ms, level_db
+        )
         layer = layer.overlay(looped, position=start_ms)
         label_text = plan.text or plan.direction_type or "AMBIENCE"
-        labels.append((start_ms / 1000.0, end_ms / 1000.0, label_text))
+        labels.append((
+            start_ms / 1000.0, end_ms / 1000.0, label_text,
+            plan.ramp_in_seconds, plan.ramp_out_seconds,
+        ))
 
     return layer, labels
 
@@ -342,11 +467,19 @@ def build_music_layer(
         if start_ms >= total_ms:
             continue
         clip = AudioSegment.from_file(plan.filepath)
-        if level_db != 0:
-            clip = clip + level_db
+        if plan.play_duration is not None and not plan.pre_trimmed:
+            clip = clip[:max(1, int(len(clip) * plan.play_duration / 100.0))]
+        ramp_in_ms = int((plan.ramp_in_seconds or 0) * 1000)
+        ramp_out_ms = int((plan.ramp_out_seconds or 0) * 1000)
+        clip = _apply_clip_effects(
+            clip, plan.volume_percentage, ramp_in_ms, ramp_out_ms, level_db
+        )
         layer = layer.overlay(clip, position=start_ms)
         label_text = plan.text or plan.direction_type or "MUSIC"
-        labels.append((start_ms / 1000.0, (start_ms + len(clip)) / 1000.0, label_text))
+        labels.append((
+            start_ms / 1000.0, (start_ms + len(clip)) / 1000.0, label_text,
+            plan.ramp_in_seconds, plan.ramp_out_seconds, plan.play_duration,
+        ))
     return layer, labels
 
 
@@ -395,44 +528,195 @@ def build_dialogue_layer(
     return layer, labels
 
 
-def collect_preamble_plans(
-    preamble_cfg,
-    stems_dir: str,
-) -> list[StemPlan]:
-    """Return StemPlan objects for preamble stems at seq -2 (voice) and -1 (music).
 
-    Only included if the corresponding file exists in stems_dir.
-    seq -2 → preamble_tina.mp3  (entry_type="dialogue", direction_type=None)
-    seq -1 → preamble_music.mp3 (entry_type="direction", direction_type="MUSIC")
+def _mp3_duration_ms(filepath: str) -> int:
+    """Return the duration of an MP3 file in milliseconds without decoding audio.
 
-    Negative seqs sort before all parsed seqs (≥ 1) so the preamble always
-    comes first in any layer built from ``sorted(..., key=lambda p: p.seq)``.
+    Uses mutagen for a fast header-only read.  Falls back to pydub if
+    mutagen is unavailable.
 
     Args:
-        preamble_cfg: :class:`~models.Preamble` instance, or ``None``.
-        stems_dir: Directory containing episode stem MP3 files.
+        filepath: Path to the MP3 file.
 
     Returns:
-        List of up to two :class:`StemPlan` instances for preamble stems
-        that exist on disk.
+        Duration in milliseconds.
     """
-    plans = []
-    voice_path = os.path.join(stems_dir, "preamble_tina.mp3")
-    if os.path.exists(voice_path):
-        plans.append(StemPlan(
-            seq=-2, filepath=voice_path,
-            direction_type=None, entry_type="dialogue",
-            text=preamble_cfg.text if preamble_cfg else None,
+    if _MutagenMP3 is not None:
+        info = _MutagenMP3(filepath).info
+        return int(info.length * 1000)
+    # Fallback — slower but always available.
+    return len(AudioSegment.from_file(filepath))
+
+
+def build_foreground_timeline_only(
+    stem_plans: list[StemPlan],
+    gap_ms: int = 600,
+) -> tuple[int, dict[int, int]]:
+    """Build a foreground timeline without decoding audio.
+
+    Lightweight variant of :func:`build_foreground` that reads MP3
+    durations via mutagen header inspection instead of loading full
+    audio via pydub.  Enables ``--dry-run --timeline`` without
+    expensive audio decoding.
+
+    Args:
+        stem_plans: Classified stem list from :func:`collect_stem_plans`.
+        gap_ms: Silence gap between foreground stems in ms.
+
+    Returns:
+        Tuple of ``(total_ms, timeline)`` where ``timeline`` maps
+        sequence numbers to millisecond offsets.
+    """
+    timeline: dict[int, int] = {}
+    current_ms = 0
+
+    for plan in sorted(stem_plans, key=lambda p: p.seq):
+        timeline[plan.seq] = current_ms
+        if plan.is_background:
+            continue
+        duration = _mp3_duration_ms(plan.filepath)
+        current_ms += duration + gap_ms
+
+    return current_ms, timeline
+
+
+def compute_dialogue_labels(
+    stem_plans: list[StemPlan],
+    timeline: dict[int, int],
+) -> list[tuple[float, float, str]]:
+    """Compute dialogue label tuples without loading audio.
+
+    Args:
+        stem_plans: Classified stem list.
+        timeline: Cue-point timestamps from a foreground build.
+
+    Returns:
+        List of ``(start_s, end_s, speaker)`` tuples.
+    """
+    labels: list[tuple[float, float, str]] = []
+    for plan in sorted(stem_plans, key=lambda p: p.seq):
+        if plan.entry_type != "dialogue":
+            continue
+        start_ms = timeline.get(plan.seq, 0)
+        duration = _mp3_duration_ms(plan.filepath)
+        end_ms = start_ms + duration
+        basename = os.path.splitext(os.path.basename(plan.filepath))[0]
+        speaker = basename.rsplit("_", 1)[-1]
+        labels.append((start_ms / 1000.0, end_ms / 1000.0, speaker))
+    return labels
+
+
+def compute_ambience_labels(
+    stem_plans: list[StemPlan],
+    timeline: dict[int, int],
+    total_ms: int,
+) -> list[tuple[float, float, str]]:
+    """Compute ambience label tuples without loading audio.
+
+    Uses the same boundary logic as :func:`build_ambience_layer`.
+
+    Args:
+        stem_plans: Classified stem list.
+        timeline: Cue-point timestamps.
+        total_ms: Total episode duration in ms.
+
+    Returns:
+        List of ``(start_s, end_s, text)`` tuples.
+    """
+    labels: list[tuple[float, float, str]] = []
+    ambience_plans = sorted(
+        (p for p in stem_plans if p.direction_type == "AMBIENCE"),
+        key=lambda p: p.seq,
+    )
+    if not ambience_plans:
+        return labels
+
+    bg_cues: list[tuple[int, int]] = sorted(
+        (
+            (timeline.get(p.seq, 0), p.seq)
+            for p in stem_plans
+            if p.is_background
+        ),
+        key=lambda t: t[0],
+    )
+
+    for plan in ambience_plans:
+        start_ms = timeline.get(plan.seq, 0)
+        if start_ms >= total_ms:
+            continue
+        end_ms = total_ms
+        for cue_ms, cue_seq in bg_cues:
+            if cue_seq > plan.seq and cue_ms > start_ms:
+                end_ms = min(cue_ms, total_ms)
+                break
+        if end_ms - start_ms <= 0:
+            continue
+        label_text = plan.text or plan.direction_type or "AMBIENCE"
+        labels.append((
+            start_ms / 1000.0, end_ms / 1000.0, label_text,
+            plan.ramp_in_seconds, plan.ramp_out_seconds,
         ))
-    music_path = os.path.join(stems_dir, "preamble_music.mp3")
-    if os.path.exists(music_path):
-        plans.append(StemPlan(
-            seq=-1, filepath=music_path,
-            direction_type="MUSIC", entry_type="direction",
-            text="INTRO MUSIC",
-            foreground_override=True,  # plays sequentially after voice, not as overlay
+
+    return labels
+
+
+def compute_music_labels(
+    stem_plans: list[StemPlan],
+    timeline: dict[int, int],
+    total_ms: int,
+) -> list[tuple[float, float, str]]:
+    """Compute music label tuples without loading audio.
+
+    Args:
+        stem_plans: Classified stem list.
+        timeline: Cue-point timestamps.
+        total_ms: Total episode duration in ms.
+
+    Returns:
+        List of ``(start_s, end_s, text)`` tuples.
+    """
+    labels: list[tuple[float, float, str]] = []
+    for plan in sorted(stem_plans, key=lambda p: p.seq):
+        if plan.direction_type != "MUSIC":
+            continue
+        start_ms = timeline.get(plan.seq, 0)
+        if start_ms >= total_ms:
+            continue
+        duration = _mp3_duration_ms(plan.filepath)
+        if plan.play_duration is not None and not plan.pre_trimmed:
+            duration = max(1, int(duration * plan.play_duration / 100.0))
+        label_text = plan.text or plan.direction_type or "MUSIC"
+        labels.append((
+            start_ms / 1000.0, (start_ms + duration) / 1000.0, label_text,
+            plan.ramp_in_seconds, plan.ramp_out_seconds, plan.play_duration,
         ))
-    return plans
+    return labels
+
+
+def compute_sfx_labels(
+    stem_plans: list[StemPlan],
+    timeline: dict[int, int],
+    total_ms: int,
+) -> list[tuple[float, float, str]]:
+    """Compute SFX/BEAT label tuples without loading audio.
+
+    Args:
+        stem_plans: Classified stem list.
+        timeline: Cue-point timestamps.
+        total_ms: Total episode duration in ms.
+
+    Returns:
+        List of ``(start_s, end_s, text)`` tuples.
+    """
+    labels: list[tuple[float, float, str]] = []
+    for plan in sorted(stem_plans, key=lambda p: p.seq):
+        if plan.direction_type not in ("SFX", "BEAT"):
+            continue
+        start_ms = timeline.get(plan.seq, 0)
+        duration = _mp3_duration_ms(plan.filepath)
+        label_text = plan.text or plan.direction_type or "SFX"
+        labels.append((start_ms / 1000.0, (start_ms + duration) / 1000.0, label_text))
+    return labels
 
 
 def build_sfx_layer(

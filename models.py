@@ -49,7 +49,7 @@ class ScriptEntry(BaseModel):
         direction_type: Subtype for direction entries indicating sound category.
     """
 
-    seq: int = Field(..., gt=0, description="1-based sequence number")
+    seq: int = Field(..., description="Sequence number (negative for preamble entries)")
     type: Literal["dialogue", "direction", "section_header", "scene_header"] = Field(
         ..., description="Entry classification"
     )
@@ -136,6 +136,26 @@ class CastMember(BaseModel):
     pan: float = Field(..., ge=-1.0, le=1.0, description="Stereo pan position")
     filter: bool = Field(..., description="Apply phone-speaker filter")
     role: str = Field(..., description="Character role description")
+    stability: float | None = Field(
+        default=None, ge=0.0, le=1.0,
+        description="Voice stability (0=expressive, 1=monotone); None uses voice default",
+    )
+    similarity_boost: float | None = Field(
+        default=None, ge=0.0, le=1.0,
+        description="Adherence to original voice (0=loose, 1=strict); None uses voice default",
+    )
+    style: float | None = Field(
+        default=None, ge=0.0, le=1.0,
+        description="Style exaggeration of the original speaker; None uses voice default",
+    )
+    use_speaker_boost: bool | None = Field(
+        default=None,
+        description="Boost similarity to original speaker (higher latency); None uses voice default",
+    )
+    language_code: str | None = Field(
+        default=None,
+        description="ISO 639-1 language code for text normalisation (e.g. 'en', 'de'); None = auto",
+    )
 
 
 class Preamble(BaseModel):
@@ -144,17 +164,12 @@ class Preamble(BaseModel):
     Attributes:
         text: Intro text with optional {season_title}, {episode}, {title} placeholders.
         speaker: Cast key for the reader (e.g. "tina").
-        intro_music_source: Optional path to a pre-existing audio file played
-            sequentially after the spoken intro.
         speed: TTS speaking rate passed to ElevenLabs VoiceSettings (0.7–1.2,
             default 1.0). Values below 1.0 slow the reader down.
     """
 
     text: str = Field(..., description="Intro text (may use {season_title}, {episode}, {title})")
     speaker: str = Field(..., description="Cast member key for TTS generation")
-    intro_music_source: str | None = Field(
-        default=None, description="Path to pre-existing intro music file"
-    )
     speed: float | None = Field(
         default=None, ge=0.7, le=1.2,
         description="TTS speaking rate (0.7–1.2); None uses the voice default"
@@ -182,6 +197,10 @@ class CastConfiguration(BaseModel):
     episode: int = Field(..., description="Episode number")
     title: str | None = Field(default=None, description="Episode title")
     season_title: str | None = Field(default=None, description="Season subtitle/arc title")
+    artist: str = Field(
+        default="Tina Brissette for Berkshire Talking Chronicles",
+        description="Artist/creator credit for audio metadata",
+    )
     preamble: Preamble | None = Field(default=None, description="Broadcast intro config")
     cast: dict[str, CastMember] = Field(..., description="Speaker-to-config mapping")
 
@@ -230,7 +249,7 @@ class DialogueEntry(BaseModel):
     speaker: str = Field(..., description="Speaker key")
     text: str = Field(..., description="Dialogue text for TTS")
     stem_name: str = Field(..., description="Output audio stem name")
-    seq: int = Field(..., ge=0, description="1-based sequence number (0 allowed for preamble)")
+    seq: int = Field(..., description="Sequence number; negative values reserved for preamble entries")
     direction: str | None = Field(default=None, description="Acting direction")
 
 
@@ -271,6 +290,22 @@ class SfxEntry(BaseModel):
     source: str | None = Field(
         default=None,
         description="Path to a pre-existing audio file (bypasses API generation)",
+    )
+    volume_percentage: float | None = Field(
+        default=None, ge=0.0, le=200.0,
+        description="Playback volume as percentage (100=unity); None uses category default",
+    )
+    ramp_in_seconds: float | None = Field(
+        default=None, ge=0.0, le=30.0,
+        description="Fade-in duration in seconds; None uses category default",
+    )
+    ramp_out_seconds: float | None = Field(
+        default=None, ge=0.0, le=30.0,
+        description="Fade-out duration in seconds; None uses category default",
+    )
+    play_duration: float | None = Field(
+        default=None, ge=0.0, le=100.0,
+        description="Percentage of clip duration to play (100=full); None plays full clip",
     )
 
     @model_validator(mode="after")

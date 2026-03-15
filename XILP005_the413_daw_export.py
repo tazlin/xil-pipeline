@@ -27,6 +27,7 @@ Usage:
 No ElevenLabs API calls are made — this stage is safe to run freely.
 """
 
+import datetime
 import json
 import os
 import argparse
@@ -35,18 +36,24 @@ import textwrap
 
 from pydub import AudioSegment
 
-from models import CastConfiguration, VoiceConfig
+from models import CastConfiguration, VoiceConfig, SfxConfiguration
+from sfx_common import tag_wav
 from mix_common import (
     apply_phone_filter,
     collect_stem_plans,
-    collect_preamble_plans,
     load_entries_index,
     build_foreground,
+    build_foreground_timeline_only,
     build_ambience_layer,
     build_music_layer,
     build_dialogue_layer,
     build_sfx_layer,
+    compute_dialogue_labels,
+    compute_ambience_labels,
+    compute_music_labels,
+    compute_sfx_labels,
 )
+from timeline_viz import build_timeline_data, render_terminal_timeline, render_html_timeline
 
 STEMS_DIR = "stems"
 DAW_DIR = "daw"
@@ -64,7 +71,7 @@ LAYERS: list[tuple[str, str, str]] = [
 def _write_labels(output_dir: str, fname: str, labels: list[tuple[float, float, str]]) -> None:
     """Write an Audacity label file (tab-separated start, end, text)."""
     with open(os.path.join(output_dir, fname), "w", encoding="utf-8") as lf:
-        for start_s, end_s, text in labels:
+        for start_s, end_s, text, *_ in labels:
             lf.write(f"{start_s:.3f}\t{end_s:.3f}\t{text}\n")
 
 
@@ -111,8 +118,12 @@ def generate_audacity_macro(
     output_dir: str,
     tag: str,
     layer_files: list[tuple[str, str]],
+    show: str = "THE 413",
+    season_title: str | None = None,
+    episode_title: str | None = None,
+    artist: str = "Tina Brissette for Berkshire Talking Chronicles",
 ) -> str | None:
-    """Write an Audacity macro file that imports all layer WAVs and label tracks.
+    """Write an Audacity macro file that imports all layer WAVs and sets metadata.
 
     The macro is written to the Audacity Macros directory
     (``%APPDATA%\\audacity\\Macros\\THE413_<TAG>.txt``) so it appears
@@ -122,6 +133,10 @@ def generate_audacity_macro(
         output_dir: Directory containing the exported layer files.
         tag: Episode tag used to name the macro (e.g. ``"S02E03"``).
         layer_files: List of ``(track_name, filename)`` pairs to import.
+        show: Show name for Album metadata (default ``"THE 413"``).
+        season_title: Season title for metadata title field.
+        episode_title: Episode title for metadata title field.
+        artist: Artist/creator credit for metadata.
 
     Returns:
         Path to the written macro file, or ``None`` if the Audacity Macros
@@ -138,6 +153,17 @@ def generate_audacity_macro(
             continue
         win_path = _to_windows_path(os.path.join(abs_output, filename))
         lines.append(f'Import2: Filename="{win_path}"')
+
+    # Set project metadata — appears in Edit > Metadata and in exported files.
+    if season_title and episode_title:
+        title = f"{tag}: {season_title} - {episode_title}"
+    elif episode_title:
+        title = f"{tag}: {episode_title}"
+    else:
+        title = tag
+    year = str(datetime.date.today().year)
+    lines.append(f'SetProject: X-Genre="Podcast" X-Album="{show}" '
+                 f'X-Artist="{artist}" X-Title="{title}" X-Year="{year}"')
 
     macro_path = os.path.join(macros_dir, f"THE413_{tag}.txt")
     with open(macro_path, "w", encoding="utf-8") as f:
@@ -200,29 +226,34 @@ def _make_audacity_script(tag: str, layer_files: list[tuple[str, str]], save_aup
                 tofile = "/tmp/audacity_script_pipe.to.app"
                 fromfile = "/tmp/audacity_script_pipe.from.app"
 
-            if not os.path.exists(tofile):
-                return False
-
             try:
-                with open(tofile, "w") as pipe_to, open(fromfile, "r") as pipe_from:
+                pipe_to = open(tofile, "wb", buffering=0)
+                pipe_from = open(fromfile, "rb", buffering=0)
+                try:
                     def send(cmd):
-                        pipe_to.write(cmd + "\\n")
-                        pipe_to.flush()
+                        pipe_to.write((cmd + "\\n").encode("utf-8"))
                         lines = []
                         while True:
-                            line = pipe_from.readline()
+                            line = pipe_from.readline().decode("utf-8")
                             if line in ("", "\\n"):
                                 break
                             lines.append(line.rstrip())
                         return lines
 
                     send("New:")
+                    wav_count = 0
                     for name, filename in layers:
+                        if not filename.endswith(".wav"):
+                            continue
                         full_path = os.path.join(BASE_DIR, filename)
                         send(f"Import2: Filename={{full_path}}")
                         send(f"SetTrackStatus: Name={{name}}")
-                    print(f"[✓] Imported {{len(layers)}} tracks into Audacity.")
+                        wav_count += 1
+                    print(f"[✓] Imported {{wav_count}} WAV tracks into Audacity.")
                     # _SAVE_PLACEHOLDER_
+                finally:
+                    pipe_to.close()
+                    pipe_from.close()
                 return True
             except Exception as exc:
                 print(f"[!] Pipe import failed: {{exc}}")
@@ -231,16 +262,24 @@ def _make_audacity_script(tag: str, layer_files: list[tuple[str, str]], save_aup
 
         def print_instructions(layers):
             \"\"\"Print manual import instructions.\"\"\"
+            wavs = [(n, f) for n, f in layers if f.endswith(".wav")]
+            labels = [(n, f) for n, f in layers if f.endswith(".txt")]
             print()
             print(f"THE 413 {tag} — Audacity Layer Import")
             print("=" * 45)
             print()
-            print("Import these 4 WAV files into Audacity:")
+            print(f"Import these {{len(wavs)}} WAV files into Audacity:")
             print("  File > Import > Audio...  (Ctrl+Shift+I on Windows/Linux)")
             print()
-            for i, (name, filename) in enumerate(layers, 1):
+            for i, (name, filename) in enumerate(wavs, 1):
                 full = os.path.join(BASE_DIR, filename)
                 print(f"  {{i}}. {{name:<12}}  {{full}}")
+            if labels:
+                print()
+                print("Optional label tracks (File > Import > Labels...):")
+                for i, (name, filename) in enumerate(labels, 1):
+                    full = os.path.join(BASE_DIR, filename)
+                    print(f"  {{i}}. {{name:<20}}  {{full}}")
             print()
             print("After importing, all tracks are pre-aligned at t=0.")
             print("No repositioning needed — just mix levels and export.")
@@ -313,7 +352,13 @@ def export_daw_layers(
     tag: str,
     save_aup3: bool = False,
     macro: bool = False,
-    preamble_cfg=None,
+    show: str = "THE 413",
+    season_title: str | None = None,
+    episode_title: str | None = None,
+    artist: str = "Tina Brissette for Berkshire Talking Chronicles",
+    timeline: bool = False,
+    timeline_html: bool = False,
+    sfx_config=None,
 ) -> None:
     """Build and export all four DAW layer WAV files.
 
@@ -327,11 +372,12 @@ def export_daw_layers(
         macro: When True, write an Audacity macro file to the Audacity Macros dir.
         preamble_cfg: Optional :class:`~models.Preamble` instance; when set,
             preamble stems are prepended at seq -2 (voice) and -1 (music).
+        show: Show name for audio metadata (default ``"THE 413"``).
+        season_title: Season title for metadata artist field.
+        episode_title: Episode title for metadata.
     """
     entries_index = load_entries_index(parsed_path)
-    stem_plans = collect_stem_plans(stems_dir, entries_index)
-    if preamble_cfg is not None:
-        stem_plans = collect_preamble_plans(preamble_cfg, stems_dir) + stem_plans
+    stem_plans = collect_stem_plans(stems_dir, entries_index, sfx_config=sfx_config)
 
     if not stem_plans:
         print(f" [!] No stems found in {stems_dir}/. Run XILP002 first.")
@@ -359,7 +405,9 @@ def export_daw_layers(
         stem_plans, timeline, total_ms, config, apply_phone_filter
     )
     fname = f"{tag}_layer_dialogue.wav"
-    dlg.export(os.path.join(output_dir, fname), format="wav")
+    wav_path = os.path.join(output_dir, fname)
+    dlg.export(wav_path, format="wav")
+    tag_wav(wav_path, show=show, title=f"{tag} Dialogue", artist=artist)
     layer_files.append(("Dialogue", fname))
     print(f"    Written: {output_dir}/{fname}")
 
@@ -372,7 +420,9 @@ def export_daw_layers(
     print("--- Building ambience layer ---")
     amb, amb_labels = build_ambience_layer(stem_plans, timeline, total_ms, level_db=0)
     fname = f"{tag}_layer_ambience.wav"
-    amb.export(os.path.join(output_dir, fname), format="wav")
+    wav_path = os.path.join(output_dir, fname)
+    amb.export(wav_path, format="wav")
+    tag_wav(wav_path, show=show, title=f"{tag} Ambience", artist=artist)
     layer_files.append(("Ambience", fname))
     print(f"    Written: {output_dir}/{fname}")
     _write_labels(output_dir, f"{tag}_labels_ambience.txt", amb_labels)
@@ -383,7 +433,9 @@ def export_daw_layers(
     print("--- Building music layer ---")
     mus, mus_labels = build_music_layer(stem_plans, timeline, total_ms, level_db=0)
     fname = f"{tag}_layer_music.wav"
-    mus.export(os.path.join(output_dir, fname), format="wav")
+    wav_path = os.path.join(output_dir, fname)
+    mus.export(wav_path, format="wav")
+    tag_wav(wav_path, show=show, title=f"{tag} Music", artist=artist)
     layer_files.append(("Music", fname))
     print(f"    Written: {output_dir}/{fname}")
     _write_labels(output_dir, f"{tag}_labels_music.txt", mus_labels)
@@ -394,7 +446,9 @@ def export_daw_layers(
     print("--- Building SFX layer ---")
     sfx, sfx_labels = build_sfx_layer(stem_plans, timeline, total_ms)
     fname = f"{tag}_layer_sfx.wav"
-    sfx.export(os.path.join(output_dir, fname), format="wav")
+    wav_path = os.path.join(output_dir, fname)
+    sfx.export(wav_path, format="wav")
+    tag_wav(wav_path, show=show, title=f"{tag} SFX", artist=artist)
     layer_files.append(("SFX", fname))
     print(f"    Written: {output_dir}/{fname}")
     _write_labels(output_dir, f"{tag}_labels_sfx.txt", sfx_labels)
@@ -411,11 +465,28 @@ def export_daw_layers(
 
     # --- Audacity macro (optional) ---
     if macro:
-        macro_path = generate_audacity_macro(output_dir, tag, layer_files)
+        macro_path = generate_audacity_macro(
+            output_dir, tag, layer_files,
+            show=show, season_title=season_title, episode_title=episode_title,
+            artist=artist,
+        )
         if macro_path:
             print(f"    Written: {macro_path}")
         else:
             print(" [!] Audacity Macros directory not found — macro not written.")
+
+    # --- Timeline visualization (optional) ---
+    if timeline or timeline_html:
+        td = build_timeline_data(
+            tag, total_ms / 1000.0,
+            labels, amb_labels, mus_labels, sfx_labels,
+        )
+        if timeline:
+            print(render_terminal_timeline(td))
+        if timeline_html:
+            html_path = os.path.join(output_dir, f"{tag}_timeline.html")
+            render_html_timeline(td, html_path)
+            print(f"    Written: {html_path}")
 
     print()
     print(f"--- Done! {len(layer_files)} layer WAVs in {output_dir}/ ---")
@@ -460,6 +531,14 @@ def main() -> None:
         "--macro", action="store_true",
         help="Write an Audacity macro to %%APPDATA%%\\audacity\\Macros\\ for one-click import"
     )
+    parser.add_argument(
+        "--timeline", action="store_true",
+        help="Print an ASCII timeline visualization of asset placement to stdout"
+    )
+    parser.add_argument(
+        "--timeline-html", action="store_true",
+        help="Write an interactive HTML timeline to daw/<TAG>/<TAG>_timeline.html"
+    )
     args = parser.parse_args()
 
     cast_path = f"cast_the413_{args.episode}.json"
@@ -481,20 +560,48 @@ def main() -> None:
         print(f" [!] Parsed JSON not found: {parsed_path!r}. Run XILP001 first.")
         return
 
+    sfx_path = f"sfx_the413_{tag}.json"
+    sfx_config = None
+    if os.path.exists(sfx_path):
+        with open(sfx_path, "r", encoding="utf-8") as f:
+            sfx_config = SfxConfiguration(**json.load(f))
+
     entries_index = load_entries_index(parsed_path)
-    stem_plans = collect_stem_plans(stems_dir, entries_index)
-    if cast_cfg.preamble is not None:
-        stem_plans = collect_preamble_plans(cast_cfg.preamble, stems_dir) + stem_plans
+    stem_plans = collect_stem_plans(stems_dir, entries_index, sfx_config=sfx_config)
 
     if args.dry_run:
         dry_run_daw(tag, stem_plans, entries_index, output_dir)
+        if args.timeline or args.timeline_html:
+            total_ms, timeline = build_foreground_timeline_only(
+                stem_plans, gap_ms=SILENCE_GAP_MS
+            )
+            dlg_labels = compute_dialogue_labels(stem_plans, timeline)
+            amb_labels = compute_ambience_labels(stem_plans, timeline, total_ms)
+            mus_labels = compute_music_labels(stem_plans, timeline, total_ms)
+            sfx_labels = compute_sfx_labels(stem_plans, timeline, total_ms)
+            td = build_timeline_data(
+                tag, total_ms / 1000.0,
+                dlg_labels, amb_labels, mus_labels, sfx_labels,
+            )
+            if args.timeline:
+                print(render_terminal_timeline(td))
+            if args.timeline_html:
+                html_path = os.path.join(output_dir, f"{tag}_timeline.html")
+                render_html_timeline(td, html_path)
+                print(f"    Written: {html_path}")
         return
 
     export_daw_layers(
         config, stems_dir, parsed_path, output_dir, tag,
         save_aup3=args.save_aup3,
         macro=args.macro,
-        preamble_cfg=cast_cfg.preamble,
+        show=cast_cfg.show,
+        season_title=cast_cfg.season_title,
+        episode_title=cast_cfg.title,
+        artist=cast_cfg.artist,
+        timeline=args.timeline,
+        timeline_html=args.timeline_html,
+        sfx_config=sfx_config,
     )
 
 

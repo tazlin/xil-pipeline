@@ -17,6 +17,7 @@ import re
 import shutil
 
 from mutagen.id3 import ID3, TALB, TCON, TDRC, TIT2, TPE1, USLT
+from mutagen.wave import WAVE
 from pydub import AudioSegment
 
 from models import SfxConfiguration, SfxEntry
@@ -99,6 +100,35 @@ def tag_mp3(
     if lyrics:
         tags.add(USLT(encoding=3, lang="eng", desc="", text=lyrics))
     tags.save(path)
+
+
+def tag_wav(
+    path: str,
+    show: str = "THE 413",
+    title: str | None = None,
+    artist: str | None = None,
+) -> None:
+    """Write ID3 metadata tags to a WAV file.
+
+    Sets Album, Genre, and Year.  Optionally sets Title and Artist.
+
+    Args:
+        path: Path to the WAV file.
+        show: Album name (default ``"THE 413"``).
+        title: Optional TIT2 title tag (e.g. the layer name).
+        artist: Optional TPE1 artist tag.
+    """
+    wav = WAVE(path)
+    if wav.tags is None:
+        wav.add_tags()
+    wav.tags.add(TALB(encoding=3, text=show))
+    wav.tags.add(TCON(encoding=3, text="Podcast"))
+    wav.tags.add(TDRC(encoding=3, text=str(datetime.date.today().year)))
+    if title:
+        wav.tags.add(TIT2(encoding=3, text=title))
+    if artist:
+        wav.tags.add(TPE1(encoding=3, text=artist))
+    wav.save()
 
 
 def ensure_shared_sfx(
@@ -226,10 +256,14 @@ def load_sfx_entries(
         if max_duration is not None and effect.duration_seconds > max_duration:
             continue
 
-        stem_name = f"{entry['seq']:03d}_{entry['section']}"
-        if entry.get("scene"):
-            stem_name += f"-{entry['scene']}"
-        stem_name += "_sfx"
+        seq = entry["seq"]
+        if seq < 0:
+            stem_name = f"n{abs(seq):03d}_{entry['section']}_sfx"
+        else:
+            stem_name = f"{seq:03d}_{entry['section']}"
+            if entry.get("scene"):
+                stem_name += f"-{entry['scene']}"
+            stem_name += "_sfx"
 
         sfx_entries.append({
             "seq": entry["seq"],
@@ -341,7 +375,8 @@ def dry_run_sfx(
             continue
 
         stem_file = os.path.join(stems_dir, f"{entry['stem_name']}.mp3")
-        shared_file = shared_sfx_path(sfx_dir, entry["text"])
+        is_source = effect.source is not None
+        shared_file = effect.source if is_source else shared_sfx_path(sfx_dir, entry["text"])
 
         if os.path.exists(stem_file):
             status = "EXISTS"
@@ -353,24 +388,33 @@ def dry_run_sfx(
             status = "   NEW"
             new_count += 1
 
+        seq_label = f"n{abs(entry['seq']):03d}" if entry["seq"] < 0 else f"{entry['seq']:03d}"
         if effect.type == "silence":
             print(
-                f" [{status}] {entry['seq']:03d} | silence "
+                f" [{status}] {seq_label} | silence "
                 f"| {effect.duration_seconds:>5.1f}s | {entry['text']}"
             )
+        elif is_source:
+            print(
+                f" [{status}] {seq_label} | copy    "
+                f"|         | ~    0 credits "
+                f"| {entry['text']}"
+            )
+            print(f"            source: {shared_file}")
         else:
             credits = int(effect.duration_seconds * 40)
             if status == "   NEW":
                 new_duration += effect.duration_seconds
             print(
-                f" [{status}] {entry['seq']:03d} | sfx     "
+                f" [{status}] {seq_label} | sfx     "
                 f"| {effect.duration_seconds:>5.1f}s | ~{credits:>5} credits "
                 f"| {entry['text']}"
             )
             print(f"            prompt: {effect.prompt}")
 
         print(f"            stem: {entry['stem_name']}.mp3")
-        print(f"            shared: {os.path.basename(shared_file)}")
+        if not is_source:
+            print(f"            shared: {os.path.basename(shared_file)}")
         print()
 
     total_credits = int(new_duration * 40)

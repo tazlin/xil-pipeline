@@ -79,9 +79,11 @@ python XILP006_the413_cues_ingester.py --episode S02E03 --cues "cues/<file>.md" 
 python XILP002_the413_producer.py --episode S01E01 --dry-run
 ```
 
-- `--episode` (required) derives `cast_the413_S01E01.json` and (with `--sfx-music`) `sfx_the413_S01E01.json`
-- Reads: parsed JSON + cast config (voice_id/pan/filter per character)
+- `--episode` (required) derives `cast_the413_S01E01.json` and `sfx_the413_S01E01.json`
+- Reads: parsed JSON + cast config; always loads SFX config (for preamble music lookup and `--sfx-music`)
 - Outputs: `stems/<TAG>/{seq:03d}_{section}[-{scene}]_{speaker}.mp3` (e.g. `stems/S01E01/003_cold-open_adam.mp3`)
+- **Preamble stems** (when cast config has a `preamble` block): `n002_preamble_tina.mp3` (voice, seq −2) and `n001_preamble_sfx.mp3` (intro music, seq −1); music source read from `sfx_config.effects["INTRO MUSIC"].source`
+- After generation, injects seq −2/−1 entries into the parsed JSON via `inject_preamble_entries()` — idempotent, re-running replaces existing preamble entries
 - Supports `--start-from N` for resuming interrupted runs
 - Supports `--dry-run` to preview lines and TTS character cost without API calls
 - Supports `--terse` to truncate each line to 3 words (minimizes TTS character cost)
@@ -132,7 +134,10 @@ python XILP004_the413_studio_onboard.py --episode S01E02 --quality high
 ```bash
 python XILP005_the413_daw_export.py --episode S01E01 --dry-run
 python XILP005_the413_daw_export.py --episode S01E01
+python XILP005_the413_daw_export.py --episode S01E01 --macro
 python XILP005_the413_daw_export.py --episode S01E01 --output-dir exports/S01E01/
+python XILP005_the413_daw_export.py --episode S01E01 --dry-run --timeline
+python XILP005_the413_daw_export.py --episode S01E01 --timeline --timeline-html
 ```
 
 - `--episode` (required) derives `cast_the413_S01E01.json` and `parsed/parsed_the413_S01E01.json`
@@ -141,10 +146,16 @@ python XILP005_the413_daw_export.py --episode S01E01 --output-dir exports/S01E01
   - `{TAG}_layer_ambience.wav` — environmental background looped to fill scene durations
   - `{TAG}_layer_music.wav` — music stings/themes at cue positions
   - `{TAG}_layer_sfx.wav` — one-shot SFX and BEAT silences
-- Generates `{TAG}_open_in_audacity.py` — prints import instructions; attempts pipe automation if Audacity's mod-script-pipe is enabled
+- Each WAV is tagged with ID3 metadata (Album, Genre, Year, Title, Artist) via `tag_wav()` from `sfx_common.py`
+- Generates four Audacity label track files (`{TAG}_labels_dialogue.txt`, etc.) — tab-separated start/end/text
+- Generates `{TAG}_open_in_audacity.py` — prints WAV import instructions (labels listed separately as optional)
+- `--macro` writes an Audacity macro (`THE413_{TAG}.txt`) to `%APPDATA%\audacity\Macros\` for one-click WAV import via `Tools > Macros`
 - `--dry-run` shows stem counts and output paths without writing files
+- `--timeline` prints an ASCII multitrack timeline to stdout (works with `--dry-run` via fast mutagen header reads)
+- `--timeline-html` writes a self-contained interactive HTML timeline to `daw/{TAG}/{TAG}_timeline.html` (hover tooltips, Ctrl+scroll zoom)
+- Preamble stems (`n002_preamble_tina.mp3`, `n001_preamble_sfx.mp3`) are picked up automatically via `collect_stem_plans()` when their seq −2/−1 entries are present in the parsed JSON (injected by XILP002)
 - No ElevenLabs API key required — no API calls made
-- Shared mixing logic imported from `mix_common.py`
+- Shared mixing logic imported from `mix_common.py`; visualization via `timeline_viz.py`
 
 ## ElevenLabs API Cost Controls
 
@@ -167,7 +178,9 @@ Scripts use prefix `XIL` (ElevenLabs, avoiding numeric prefixes). The suffix pat
 - `XILP004_*` — Studio project onboarding (ElevenLabs Studio Projects API)
 - `XILP005_*` — DAW layer export (stems → per-layer WAVs for Audacity)
 - `XILP006_*` — cues sheet ingester (cues markdown → SFX library + sfx config enrichment)
-- `mix_common.py` — shared mixing utilities (timeline, layer builders) used by XILP003 and XILP005
+- `mix_common.py` — shared mixing utilities (timeline, layer builders, fast label helpers) used by XILP003 and XILP005
+- `sfx_common.py` — shared SFX library management, ID3 tagging (`tag_mp3`, `tag_wav`), effect generation
+- `timeline_viz.py` — multitrack timeline visualization; `render_terminal_timeline()` (ASCII) and `render_html_timeline()` (interactive HTML); no pydub dependency
 
 ## Cast Configuration
 
@@ -182,6 +195,17 @@ Scripts use prefix `XIL` (ElevenLabs, avoiding numeric prefixes). The suffix pat
 ```
 Voice IDs are discovered via `XILU001_discover_voices_T2S.py` (filters to premade category).
 
+Optional `preamble` block (`intro_music_source` is **not** a field — intro music lives in the SFX config):
+```json
+{
+  "preamble": {
+    "text": "This is Tina Brissette... Today on The 4 1 3, {season_title}, Episode {episode}, {title}.",
+    "speaker": "tina",
+    "speed": 0.85
+  }
+}
+```
+
 ## SFX Configuration
 
 `sfx_the413_S01E01.json` maps parsed direction entry text to ElevenLabs Sound Effects API parameters:
@@ -190,12 +214,14 @@ Voice IDs are discovered via `XILU001_discover_voices_T2S.py` (filters to premad
   "show": "THE 413", "season": 1, "episode": 1,
   "defaults": { "prompt_influence": 0.3 },
   "effects": {
+    "INTRO MUSIC": { "source": "SFX/The Porch Light.mp3" },
     "SFX: PHONE BUZZING": { "prompt": "Phone vibrating buzz", "duration_seconds": 2.0 },
     "BEAT": { "type": "silence", "duration_seconds": 1.0 }
   }
 }
 ```
 - Keys match the `text` field of parsed direction entries exactly
+- `"INTRO MUSIC"` is the reserved key for preamble intro music; XILP002 reads its `source` field to copy the audio file into `n001_preamble_sfx.mp3` — no API generation
 - `type: "sfx"` (default) entries call `client.text_to_sound_effects.convert()` with the `prompt`
 - `type: "silence"` entries (BEAT/LONG BEAT) generate local silent audio — no API call
 - `loop: true` entries mark ambience stems for looping in XILP003's background pass and XILP005's ambience layer
@@ -207,6 +233,8 @@ Each unique sound effect is generated **once** into the `SFX/` directory as a sh
 - Shared asset naming: `slugify_effect_key()` in `sfx_common.py` converts direction text to filesystem-safe slugs
 - `--dry-run` shows three statuses: `EXISTS` (episode stem on disk), `CACHED` (shared asset exists, will be copied), `NEW` (needs API generation)
 - Common SFX functions live in `sfx_common.py` — both XILU002 and XILP002 delegate to it
+- `tag_mp3()` writes ID3 metadata (Album, Genre, Year, Title, Artist, Lyrics) to MP3 stems
+- `tag_wav()` writes ID3 metadata (Album, Genre, Year, Title, Artist) to WAV layer exports
 
 ### Standalone SFX Utility
 `XILU002_generate_SFX.py` — Generates SFX stems independently of XILP002 voice generation.

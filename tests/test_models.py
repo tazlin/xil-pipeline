@@ -144,11 +144,16 @@ class TestScriptEntry:
         with pytest.raises(ValidationError):
             self._make(type="unknown")
 
-    def test_seq_must_be_positive(self):
-        with pytest.raises(ValidationError):
-            self._make(seq=0)
-        with pytest.raises(ValidationError):
-            self._make(seq=-1)
+    def test_seq_allows_negative(self):
+        # Negative seqs are used for preamble entries (-2, -1)
+        entry_neg2 = self._make(seq=-2)
+        assert entry_neg2.seq == -2
+        entry_neg1 = self._make(seq=-1)
+        assert entry_neg1.seq == -1
+
+    def test_seq_allows_zero(self):
+        entry = self._make(seq=0)
+        assert entry.seq == 0
 
     def test_direction_type_literal_validated(self):
         for dt in ("SFX", "MUSIC", "AMBIENCE", "BEAT", None):
@@ -323,6 +328,42 @@ class TestCastMember:
         cm = self._make(voice_id="TBD")
         assert cm.voice_id == "TBD"
 
+    def test_new_tts_fields_default_to_none(self):
+        cm = self._make()
+        assert cm.stability is None
+        assert cm.similarity_boost is None
+        assert cm.style is None
+        assert cm.use_speaker_boost is None
+        assert cm.language_code is None
+
+    def test_stability_range_validated(self):
+        self._make(stability=0.0)   # boundary OK
+        self._make(stability=1.0)   # boundary OK
+        with pytest.raises(ValidationError):
+            self._make(stability=-0.1)
+        with pytest.raises(ValidationError):
+            self._make(stability=1.1)
+
+    def test_similarity_boost_range_validated(self):
+        self._make(similarity_boost=0.0)
+        self._make(similarity_boost=1.0)
+        with pytest.raises(ValidationError):
+            self._make(similarity_boost=1.5)
+
+    def test_style_range_validated(self):
+        self._make(style=0.0)
+        self._make(style=1.0)
+        with pytest.raises(ValidationError):
+            self._make(style=-0.5)
+
+    def test_use_speaker_boost_accepted(self):
+        cm = self._make(use_speaker_boost=True)
+        assert cm.use_speaker_boost is True
+
+    def test_language_code_accepted(self):
+        cm = self._make(language_code="en")
+        assert cm.language_code == "en"
+
     def test_model_dump_roundtrip(self):
         raw = {
             "full_name": "Dez Williams",
@@ -330,6 +371,26 @@ class TestCastMember:
             "pan": -0.15,
             "filter": False,
             "role": "Supporting",
+            "stability": None,
+            "similarity_boost": None,
+            "style": None,
+            "use_speaker_boost": None,
+            "language_code": None,
+        }
+        assert models.CastMember(**raw).model_dump() == raw
+
+    def test_model_dump_roundtrip_with_tts_fields(self):
+        raw = {
+            "full_name": "Adam Santos",
+            "voice_id": "onwK4e9ZLuTAKqWW03F9",
+            "pan": 0.0,
+            "filter": False,
+            "role": "Host/Narrator",
+            "stability": 0.6,
+            "similarity_boost": 0.8,
+            "style": 0.1,
+            "use_speaker_boost": True,
+            "language_code": "en",
         }
         assert models.CastMember(**raw).model_dump() == raw
 
@@ -348,11 +409,11 @@ class TestPreamble:
     def test_valid_preamble(self):
         p = self._make()
         assert p.speaker == "tina"
-        assert p.intro_music_source is None
 
-    def test_with_intro_music_source(self):
-        p = self._make(intro_music_source="SFX/The Porch Light.mp3")
-        assert p.intro_music_source == "SFX/The Porch Light.mp3"
+    def test_intro_music_source_field_absent(self):
+        # intro_music_source was removed; INTRO MUSIC is now in sfx config
+        p = self._make()
+        assert not hasattr(p, "intro_music_source")
 
     def test_text_with_template_vars(self):
         p = self._make()
@@ -365,7 +426,6 @@ class TestPreamble:
         raw = {
             "text": "Today on The 4 1 3, {season_title}, Episode {episode}, {title}.",
             "speaker": "tina",
-            "intro_music_source": "SFX/The Porch Light.mp3",
             "speed": 0.85,
         }
         assert models.Preamble(**raw).model_dump() == raw
@@ -386,11 +446,10 @@ class TestPreamble:
         with pytest.raises(ValidationError):
             self._make(speed=1.3)
 
-    def test_model_dump_roundtrip_no_music(self):
+    def test_model_dump_roundtrip_no_speed(self):
         raw = {
             "text": "Hello, listeners.",
             "speaker": "tina",
-            "intro_music_source": None,
             "speed": None,
         }
         assert models.Preamble(**raw).model_dump() == raw
@@ -407,6 +466,11 @@ class TestCastConfiguration:
                 "pan": 0.0,
                 "filter": False,
                 "role": "Host/Narrator",
+                "stability": None,
+                "similarity_boost": None,
+                "style": None,
+                "use_speaker_boost": None,
+                "language_code": None,
             },
         }
 
@@ -428,7 +492,9 @@ class TestCastConfiguration:
     def test_model_dump_roundtrip(self):
         raw = {
             "show": "THE 413", "episode": 1, "season": None, "title": "Test",
-            "season_title": None, "preamble": None,
+            "season_title": None,
+            "artist": "Tina Brissette for Berkshire Talking Chronicles",
+            "preamble": None,
             "cast": self._make_cast(),
         }
         assert models.CastConfiguration(**raw).model_dump() == raw
@@ -519,10 +585,10 @@ class TestDialogueEntry:
         assert de.speaker == "adam"
         assert de.stem_name == "003_cold-open_adam"
 
-    def test_seq_must_be_non_negative(self):
-        self._make(seq=0)  # seq=0 allowed (preamble entries use ge=0)
-        with pytest.raises(ValidationError):
-            self._make(seq=-1)
+    def test_seq_allows_negative_for_preamble(self):
+        self._make(seq=0)
+        self._make(seq=-1)   # preamble INTRO MUSIC
+        self._make(seq=-2)   # preamble voice stem
 
     def test_model_dump_roundtrip(self):
         raw = {
@@ -614,6 +680,76 @@ class TestSfxEntry:
         )
         assert entry.loop is True
 
+    def test_volume_percentage_default_none(self):
+        entry = self._make()
+        assert entry.volume_percentage is None
+
+    def test_ramp_in_seconds_default_none(self):
+        entry = self._make()
+        assert entry.ramp_in_seconds is None
+
+    def test_ramp_out_seconds_default_none(self):
+        entry = self._make()
+        assert entry.ramp_out_seconds is None
+
+    def test_volume_percentage_accepted(self):
+        entry = self._make(volume_percentage=80.0)
+        assert entry.volume_percentage == 80.0
+
+    def test_volume_percentage_zero_accepted(self):
+        entry = self._make(volume_percentage=0.0)
+        assert entry.volume_percentage == 0.0
+
+    def test_volume_percentage_200_accepted(self):
+        entry = self._make(volume_percentage=200.0)
+        assert entry.volume_percentage == 200.0
+
+    def test_volume_percentage_out_of_range_rejected(self):
+        with pytest.raises(ValidationError):
+            self._make(volume_percentage=-1.0)
+        with pytest.raises(ValidationError):
+            self._make(volume_percentage=201.0)
+
+    def test_ramp_in_seconds_accepted(self):
+        entry = self._make(ramp_in_seconds=1.0)
+        assert entry.ramp_in_seconds == 1.0
+
+    def test_ramp_out_seconds_accepted(self):
+        entry = self._make(ramp_out_seconds=2.5)
+        assert entry.ramp_out_seconds == 2.5
+
+    def test_ramp_in_seconds_zero_accepted(self):
+        entry = self._make(ramp_in_seconds=0.0)
+        assert entry.ramp_in_seconds == 0.0
+
+    def test_ramp_out_seconds_out_of_range_rejected(self):
+        with pytest.raises(ValidationError):
+            self._make(ramp_out_seconds=-0.1)
+        with pytest.raises(ValidationError):
+            self._make(ramp_out_seconds=30.1)
+
+    def test_play_duration_default_none(self):
+        entry = self._make()
+        assert entry.play_duration is None
+
+    def test_play_duration_accepted(self):
+        entry = self._make(play_duration=50.0)
+        assert entry.play_duration == 50.0
+
+    def test_play_duration_zero_accepted(self):
+        entry = self._make(play_duration=0.0)
+        assert entry.play_duration == 0.0
+
+    def test_play_duration_100_accepted(self):
+        entry = self._make(play_duration=100.0)
+        assert entry.play_duration == 100.0
+
+    def test_play_duration_out_of_range_rejected(self):
+        with pytest.raises(ValidationError):
+            self._make(play_duration=-1.0)
+        with pytest.raises(ValidationError):
+            self._make(play_duration=100.1)
+
     def test_model_dump_roundtrip_sfx(self):
         raw = {
             "prompt": "Door opening with bell chime",
@@ -622,6 +758,10 @@ class TestSfxEntry:
             "prompt_influence": 0.5,
             "loop": False,
             "source": None,
+            "volume_percentage": None,
+            "ramp_in_seconds": None,
+            "ramp_out_seconds": None,
+            "play_duration": None,
         }
         assert models.SfxEntry(**raw).model_dump() == raw
 
@@ -633,6 +773,10 @@ class TestSfxEntry:
             "prompt_influence": None,
             "loop": False,
             "source": None,
+            "volume_percentage": None,
+            "ramp_in_seconds": None,
+            "ramp_out_seconds": None,
+            "play_duration": None,
         }
         assert models.SfxEntry(**raw).model_dump() == raw
 
@@ -644,6 +788,25 @@ class TestSfxEntry:
             "prompt_influence": None,
             "loop": False,
             "source": "SFX/theme.mp3",
+            "volume_percentage": None,
+            "ramp_in_seconds": None,
+            "ramp_out_seconds": None,
+            "play_duration": None,
+        }
+        assert models.SfxEntry(**raw).model_dump() == raw
+
+    def test_model_dump_roundtrip_with_volume_ramp(self):
+        raw = {
+            "prompt": "Ambience background hum",
+            "type": "sfx",
+            "duration_seconds": 30.0,
+            "prompt_influence": None,
+            "loop": True,
+            "source": None,
+            "volume_percentage": 20.0,
+            "ramp_in_seconds": 1.0,
+            "ramp_out_seconds": 2.0,
+            "play_duration": None,
         }
         assert models.SfxEntry(**raw).model_dump() == raw
 
@@ -729,6 +892,10 @@ class TestSfxConfiguration:
                     "duration_seconds": 1.0,
                     "prompt_influence": None, "loop": False,
                     "source": None,
+                    "volume_percentage": None,
+                    "ramp_in_seconds": None,
+                    "ramp_out_seconds": None,
+                    "play_duration": None,
                 },
             },
         }

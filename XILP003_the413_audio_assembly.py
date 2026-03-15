@@ -31,11 +31,10 @@ import argparse
 
 from pydub import AudioSegment
 
-from models import CastConfiguration, VoiceConfig
+from models import CastConfiguration, VoiceConfig, SfxConfiguration
 from mix_common import (
     apply_phone_filter,
     collect_stem_plans,
-    collect_preamble_plans,
     load_entries_index,
     build_foreground,
     build_ambience_layer,
@@ -99,7 +98,7 @@ def assemble_multitrack(
     stems_dir: str,
     parsed_path: str,
     final_output: str,
-    preamble_cfg=None,
+    sfx_config=None,
 ) -> None:
     """Assemble stems using a two-pass multi-track mix.
 
@@ -119,9 +118,7 @@ def assemble_multitrack(
             preamble stems are prepended at seq -2 (voice) and -1 (music).
     """
     entries_index = load_entries_index(parsed_path)
-    stem_plans = collect_stem_plans(stems_dir, entries_index)
-    if preamble_cfg is not None:
-        stem_plans = collect_preamble_plans(preamble_cfg, stems_dir) + stem_plans
+    stem_plans = collect_stem_plans(stems_dir, entries_index, sfx_config=sfx_config)
 
     if not stem_plans:
         print(f" [!] No stems found in {stems_dir}/. Run XILP002 first.")
@@ -194,8 +191,17 @@ def main() -> None:
     output = args.output or f"the413_{tag}_master.mp3"
 
     parsed_path = args.parsed or f"parsed/parsed_the413_{tag}.json"
+    sfx_path = f"sfx_the413_{tag}.json"
+    sfx_config = None
+    if os.path.exists(sfx_path):
+        with open(sfx_path, "r", encoding="utf-8") as f:
+            sfx_config = SfxConfiguration(**json.load(f))
+
     if os.path.exists(parsed_path):
-        assemble_multitrack(config, stems_dir, parsed_path, output, preamble_cfg=cast_cfg.preamble)
+        assemble_multitrack(
+            config, stems_dir, parsed_path, output,
+            sfx_config=sfx_config,
+        )
     else:
         print(f"   [info] No parsed JSON at {parsed_path!r} — using sequential assembly.")
         assemble_audio(config, stems_dir, output)

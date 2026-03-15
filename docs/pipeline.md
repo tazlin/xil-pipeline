@@ -71,21 +71,35 @@ flowchart TD
     P4 --> STUDIO
 
     P5["XILP005_the413_daw_export.py"]
+    VIZ["timeline_viz.py"]
     DAW["`🎚️ daw/S01E01/
-    layer_dialogue.wav
-    layer_ambience.wav
-    layer_music.wav
-    layer_sfx.wav`"]
+    layer_dialogue.wav + labels
+    layer_ambience.wav + labels
+    layer_music.wav + labels
+    layer_sfx.wav + labels
+    (ID3 metadata tagged)`"]
     DRY5["`--dry-run
     Show stem counts + paths
     No files written`"]
+    MACRO["`--macro → Audacity macro
+    THE413_S01E01.txt
+    (WAV import only)`"]
+    TL5["`--timeline
+    ASCII timeline to stdout`"]
+    TLHTML5["`--timeline-html
+    S01E01_timeline.html
+    (interactive, self-contained)`"]
 
     ST --> P5
     J --> P5
     C --> P5
     MIX --> P5
+    VIZ --> P5
     P5 -->|"--dry-run"| DRY5
     P5 --> DAW
+    P5 -->|"--macro"| MACRO
+    P5 -->|"--timeline"| TL5
+    P5 -->|"--timeline-html"| TLHTML5
 ```
 
 ---
@@ -192,15 +206,28 @@ sequenceDiagram
     actor User
     participant M as main
     participant LP as load_production
+    participant SFX as sfx_config
     participant QG as Quota Guard
     participant API as ElevenLabs API
     participant FS as stems directory
+    participant PJ as parsed JSON
 
-    User->>M: python XILP002_the413_producer.py
-    M->>LP: load cast_the413_S01E01.json + parsed script
+    User->>M: python XILP002_the413_producer.py --episode S02E03
+    M->>LP: load cast_the413_S02E03.json + parsed script
     LP-->>M: config dict, dialogue_entries list
+    M->>SFX: load sfx_the413_S02E03.json (always, for preamble)
+    SFX-->>M: SfxConfiguration model
 
-    M->>QG: check_elevenlabs_quota — display status
+    alt preamble block in cast config
+        M->>QG: check_elevenlabs_quota
+        M->>API: text_to_speech.convert(preamble_text, tina voice)
+        API-->>M: audio_stream
+        M->>FS: write n002_preamble_tina.mp3
+        M->>SFX: look up effects["INTRO MUSIC"].source
+        SFX-->>M: "SFX/The Porch Light.mp3"
+        M->>FS: copy source → n001_preamble_sfx.mp3
+    end
+
     M->>QG: get_best_model_for_budget
     QG-->>M: eleven_v3 or eleven_flash_v2_5
 
@@ -217,9 +244,18 @@ sequenceDiagram
             else quota OK
                 M->>API: text_to_speech.convert(text, voice_id, model)
                 API-->>M: audio_stream chunks
-                M->>FS: write seq_section_scene_speaker.mp3
+                M->>FS: write {seq:03d}_{section}_{speaker}.mp3
+                M->>FS: tag_mp3 (Album, Genre, Year, Title, Artist, Lyrics)
             end
         end
+    end
+
+    alt preamble block in cast config
+        M->>PJ: inject_preamble_entries()
+        note over PJ: Strip any seq ≤ 0 entries
+Prepend seq −2 (dialogue)
+and seq −1 (INTRO MUSIC)
+        PJ-->>M: parsed JSON updated in-place (idempotent)
     end
 
     M-->>User: Generation complete, N new stems
@@ -340,6 +376,8 @@ flowchart TD
 
 ## 6. Stem File Naming Convention
 
+### Standard stems (seq ≥ 1)
+
 ```mermaid
 flowchart LR
     SEQ["`seq
@@ -364,6 +402,21 @@ flowchart LR
 ```
 
 **Example:** `003_cold-open_adam.mp3`, `028_act1-scene-1_rian.mp3`, `102_act2-scene-5_mr_patterson.mp3`
+
+### Preamble stems (seq < 0)
+
+Preamble stems use an **`n` prefix** in place of the zero-padded integer, where  stands for "negative":
+
+| Seq | Filename | Layer |
+|-----|----------|-------|
+| −2 | `n002_preamble_tina.mp3` | Dialogue (broadcast intro voice) |
+| −1 | `n001_preamble_sfx.mp3` | Music (intro music, foreground sequential) |
+
+ in  parses the  prefix and returns the corresponding negative integer.
+Negative seqs sort before all script seqs (≥ 1) so preamble always plays first.
+
+Preamble entries at seq −2 and −1 are injected into  by XILP002 after stem generation,
+making the parsed JSON a complete record of the full episode including the broadcast intro.
 
 ---
 
@@ -416,14 +469,17 @@ flowchart TD
     ST5["`stems/S01E01/*.mp3`"]
 
     C5 --> L5["`load cast config
-    build speaker effects dict`"]
+    build speaker effects dict
+    + show/season/episode metadata`"]
     J5 --> IDX5["`load_entries_index()
     {seq → entry}`"]
     ST5 --> PLANS5["`collect_stem_plans()
     classify by direction_type`"]
     IDX5 --> PLANS5
 
-    PLANS5 --> TL5["`build_foreground()
+    PLANS5 --> TL5
+
+    TL5["`build_foreground()
     foreground track + {seq → ms} timeline`"]
     L5 --> TL5
 
@@ -444,16 +500,67 @@ flowchart TD
     MUS5 --> WAV3["S01E01_layer_music.wav"]
     SFX5 --> WAV4["S01E01_layer_sfx.wav"]
 
-    WAV1 --> SCRIPT5["`S01E01_open_in_audacity.py
-    Import helper + pipe automation`"]
-    WAV2 --> SCRIPT5
-    WAV3 --> SCRIPT5
-    WAV4 --> SCRIPT5
+    WAV1 --> TAG5["`tag_wav()
+    ID3 metadata: Album, Genre,
+    Year, Title, Artist`"]
+    WAV2 --> TAG5
+    WAV3 --> TAG5
+    WAV4 --> TAG5
+
+    DLG5 --> LBL1["S01E01_labels_dialogue.txt"]
+    AMB5 --> LBL2["S01E01_labels_ambience.txt"]
+    MUS5 --> LBL3["S01E01_labels_music.txt"]
+    SFX5 --> LBL4["S01E01_labels_sfx.txt"]
+
+    TAG5 --> SCRIPT5["`S01E01_open_in_audacity.py
+    Manual import instructions
+    (WAVs + optional labels)`"]
+    TAG5 --> MACRO5["`--macro → THE413_S01E01.txt
+    Audacity macro (WAVs only)
+    written to %APPDATA%/audacity/Macros/`"]
+
+    DLG5 --> TLVIZ["`timeline_viz.py
+    build_timeline_data()`"]
+    AMB5 --> TLVIZ
+    MUS5 --> TLVIZ
+    SFX5 --> TLVIZ
+    TLVIZ -->|"--timeline"| ASCII5["`ASCII timeline → stdout
+    render_terminal_timeline()`"]
+    TLVIZ -->|"--timeline-html"| HTML5["`S01E01_timeline.html
+    render_html_timeline()
+    (hover tooltips + zoom)`"]
 ```
 
 > **Audacity alignment:** All four WAV files are exactly the same duration (full episode length).
 > Importing them into Audacity at t=0 produces four perfectly aligned tracks — no repositioning
-> or time-offset metadata required. Run `python S01E01_open_in_audacity.py` for import instructions.
+> or time-offset metadata required.
+
+> **Audio metadata:** Each WAV layer is tagged with ID3 metadata (Album = show name, Genre = "Podcast",
+> Year, Title = e.g. "S02E03 Dialogue", Artist = season title) via `tag_wav()` from `sfx_common.py`.
+
+> **Label tracks:** Audacity-format label files (tab-separated start/end/text) are generated alongside
+> each WAV layer. Import labels separately via `File > Import > Labels...` in Audacity.
+
+> **Audacity macro:** `--macro` writes a one-click macro (`THE413_<TAG>.txt`) to the Audacity Macros
+> directory. The macro imports the four WAV files only (labels are imported manually). Access via
+> `Tools > Macros` in Audacity.
+
+> **Preamble support:** When the cast config includes a `preamble` block, XILP002 generates
+> `n002_preamble_tina.mp3` (broadcast intro voice, seq −2) and copies the intro music from
+> `sfx_config.effects["INTRO MUSIC"].source` into `n001_preamble_sfx.mp3` (seq −1).  It then
+> injects seq −2/−1 entries into the parsed JSON so they flow through the standard
+> `collect_stem_plans()` path in XILP003 and XILP005 — no special preamble parameter needed.
+> Preamble music has `foreground_override = True` so it plays sequentially, not as a background
+> overlay.
+
+> **Timeline visualization:** `--timeline` prints an ASCII multitrack view to stdout; `--timeline-html`
+> writes a self-contained HTML file with color-coded swim lanes, hover tooltips, and Ctrl+scroll zoom.
+> Both work with `--dry-run` — the dry-run path uses `build_foreground_timeline_only()` (mutagen
+> header reads, no audio decoding) and the `compute_*_labels()` helpers in `mix_common.py`.
+
+> **Note on mod-script-pipe:** The generated helper script includes pipe automation code, but
+> Audacity 3.7.x does not reliably initialise mod-script-pipe on Windows. The Audacity macro
+> (`--macro`) is the recommended automation path.
 
 ---
 
@@ -591,10 +698,100 @@ python XILP006_the413_cues_ingester.py --episode S02E03 \
     --cues "cues/<cues-file>.md" --generate
 
 # 5. Generate voice stems (sfx config already enriched)
+#    Preamble: ensure sfx_the413_S02E03.json contains an "INTRO MUSIC" entry with a "source" path
+#    XILP002 will copy that file → n001_preamble_sfx.mp3 and inject seq -2/-1 into parsed JSON
 python XILP002_the413_producer.py --episode S02E03 --dry-run
 python XILP002_the413_producer.py --episode S02E03
 
 # 6. Assemble master MP3 or export DAW layers
 python XILP003_the413_audio_assembly.py --episode S02E03
-python XILP005_the413_daw_export.py --episode S02E03
+python XILP005_the413_daw_export.py --episode S02E03 --macro
+
+# 7. Inspect asset placement (no audio decode needed with --dry-run)
+python XILP005_the413_daw_export.py --episode S02E03 --dry-run --timeline
+python XILP005_the413_daw_export.py --episode S02E03 --timeline --timeline-html
 ```
+
+---
+
+## 10. Timeline Visualization (`timeline_viz.py`)
+
+Shared module that renders asset placement across all four layers without any pydub dependency.
+Consumed by XILP005 via `--timeline` and `--timeline-html`.
+
+### 10a. Data model
+
+```mermaid
+classDiagram
+    class LayerSpan {
+        +float start_s
+        +float end_s
+        +str label
+    }
+    class TimelineData {
+        +str tag
+        +float total_duration_s
+        +dict layers
+    }
+    TimelineData "1" --> "*" LayerSpan : layers[key]
+```
+
+### 10b. Rendering paths
+
+```mermaid
+flowchart TD
+    DLG_L["`dialogue labels
+    list of (start_s, end_s, speaker)`"]
+    AMB_L["`ambience labels`"]
+    MUS_L["`music labels`"]
+    SFX_L["`sfx labels`"]
+
+    BUILD["`build_timeline_data()
+    Wraps four label lists → TimelineData`"]
+
+    DLG_L --> BUILD
+    AMB_L --> BUILD
+    MUS_L --> BUILD
+    SFX_L --> BUILD
+
+    BUILD --> TERM["`render_terminal_timeline()
+    Unicode ASCII — time ruler + layer bars
+    auto-scales to terminal width (shutil)`"]
+    BUILD --> HTML["`render_html_timeline()
+    Self-contained HTML — no CDN
+    color-coded swim lanes
+    hover tooltips · Ctrl+scroll zoom`"]
+
+    TERM --> STDOUT["stdout"]
+    HTML --> FILE["`daw/{TAG}/{TAG}_timeline.html`"]
+```
+
+### 10c. Dry-run label path (no audio decoding)
+
+```mermaid
+flowchart LR
+    PLANS["`stem_plans
+    (StemPlan list)`"]
+    FT["`build_foreground_timeline_only()
+    mutagen header reads only
+    → (total_ms, timeline)`"]
+    PLANS --> FT
+
+    FT --> DLG2["`compute_dialogue_labels()`"]
+    FT --> AMB2["`compute_ambience_labels()`"]
+    FT --> MUS2["`compute_music_labels()`"]
+    FT --> SFX2["`compute_sfx_labels()`"]
+
+    DLG2 --> BTD["`build_timeline_data()`"]
+    AMB2 --> BTD
+    MUS2 --> BTD
+    SFX2 --> BTD
+
+    BTD --> RENDER["`render_terminal_timeline()
+    render_html_timeline()`"]
+```
+
+> **Fast dry-run:** `build_foreground_timeline_only()` uses `mutagen.mp3.MP3(path).info.length`
+> for header-only duration reads — orders of magnitude faster than `AudioSegment.from_file()`
+> for a full episode.  The `compute_*_labels()` helpers apply the same boundary logic as the
+> audio-loading layer builders (`build_ambience_layer` etc.) but return label tuples only.

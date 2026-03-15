@@ -1,7 +1,9 @@
-"""Tests for collect_stem_plans() stale-stem detection in mix_common.py."""
+"""Tests for mix_common.py — stem plans, clip effects, and layer builders."""
 
 import importlib.util
+import math
 import os
+import sys
 
 import pytest
 from pydub import AudioSegment
@@ -15,7 +17,20 @@ mix_common = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(mix_common)
 
 collect_stem_plans = mix_common.collect_stem_plans
-collect_preamble_plans = mix_common.collect_preamble_plans
+extract_seq = mix_common.extract_seq
+_apply_clip_effects = mix_common._apply_clip_effects
+_volume_pct_to_db = mix_common._volume_pct_to_db
+build_ambience_layer = mix_common.build_ambience_layer
+build_music_layer = mix_common.build_music_layer
+StemPlan = mix_common.StemPlan
+
+# ─── Import models for SfxConfiguration ───
+
+_models_path = os.path.join(os.path.dirname(__file__), "..", "models.py")
+_models_spec = importlib.util.spec_from_file_location("models", _models_path)
+models = importlib.util.module_from_spec(_models_spec)
+_models_spec.loader.exec_module(models)
+SfxConfiguration = models.SfxConfiguration
 
 
 # ─── Helpers ───
@@ -93,8 +108,8 @@ class TestCollectStemPlans:
         captured = capsys.readouterr()
         assert "[W]" not in captured.out
 
-    def test_preamble_files_are_silently_skipped(self, tmp_path, capsys):
-        """preamble_tina.mp3 and preamble_music.mp3 have no numeric prefix and must be skipped."""
+    def test_old_preamble_filenames_are_silently_skipped(self, tmp_path, capsys):
+        """Legacy preamble_tina.mp3 / preamble_music.mp3 have no numeric prefix — silently skipped."""
         _write_mp3(str(tmp_path / "preamble_tina.mp3"))
         _write_mp3(str(tmp_path / "preamble_music.mp3"))
         index = {}
@@ -105,87 +120,417 @@ class TestCollectStemPlans:
         captured = capsys.readouterr()
         assert "[W]" not in captured.out
 
+    def test_n002_preamble_tina_is_included_as_dialogue(self, tmp_path):
+        """n002_preamble_tina.mp3 → seq -2 dialogue plan; foreground_override=False."""
+        _write_mp3(str(tmp_path / "n002_preamble_tina.mp3"))
+        index = {-2: {"seq": -2, "type": "dialogue", "direction_type": None, "text": "Hello."}}
 
-class TestCollectPreamblePlans:
-    def test_both_files_present(self, tmp_path):
-        """Both preamble stems present → two plans at seq -2 and -1."""
-        _write_mp3(str(tmp_path / "preamble_tina.mp3"))
-        _write_mp3(str(tmp_path / "preamble_music.mp3"))
-
-        plans = collect_preamble_plans(None, str(tmp_path))
-
-        assert len(plans) == 2
-        voice = next(p for p in plans if p.seq == -2)
-        music = next(p for p in plans if p.seq == -1)
-        assert voice.entry_type == "dialogue"
-        assert voice.direction_type is None
-        assert music.entry_type == "direction"
-        assert music.direction_type == "MUSIC"
-        assert music.text == "INTRO MUSIC"
-
-    def test_music_stem_is_foreground(self, tmp_path):
-        """preamble_music.mp3 must be foreground (sequential), not a background overlay."""
-        _write_mp3(str(tmp_path / "preamble_music.mp3"))
-
-        plans = collect_preamble_plans(None, str(tmp_path))
-        music = plans[0]
-
-        assert music.foreground_override is True
-        assert music.is_background is False
-
-    def test_voice_stem_is_foreground(self, tmp_path):
-        """preamble_tina.mp3 must be foreground (no special override needed)."""
-        _write_mp3(str(tmp_path / "preamble_tina.mp3"))
-
-        plans = collect_preamble_plans(None, str(tmp_path))
-        voice = plans[0]
-
-        assert voice.is_background is False
-
-    def test_only_voice_present(self, tmp_path):
-        """Only preamble_tina.mp3 → one plan at seq -2."""
-        _write_mp3(str(tmp_path / "preamble_tina.mp3"))
-
-        plans = collect_preamble_plans(None, str(tmp_path))
+        plans = collect_stem_plans(str(tmp_path), index)
 
         assert len(plans) == 1
         assert plans[0].seq == -2
+        assert plans[0].entry_type == "dialogue"
+        assert plans[0].foreground_override is False
+        assert plans[0].is_background is False
 
-    def test_only_music_present(self, tmp_path):
-        """Only preamble_music.mp3 → one plan at seq -1."""
-        _write_mp3(str(tmp_path / "preamble_music.mp3"))
+    def test_n001_preamble_sfx_is_foreground_music(self, tmp_path):
+        """n001_preamble_sfx.mp3 → seq -1 MUSIC plan; foreground_override=True."""
+        _write_mp3(str(tmp_path / "n001_preamble_sfx.mp3"))
+        index = {-1: {"seq": -1, "type": "direction", "direction_type": "MUSIC", "text": "INTRO MUSIC"}}
 
-        plans = collect_preamble_plans(None, str(tmp_path))
+        plans = collect_stem_plans(str(tmp_path), index)
 
         assert len(plans) == 1
         assert plans[0].seq == -1
-
-    def test_no_files_returns_empty(self, tmp_path):
-        """No preamble files → empty list."""
-        plans = collect_preamble_plans(None, str(tmp_path))
-        assert plans == []
-
-    def test_voice_plan_uses_preamble_text(self, tmp_path):
-        """When preamble_cfg is provided, voice plan text comes from cfg.text."""
-        _write_mp3(str(tmp_path / "preamble_tina.mp3"))
-
-        class FakePreamble:
-            text = "Hello, listeners."
-
-        plans = collect_preamble_plans(FakePreamble(), str(tmp_path))
-        assert plans[0].text == "Hello, listeners."
+        assert plans[0].direction_type == "MUSIC"
+        assert plans[0].foreground_override is True
+        assert plans[0].is_background is False
 
     def test_negative_seqs_sort_before_positive(self, tmp_path):
-        """Preamble seqs -2 and -1 sort before any parsed entry seq ≥ 1."""
-        _write_mp3(str(tmp_path / "preamble_tina.mp3"))
-        _write_mp3(str(tmp_path / "preamble_music.mp3"))
+        """Preamble seqs -2 and -1 sort before any parsed entry seq >= 1."""
+        _write_mp3(str(tmp_path / "n002_preamble_tina.mp3"))
+        _write_mp3(str(tmp_path / "n001_preamble_sfx.mp3"))
         _write_mp3(str(tmp_path / "001_cold-open_adam.mp3"))
+        index = {
+            -2: {"seq": -2, "type": "dialogue", "direction_type": None, "text": "Hello."},
+            -1: {"seq": -1, "type": "direction", "direction_type": "MUSIC", "text": "INTRO MUSIC"},
+            1: {"seq": 1, "type": "dialogue", "direction_type": None, "text": "Hi"},
+        }
 
-        index = {1: {"seq": 1, "type": "dialogue", "direction_type": None, "text": "Hi"}}
-        parsed_plans = collect_stem_plans(str(tmp_path), index)
-        preamble = collect_preamble_plans(None, str(tmp_path))
-        all_plans = sorted(preamble + parsed_plans, key=lambda p: p.seq)
+        plans = collect_stem_plans(str(tmp_path), index)
+        plans_sorted = sorted(plans, key=lambda p: p.seq)
 
-        assert all_plans[0].seq == -2
-        assert all_plans[1].seq == -1
-        assert all_plans[2].seq == 1
+        assert plans_sorted[0].seq == -2
+        assert plans_sorted[1].seq == -1
+        assert plans_sorted[2].seq == 1
+
+
+
+class TestExtractSeq:
+    def test_positive_seq(self):
+        assert extract_seq('stems/S01E01/003_cold-open_adam.mp3') == 3
+
+    def test_positive_seq_high(self):
+        assert extract_seq('stems/S01E01/099_act-two_sfx.mp3') == 99
+
+    def test_negative_seq_n002(self):
+        assert extract_seq('stems/S02E03/n002_preamble_tina.mp3') == -2
+
+    def test_negative_seq_n001(self):
+        assert extract_seq('stems/S02E03/n001_preamble_sfx.mp3') == -1
+
+    def test_negative_seq_n010(self):
+        assert extract_seq('stems/S02E03/n010_something_sfx.mp3') == -10
+
+    def test_invalid_prefix_raises_value_error(self):
+        import pytest
+        with pytest.raises((ValueError, IndexError)):
+            extract_seq('stems/S01E01/preamble_tina.mp3')
+
+
+
+# ─── _volume_pct_to_db and _apply_clip_effects ───
+
+
+class TestVolumePctToDb:
+    def test_100_percent_is_zero_db(self):
+        assert abs(_volume_pct_to_db(100.0)) < 1e-9
+
+    def test_50_percent_is_minus_6db(self):
+        # 20 * log10(0.5) ≈ -6.02
+        assert abs(_volume_pct_to_db(50.0) - 20 * math.log10(0.5)) < 1e-9
+
+    def test_200_percent_is_plus_6db(self):
+        assert abs(_volume_pct_to_db(200.0) - 20 * math.log10(2.0)) < 1e-9
+
+    def test_80_percent(self):
+        expected = 20 * math.log10(0.80)
+        assert abs(_volume_pct_to_db(80.0) - expected) < 1e-9
+
+    def test_20_percent(self):
+        expected = 20 * math.log10(0.20)
+        assert abs(_volume_pct_to_db(20.0) - expected) < 1e-9
+
+    def test_zero_returns_negative_inf(self):
+        result = _volume_pct_to_db(0.0)
+        assert result == -math.inf
+
+
+def _make_sine(duration_ms: int = 500) -> AudioSegment:
+    return Sine(440).to_audio_segment(duration=duration_ms)
+
+
+class TestApplyClipEffects:
+    def test_no_op_none_volume_zero_ramps_zero_level(self):
+        clip = _make_sine(500)
+        result = _apply_clip_effects(clip, None, 0, 0, 0)
+        assert len(result) == len(clip)
+        # dBFS should be unchanged
+        assert abs(result.dBFS - clip.dBFS) < 0.5
+
+    def test_volume_100_percent_unchanged(self):
+        clip = _make_sine(500)
+        result = _apply_clip_effects(clip, 100.0, 0, 0, 0)
+        assert abs(result.dBFS - clip.dBFS) < 0.5
+
+    def test_volume_50_percent_reduces_level(self):
+        clip = _make_sine(500)
+        result = _apply_clip_effects(clip, 50.0, 0, 0, 0)
+        # ≈ -6 dB
+        assert result.dBFS < clip.dBFS - 5
+
+    def test_level_db_offset_applied(self):
+        clip = _make_sine(500)
+        result = _apply_clip_effects(clip, None, 0, 0, -6.0)
+        assert result.dBFS < clip.dBFS - 5
+
+    def test_ramp_in_does_not_change_duration(self):
+        clip = _make_sine(500)
+        result = _apply_clip_effects(clip, None, 100, 0, 0)
+        assert len(result) == len(clip)
+
+    def test_ramp_out_does_not_change_duration(self):
+        clip = _make_sine(500)
+        result = _apply_clip_effects(clip, None, 0, 100, 0)
+        assert len(result) == len(clip)
+
+    def test_combined_volume_and_ramps(self):
+        clip = _make_sine(500)
+        result = _apply_clip_effects(clip, 80.0, 50, 50, -2.0)
+        assert len(result) == len(clip)
+        assert result.dBFS < clip.dBFS  # overall quieter
+
+
+# ─── collect_stem_plans with sfx_config ───
+
+
+def _make_sfx_config(**defaults_overrides):
+    """Return a minimal SfxConfiguration with given defaults."""
+    defaults = {
+        "music_volume_percentage": 80,
+        "music_ramp_in_seconds": 1.0,
+        "music_ramp_out_seconds": 1.0,
+        "ambience_volume_percentage": 20,
+        "ambience_ramp_in_seconds": 1.0,
+        "ambience_ramp_out_seconds": 1.0,
+    }
+    defaults.update(defaults_overrides)
+    return SfxConfiguration(show="THE 413", episode=1, defaults=defaults, effects={})
+
+
+class TestCollectStemPlansWithSfxConfig:
+    def test_music_plan_gets_category_defaults(self, tmp_path):
+        stem = tmp_path / "010_act-one_sfx.mp3"
+        _write_mp3(str(stem))
+        index = {10: {"seq": 10, "type": "direction", "direction_type": "MUSIC", "text": "MUSIC: THEME"}}
+        sfx_config = _make_sfx_config()
+
+        plans = collect_stem_plans(str(tmp_path), index, sfx_config=sfx_config)
+
+        assert len(plans) == 1
+        assert plans[0].volume_percentage == 80
+        assert plans[0].ramp_in_seconds == 1.0
+        assert plans[0].ramp_out_seconds == 1.0
+
+    def test_ambience_plan_gets_category_defaults(self, tmp_path):
+        stem = tmp_path / "020_act-one_sfx.mp3"
+        _write_mp3(str(stem))
+        index = {20: {"seq": 20, "type": "direction", "direction_type": "AMBIENCE", "text": "AMBIENCE: DINER"}}
+        sfx_config = _make_sfx_config()
+
+        plans = collect_stem_plans(str(tmp_path), index, sfx_config=sfx_config)
+
+        assert len(plans) == 1
+        assert plans[0].volume_percentage == 20
+        assert plans[0].ramp_in_seconds == 1.0
+        assert plans[0].ramp_out_seconds == 1.0
+
+    def test_dialogue_plan_gets_none_values(self, tmp_path):
+        stem = tmp_path / "005_cold-open_adam.mp3"
+        _write_mp3(str(stem))
+        index = {5: {"seq": 5, "type": "dialogue", "direction_type": None, "text": "Hello"}}
+        sfx_config = _make_sfx_config()
+
+        plans = collect_stem_plans(str(tmp_path), index, sfx_config=sfx_config)
+
+        assert len(plans) == 1
+        assert plans[0].volume_percentage is None
+        assert plans[0].ramp_in_seconds is None
+        assert plans[0].ramp_out_seconds is None
+
+    def test_sfx_plan_gets_none_values(self, tmp_path):
+        stem = tmp_path / "007_cold-open_sfx.mp3"
+        _write_mp3(str(stem))
+        index = {7: {"seq": 7, "type": "direction", "direction_type": "SFX", "text": "SFX: BANG"}}
+        sfx_config = _make_sfx_config()
+
+        plans = collect_stem_plans(str(tmp_path), index, sfx_config=sfx_config)
+
+        assert len(plans) == 1
+        assert plans[0].volume_percentage is None
+
+    def test_no_sfx_config_gives_none_values(self, tmp_path):
+        stem = tmp_path / "010_act-one_sfx.mp3"
+        _write_mp3(str(stem))
+        index = {10: {"seq": 10, "type": "direction", "direction_type": "MUSIC", "text": "MUSIC: THEME"}}
+
+        plans = collect_stem_plans(str(tmp_path), index, sfx_config=None)
+
+        assert plans[0].volume_percentage is None
+        assert plans[0].ramp_in_seconds is None
+        assert plans[0].ramp_out_seconds is None
+
+    def test_per_effect_override_takes_priority(self, tmp_path):
+        stem = tmp_path / "010_act-one_sfx.mp3"
+        _write_mp3(str(stem))
+        index = {10: {"seq": 10, "type": "direction", "direction_type": "MUSIC", "text": "MUSIC: THEME"}}
+        sfx_config = SfxConfiguration(
+            show="THE 413", episode=1,
+            defaults={
+                "music_volume_percentage": 80,
+                "music_ramp_in_seconds": 1.0,
+                "music_ramp_out_seconds": 1.0,
+            },
+            effects={
+                "MUSIC: THEME": {
+                    "prompt": "Dramatic orchestral theme",
+                    "duration_seconds": 10.0,
+                    "volume_percentage": 50.0,
+                    "ramp_in_seconds": 2.0,
+                    "ramp_out_seconds": 0.0,
+                },
+            },
+        )
+
+        plans = collect_stem_plans(str(tmp_path), index, sfx_config=sfx_config)
+
+        assert plans[0].volume_percentage == 50.0
+        assert plans[0].ramp_in_seconds == 2.0
+        assert plans[0].ramp_out_seconds == 0.0
+
+
+# ─── build_ambience_layer and build_music_layer with volume/ramp ───
+
+
+def _make_plan(seq, filepath, direction_type, entry_type="direction",
+               text=None, volume_percentage=None, ramp_in_seconds=None,
+               ramp_out_seconds=None):
+    plan = StemPlan(
+        seq=seq, filepath=filepath,
+        direction_type=direction_type, entry_type=entry_type, text=text,
+    )
+    plan.volume_percentage = volume_percentage
+    plan.ramp_in_seconds = ramp_in_seconds
+    plan.ramp_out_seconds = ramp_out_seconds
+    return plan
+
+
+class TestBuildAmbienceLayerWithVolumeRamp:
+    def test_volume_percentage_reduces_ambience_level(self, tmp_path):
+        mp3_path = str(tmp_path / "amb.mp3")
+        _write_mp3(mp3_path, duration_ms=200)
+        plan = _make_plan(1, mp3_path, "AMBIENCE", volume_percentage=20.0)
+        timeline = {1: 0}
+        total_ms = 400
+
+        layer, labels = build_ambience_layer([plan], timeline, total_ms, level_db=0)
+
+        assert len(layer) == total_ms
+        assert len(labels) == 1
+        # With 20% volume the layer should be significantly quieter than the raw clip
+        raw_clip = AudioSegment.from_file(mp3_path)
+        assert layer.dBFS < raw_clip.dBFS - 5
+
+    def test_ramp_fields_do_not_error(self, tmp_path):
+        mp3_path = str(tmp_path / "amb.mp3")
+        _write_mp3(mp3_path, duration_ms=500)
+        plan = _make_plan(1, mp3_path, "AMBIENCE",
+                          ramp_in_seconds=0.05, ramp_out_seconds=0.05)
+        timeline = {1: 0}
+        total_ms = 600
+
+        layer, labels = build_ambience_layer([plan], timeline, total_ms, level_db=0)
+
+        assert len(layer) == total_ms
+
+    def test_no_volume_ramp_uses_level_db_only(self, tmp_path):
+        mp3_path = str(tmp_path / "amb.mp3")
+        _write_mp3(mp3_path, duration_ms=200)
+        plan = _make_plan(1, mp3_path, "AMBIENCE")
+        timeline = {1: 0}
+        total_ms = 400
+
+        layer, _ = build_ambience_layer([plan], timeline, total_ms, level_db=-10.0)
+        assert len(layer) == total_ms
+
+
+class TestBuildMusicLayerWithVolumeRamp:
+    def test_volume_percentage_reduces_music_level(self, tmp_path):
+        mp3_path = str(tmp_path / "mus.mp3")
+        _write_mp3(mp3_path, duration_ms=200)
+        plan = _make_plan(1, mp3_path, "MUSIC", volume_percentage=20.0)
+        timeline = {1: 0}
+        total_ms = 400
+
+        layer, labels = build_music_layer([plan], timeline, total_ms, level_db=0)
+
+        assert len(layer) == total_ms
+        assert len(labels) == 1
+        raw_clip = AudioSegment.from_file(mp3_path)
+        assert layer.dBFS < raw_clip.dBFS - 5
+
+    def test_ramp_fields_do_not_error(self, tmp_path):
+        mp3_path = str(tmp_path / "mus.mp3")
+        _write_mp3(mp3_path, duration_ms=500)
+        plan = _make_plan(1, mp3_path, "MUSIC",
+                          ramp_in_seconds=0.05, ramp_out_seconds=0.05)
+        timeline = {1: 0}
+        total_ms = 600
+
+        layer, labels = build_music_layer([plan], timeline, total_ms, level_db=0)
+
+        assert len(layer) == total_ms
+
+    def test_no_volume_ramp_uses_level_db_only(self, tmp_path):
+        mp3_path = str(tmp_path / "mus.mp3")
+        _write_mp3(mp3_path, duration_ms=200)
+        plan = _make_plan(1, mp3_path, "MUSIC")
+        timeline = {1: 0}
+        total_ms = 400
+
+        layer, _ = build_music_layer([plan], timeline, total_ms, level_db=-6.0)
+        assert len(layer) == total_ms
+
+    def test_play_duration_truncates_clip(self, tmp_path):
+        """play_duration=50 should halve the active clip duration in the label."""
+        mp3_path = str(tmp_path / "mus.mp3")
+        _write_mp3(mp3_path, duration_ms=400)
+        plan = _make_plan(1, mp3_path, "MUSIC")
+        plan.play_duration = 50.0
+        timeline = {1: 0}
+        total_ms = 600
+
+        layer, labels = build_music_layer([plan], timeline, total_ms, level_db=0)
+
+        assert len(labels) == 1
+        start_s, end_s, *_ = labels[0]
+        # With 50% play_duration the label end should be ~200ms after start
+        assert (end_s - start_s) < 0.3  # < 300ms (original 400ms, half = 200ms)
+
+    def test_play_duration_none_plays_full_clip(self, tmp_path):
+        """play_duration=None should play the full clip."""
+        mp3_path = str(tmp_path / "mus.mp3")
+        _write_mp3(mp3_path, duration_ms=400)
+        plan = _make_plan(1, mp3_path, "MUSIC")
+        plan.play_duration = None
+        timeline = {1: 0}
+        total_ms = 600
+
+        layer, labels = build_music_layer([plan], timeline, total_ms, level_db=0)
+
+        start_s, end_s, *_ = labels[0]
+        assert (end_s - start_s) > 0.35  # > 350ms (full ~400ms clip)
+
+    def test_labels_include_ramp_data(self, tmp_path):
+        """Music labels should be 6-tuples carrying ramp and play_duration data."""
+        mp3_path = str(tmp_path / "mus.mp3")
+        _write_mp3(mp3_path, duration_ms=200)
+        plan = _make_plan(1, mp3_path, "MUSIC",
+                          ramp_in_seconds=0.5, ramp_out_seconds=1.0)
+        plan.play_duration = 75.0
+        timeline = {1: 0}
+
+        _, labels = build_music_layer([plan], timeline, 400, level_db=0)
+
+        assert len(labels[0]) == 6
+        assert labels[0][3] == 0.5   # ramp_in_seconds
+        assert labels[0][4] == 1.0   # ramp_out_seconds
+        assert labels[0][5] == 75.0  # play_duration
+
+
+class TestAmbienceLabelRampData:
+    def test_ambience_labels_include_ramp_data(self, tmp_path):
+        """Ambience labels should be 5-tuples carrying ramp data."""
+        mp3_path = str(tmp_path / "amb.mp3")
+        _write_mp3(mp3_path, duration_ms=200)
+        plan = _make_plan(1, mp3_path, "AMBIENCE",
+                          ramp_in_seconds=0.5, ramp_out_seconds=1.5)
+        timeline = {1: 0}
+
+        _, labels = build_ambience_layer([plan], timeline, 400, level_db=0)
+
+        assert len(labels[0]) == 5
+        assert labels[0][3] == 0.5   # ramp_in_seconds
+        assert labels[0][4] == 1.5   # ramp_out_seconds
+
+    def test_ambience_labels_none_ramp_when_not_set(self, tmp_path):
+        """Ambience labels carry None for ramp when plan has no ramp values."""
+        mp3_path = str(tmp_path / "amb.mp3")
+        _write_mp3(mp3_path, duration_ms=200)
+        plan = _make_plan(1, mp3_path, "AMBIENCE")
+        timeline = {1: 0}
+
+        _, labels = build_ambience_layer([plan], timeline, 400, level_db=0)
+
+        assert labels[0][3] is None
+        assert labels[0][4] is None

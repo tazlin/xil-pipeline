@@ -11,10 +11,11 @@ import os
 import json
 import shutil
 import argparse
+from pydub import AudioSegment
 from elevenlabs import VoiceSettings
 from elevenlabs.client import ElevenLabs
 
-from models import VoiceConfig, DialogueEntry, CastConfiguration, episode_tag
+from models import VoiceConfig, DialogueEntry, CastConfiguration, SfxConfiguration, episode_tag
 from sfx_common import (
     load_sfx_entries,
     generate_sfx as generate_sfx_stems,
@@ -160,7 +161,15 @@ def load_production(
     config = {}
     for key, member in cast_cfg.cast.items():
         vc = VoiceConfig(id=member.voice_id, pan=member.pan, filter=member.filter)
-        config[key] = {**vc.model_dump(), "full_name": member.full_name}
+        config[key] = {
+            **vc.model_dump(),
+            "full_name": member.full_name,
+            "stability": member.stability,
+            "similarity_boost": member.similarity_boost,
+            "style": member.style,
+            "use_speaker_boost": member.use_speaker_boost,
+            "language_code": member.language_code,
+        }
 
     # Extract dialogue entries with stem naming info
     dialogue_entries = []
@@ -222,10 +231,22 @@ def dry_run(
         direction_label = f" ({entry['direction']})" if entry["direction"] else ""
         text_preview = entry["text"][:75] + "..." if len(entry["text"]) > 75 else entry["text"]
 
-        voice_id = config.get(entry["speaker"], {}).get("id", "???")
+        cfg = config.get(entry["speaker"], {})
+        voice_id = cfg.get("id", "???")
         voice_status = "TBD" if voice_id == "TBD" else "OK"
 
-        print(f" [{marker}] {entry['seq']:03d} | {entry['speaker']:<14} | {char_count:>4} chars | voice: {voice_status}{direction_label}")
+        # Summarise any non-default voice settings
+        vs_parts = []
+        for k in ("stability", "similarity_boost", "style"):
+            if cfg.get(k) is not None:
+                vs_parts.append(f"{k}={cfg[k]}")
+        if cfg.get("use_speaker_boost"):
+            vs_parts.append("speaker_boost")
+        if cfg.get("language_code"):
+            vs_parts.append(f"lang={cfg['language_code']}")
+        vs_note = f" [{', '.join(vs_parts)}]" if vs_parts else ""
+
+        print(f" [{marker}] {entry['seq']:03d} | {entry['speaker']:<14} | {char_count:>4} chars | voice: {voice_status}{vs_note}{direction_label}")
         print(f"          {text_preview}")
         print(f"          stem: {entry['stem_name']}.mp3")
         print()
@@ -283,6 +304,11 @@ def generate_voices(
         if e["seq"] >= start_from and (stop_at is None or e["seq"] <= stop_at)
     ]
 
+    # Build seq-ordered index over the full dialogue list for prev/next continuity
+    all_seqs = sorted(e["seq"] for e in dialogue_entries)
+    seq_position = {seq: i for i, seq in enumerate(all_seqs)}
+    entries_by_seq = {e["seq"]: e for e in dialogue_entries}
+
     range_note = ""
     if stop_at is not None:
         range_note = f" (seq {start_from}–{stop_at})"
@@ -313,12 +339,36 @@ def generate_voices(
             print(f" !!! Production halted at seq {entry['seq']} to save credits.")
             break
 
+        # Build VoiceSettings from per-speaker cast config (None fields are omitted)
+        cfg = config.get(speaker, {})
+        vs_fields = {
+            k: cfg[k] for k in ("stability", "similarity_boost", "style", "use_speaker_boost")
+            if cfg.get(k) is not None
+        }
+        voice_settings = VoiceSettings(**vs_fields) if vs_fields else None
+
+        # Resolve prev/next text for prosody continuity
+        pos = seq_position.get(entry["seq"])
+        prev_text = entries_by_seq[all_seqs[pos - 1]]["text"] if pos and pos > 0 else None
+        next_text = entries_by_seq[all_seqs[pos + 1]]["text"] if pos is not None and pos < len(all_seqs) - 1 else None
+
+        # Collect optional top-level kwargs
+        extra_kwargs = {}
+        if cfg.get("language_code"):
+            extra_kwargs["language_code"] = cfg["language_code"]
+        if prev_text:
+            extra_kwargs["previous_text"] = prev_text
+        if next_text:
+            extra_kwargs["next_text"] = next_text
+
         print(f" > [{entry['seq']:03d}] {speaker} with {current_model} ({len(text)} chars)...")
         audio_stream = client.text_to_speech.convert(
             text=text,
             voice_id=config[speaker]["id"],
             model_id=current_model,
-            output_format="mp3_44100_128"
+            output_format="mp3_44100_128",
+            voice_settings=voice_settings,
+            **extra_kwargs,
         )
 
         with open(stem_file, "wb") as f:
@@ -339,6 +389,51 @@ def generate_voices(
 
     stem_count = len([f for f in os.listdir(stems_dir) if f.endswith(".mp3")])
     print(f"--- Phase 1 Complete: {generated_count} new, {stem_count} total stems in {stems_dir}/ ---")
+
+
+
+def inject_preamble_entries(parsed_path: str, preamble_text: str, speaker: str) -> None:
+    """Prepend seq -2 (voice) and -1 (INTRO MUSIC) entries into the parsed JSON.
+
+    Idempotent: strips any existing seq <= 0 entries before prepending so
+    re-running XILP002 replaces rather than duplicates preamble entries.
+
+    Args:
+        parsed_path: Path to the parsed script JSON file (modified in place).
+        preamble_text: Resolved preamble text (placeholders already substituted).
+        speaker: Cast key for the TTS speaker (e.g. "tina").
+    """
+    with open(parsed_path, "r", encoding="utf-8") as f:
+        data = json.load(f)
+    # Strip any existing preamble entries (seq <= 0)
+    data["entries"] = [e for e in data["entries"] if e["seq"] > 0]
+    # Prepend seq -2 (voice) and seq -1 (INTRO MUSIC direction)
+    preamble_entries = [
+        {
+            "seq": -2,
+            "type": "dialogue",
+            "section": "preamble",
+            "scene": None,
+            "speaker": speaker,
+            "direction": None,
+            "text": preamble_text,
+            "direction_type": None,
+        },
+        {
+            "seq": -1,
+            "type": "direction",
+            "section": "preamble",
+            "scene": None,
+            "speaker": None,
+            "direction": None,
+            "text": "INTRO MUSIC",
+            "direction_type": "MUSIC",
+        },
+    ]
+    data["entries"] = preamble_entries + data["entries"]
+    with open(parsed_path, "w", encoding="utf-8") as f:
+        json.dump(data, f, indent=2, ensure_ascii=False)
+    print(f"   Injected preamble entries (seq -2, -1) into {parsed_path}")
 
 
 def main() -> None:
@@ -389,20 +484,25 @@ def main() -> None:
             {**e, "text": truncate_to_words(e["text"])} for e in dialogue_entries
         ]
 
-    # Load SFX config if --sfx-music flag is set
-    sfx_entries = None
+    # Load SFX config (always, for preamble music lookup)
+    sfx_config_model = None
     sfx_config_data = None
-    if args.sfx_music:
-        sfx_entries = load_sfx_entries(args.script, sfx_path)
+    if os.path.exists(sfx_path):
         with open(sfx_path, "r", encoding="utf-8") as f:
             sfx_config_data = json.load(f)
+        sfx_config_model = SfxConfiguration(**sfx_config_data)
+
+    # Load SFX entries if --sfx-music flag is set
+    sfx_entries = None
+    if args.sfx_music:
+        sfx_entries = load_sfx_entries(args.script, sfx_path)
         # Pre-filter SFX entries to the requested range
         if args.stop_at is not None:
             sfx_entries = [e for e in sfx_entries if e["seq"] <= args.stop_at]
 
     # --- Preamble ---
-    preamble_voice_stem = os.path.join(stems_dir, "preamble_tina.mp3")
-    preamble_music_stem = os.path.join(stems_dir, "preamble_music.mp3")
+    preamble_voice_stem = os.path.join(stems_dir, "n002_preamble_tina.mp3")
+    preamble_music_stem = os.path.join(stems_dir, "n001_preamble_sfx.mp3")
     preamble_text = None
     if cast_cfg.preamble:
         preamble_text = cast_cfg.preamble.text.format(
@@ -449,15 +549,30 @@ def main() -> None:
                             if chunk:
                                 f.write(chunk)
                     print(f"   Saved: {preamble_voice_stem}")
-            # Copy intro music if configured
-            if cast_cfg.preamble.intro_music_source and not os.path.exists(preamble_music_stem):
-                shutil.copy2(cast_cfg.preamble.intro_music_source, preamble_music_stem)
-                print(f"   Saved: {preamble_music_stem}")
+            # Copy intro music from sfx config 'INTRO MUSIC' source
+            if not os.path.exists(preamble_music_stem):
+                if sfx_config_model and "INTRO MUSIC" in sfx_config_model.effects:
+                    intro_entry = sfx_config_model.effects["INTRO MUSIC"]
+                    if intro_entry.source:
+                        clip = AudioSegment.from_file(intro_entry.source)
+                        if intro_entry.play_duration is not None:
+                            trim_ms = int(len(clip) * intro_entry.play_duration / 100.0)
+                            clip = clip[:trim_ms]
+                            print(f"   Trimmed intro music to {trim_ms/1000:.1f}s ({intro_entry.play_duration}%)")
+                        clip.export(preamble_music_stem, format="mp3")
+                        print(f"   Saved: {preamble_music_stem}")
+                    else:
+                        print(" [!] INTRO MUSIC entry has no 'source' — skipping music stem")
+                else:
+                    print(" [!] No 'INTRO MUSIC' entry in sfx config — skipping music stem")
         generate_voices(config, dialogue_entries, stems_dir,
                         start_from=args.start_from, stop_at=args.stop_at)
         if sfx_entries and sfx_config_data:
             generate_sfx_stems(sfx_entries, sfx_config_data, stems_dir,
                                client=client, start_from=args.start_from)
+        # Inject preamble entries into parsed JSON (idempotent)
+        if cast_cfg.preamble and preamble_text is not None and os.path.exists(args.script):
+            inject_preamble_entries(args.script, preamble_text, cast_cfg.preamble.speaker)
 
 
 if __name__ == "__main__":

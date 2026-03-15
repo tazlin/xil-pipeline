@@ -58,7 +58,7 @@ UNKNOWN_SECTION_SCRIPT = """\
 
 ===
 
-## ACT THREE
+## ACT FIVE
 
 **ADAM**
 In an unrecognized section.
@@ -209,7 +209,7 @@ class TestScanScriptSections:
     def test_flags_unknown_section(self, tmp_path):
         result = _scan(UNKNOWN_SECTION_SCRIPT, tmp_path)
         unrecognized_texts = [u["text"] for u in result["unrecognized"]]
-        assert "ACT THREE" in unrecognized_texts
+        assert "ACT FIVE" in unrecognized_texts
 
     def test_known_section_not_in_unrecognized(self, tmp_path):
         result = _scan(SIMPLE_SCRIPT, tmp_path)
