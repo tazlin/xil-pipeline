@@ -12,10 +12,17 @@ site/
 # Generated audio (large binaries, expensive to recreate)
 stems/
 *.mp3
-.wav
+*.wav
+*.aup3
 
 # IDE / tool artifacts
 .qodo/
 
 # Secrets (never commit)
 .env
+
+# OpenOffice
+*.ods
+
+# temp backups
+old-*
