@@ -158,22 +158,55 @@ class CastMember(BaseModel):
     )
 
 
+class PreambleSegment(BaseModel):
+    """One cacheable slice of a multi-part preamble.
+
+    Attributes:
+        text: Spoken text (may use {season_title}, {episode}, {title} placeholders).
+        shared_key: If set, the segment is cached as ``SFX/{shared_key}.mp3`` and
+            reused across episodes.  If ``None`` the segment is episode-specific
+            and regenerated each run.
+    """
+
+    text: str = Field(..., description="Segment text (may use {season_title}, {episode}, {title})")
+    shared_key: str | None = Field(
+        default=None,
+        description="SFX cache key (e.g. 'preamble-the413-tina-intro'); None = episode-specific",
+    )
+
+
 class Preamble(BaseModel):
     """Broadcast introduction prepended to every episode.
 
     Attributes:
-        text: Intro text with optional {season_title}, {episode}, {title} placeholders.
+        text: Single-string intro text (legacy).  Mutually exclusive with ``segments``.
+        segments: Ordered list of cacheable text segments.  Stock segments carry a
+            ``shared_key`` so they are generated once and reused; the variable
+            episode-identifier segment has ``shared_key=None``.
         speaker: Cast key for the reader (e.g. "tina").
         speed: TTS speaking rate passed to ElevenLabs VoiceSettings (0.7–1.2,
             default 1.0). Values below 1.0 slow the reader down.
     """
 
-    text: str = Field(..., description="Intro text (may use {season_title}, {episode}, {title})")
+    text: str | None = Field(
+        default=None,
+        description="Intro text (may use {season_title}, {episode}, {title}); legacy single-string form",
+    )
+    segments: list[PreambleSegment] | None = Field(
+        default=None,
+        description="Ordered cacheable segments; preferred over 'text' for new episodes",
+    )
     speaker: str = Field(..., description="Cast member key for TTS generation")
     speed: float | None = Field(
         default=None, ge=0.7, le=1.2,
         description="TTS speaking rate (0.7–1.2); None uses the voice default"
     )
+
+    @model_validator(mode="after")
+    def _require_text_or_segments(self) -> "Preamble":
+        if self.text is None and not self.segments:
+            raise ValueError("Preamble requires either 'text' or 'segments'")
+        return self
 
 
 class CastConfiguration(BaseModel):

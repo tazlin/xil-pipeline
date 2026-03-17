@@ -436,6 +436,165 @@ def inject_preamble_entries(parsed_path: str, preamble_text: str, speaker: str) 
     print(f"   Injected preamble entries (seq -2, -1) into {parsed_path}")
 
 
+# ---------------------------------------------------------------------------
+# Preamble helpers
+# ---------------------------------------------------------------------------
+
+def _resolve_preamble_text(cast_cfg) -> str:
+    """Return the full resolved preamble text for dry-run display and injection.
+
+    For segment configs the segments are joined (no separator) to produce the
+    same complete text as the legacy single-string form.
+    """
+    kwargs = dict(
+        season_title=cast_cfg.season_title or "",
+        episode=cast_cfg.episode,
+        title=cast_cfg.title or "",
+    )
+    if cast_cfg.preamble.segments:
+        return "".join(seg.text.format(**kwargs) for seg in cast_cfg.preamble.segments)
+    return cast_cfg.preamble.text.format(**kwargs)
+
+
+def _tts_segment(text: str, out_path: str, voice_id: str, speed: float | None) -> None:
+    """Call ElevenLabs TTS and write the result to *out_path*.
+
+    Uses a ``.tmp`` staging file so a partial write is never mistaken for a
+    complete asset.
+    """
+    tmp = out_path + ".tmp"
+    current_model = get_best_model_for_budget()
+    print(f"   > TTS ({len(text)} chars) → {os.path.basename(out_path)} [{current_model}]")
+    voice_settings = VoiceSettings(speed=speed) if speed is not None else None
+    audio_stream = client.text_to_speech.convert(
+        text=text,
+        voice_id=voice_id,
+        model_id=current_model,
+        output_format="mp3_44100_128",
+        voice_settings=voice_settings,
+    )
+    with open(tmp, "wb") as f:
+        for chunk in audio_stream:
+            if chunk:
+                f.write(chunk)
+    os.replace(tmp, out_path)
+
+
+def _dry_run_preamble(cast_cfg, preamble_voice_stem: str) -> None:
+    """Print dry-run summary for the preamble voice stem."""
+    spk = cast_cfg.preamble.speaker
+    stem_exists = (
+        os.path.exists(preamble_voice_stem)
+        and os.path.getsize(preamble_voice_stem) > 0
+    )
+    if stem_exists:
+        print(f" [PREAMBLE] {spk} — stem exists, will skip\n")
+        return
+
+    if cast_cfg.preamble.segments:
+        kwargs = dict(
+            season_title=cast_cfg.season_title or "",
+            episode=cast_cfg.episode,
+            title=cast_cfg.title or "",
+        )
+        print(f" [PREAMBLE] {spk} | {len(cast_cfg.preamble.segments)} segments")
+        total_new = 0
+        for seg in cast_cfg.preamble.segments:
+            resolved = seg.text.format(**kwargs)
+            if seg.shared_key:
+                cached_path = os.path.join("SFX", f"{seg.shared_key}.mp3")
+                status = "CACHED" if (
+                    os.path.exists(cached_path) and os.path.getsize(cached_path) > 0
+                ) else "NEW   "
+                print(f"   {status}  SFX/{seg.shared_key}.mp3  ({len(resolved)} chars)")
+                if status.strip() == "NEW":
+                    total_new += len(resolved)
+            else:
+                print(f"   NEW     [episode variable]  ({len(resolved)} chars)")
+                total_new += len(resolved)
+        print(f"   Total NEW chars for TTS: {total_new}\n")
+    else:
+        resolved = cast_cfg.preamble.text.format(
+            season_title=cast_cfg.season_title or "",
+            episode=cast_cfg.episode,
+            title=cast_cfg.title or "",
+        )
+        print(f" [PREAMBLE] {spk} | {len(resolved)} chars")
+        print(f"   stem: n002_preamble_{spk}.mp3\n")
+
+
+def _generate_preamble_voice(cast_cfg, config: dict, preamble_voice_stem: str,
+                              sfx_dir: str = "SFX") -> None:
+    """Generate ``n002_preamble_{speaker}.mp3`` from single text or segments.
+
+    Skips generation if the stem already exists and is non-zero.  For segment
+    configs, stock segments are cached in *sfx_dir* and the episode-specific
+    variable segment is generated fresh; all parts are concatenated with pydub
+    (zero gap) to produce a seamless output stem.
+    """
+    if os.path.exists(preamble_voice_stem) and os.path.getsize(preamble_voice_stem) > 0:
+        print(f"   Exists: {preamble_voice_stem} — skipping")
+        return
+
+    spk = cast_cfg.preamble.speaker
+    voice_id = config.get(spk, {}).get("id", "TBD")
+    if voice_id == "TBD":
+        print(f" [!] No voice_id for {spk} — skipping {os.path.basename(preamble_voice_stem)}")
+        return
+
+    kwargs = dict(
+        season_title=cast_cfg.season_title or "",
+        episode=cast_cfg.episode,
+        title=cast_cfg.title or "",
+    )
+
+    if cast_cfg.preamble.segments:
+        segment_paths: list[str] = []
+        tmp_files: list[str] = []
+        for i, seg in enumerate(cast_cfg.preamble.segments):
+            resolved = seg.text.format(**kwargs)
+            if not has_enough_characters(resolved):
+                print(f" [!] Insufficient quota for preamble segment {i} — aborting")
+                for f in tmp_files:
+                    if os.path.exists(f):
+                        os.remove(f)
+                return
+            if seg.shared_key:
+                cached = os.path.join(sfx_dir, f"{seg.shared_key}.mp3")
+                if os.path.exists(cached) and os.path.getsize(cached) > 0:
+                    print(f"   CACHED  SFX/{seg.shared_key}.mp3")
+                else:
+                    os.makedirs(sfx_dir, exist_ok=True)
+                    _tts_segment(resolved, cached, voice_id, cast_cfg.preamble.speed)
+                    print(f"   Saved:  SFX/{seg.shared_key}.mp3")
+                segment_paths.append(cached)
+            else:
+                tmp = preamble_voice_stem + f".seg{i}.tmp.mp3"
+                _tts_segment(resolved, tmp, voice_id, cast_cfg.preamble.speed)
+                segment_paths.append(tmp)
+                tmp_files.append(tmp)
+
+        # Concatenate all segments with zero gap
+        print(f"   Concatenating {len(segment_paths)} segment(s) → {os.path.basename(preamble_voice_stem)}")
+        combined = AudioSegment.empty()
+        for p in segment_paths:
+            combined += AudioSegment.from_file(p)
+        combined.export(preamble_voice_stem, format="mp3")
+        for f in tmp_files:
+            if os.path.exists(f):
+                os.remove(f)
+        print(f"   Saved: {preamble_voice_stem}")
+    else:
+        # Legacy single-text path
+        resolved = cast_cfg.preamble.text.format(**kwargs)
+        if not has_enough_characters(resolved):
+            print(f" [!] Insufficient quota for preamble — skipping")
+            return
+        print(f" > [PREAMBLE] {spk} ({len(resolved)} chars)...")
+        _tts_segment(resolved, preamble_voice_stem, voice_id, cast_cfg.preamble.speed)
+        print(f"   Saved: {preamble_voice_stem}")
+
+
 def main() -> None:
     """CLI entry point for voice stem generation.
 
@@ -515,54 +674,27 @@ def main() -> None:
             sfx_entries = [e for e in sfx_entries if e["seq"] <= args.stop_at]
 
     # --- Preamble ---
-    preamble_voice_stem = os.path.join(stems_dir, "n002_preamble_tina.mp3")
+    speaker = cast_cfg.preamble.speaker if cast_cfg.preamble else "tina"
+    preamble_voice_stem = os.path.join(stems_dir, f"n002_preamble_{speaker}.mp3")
     preamble_music_stem = os.path.join(stems_dir, "n001_preamble_sfx.mp3")
+
+    # Resolve the full preamble text (used for dry-run char count + legacy path)
     preamble_text = None
     if cast_cfg.preamble:
-        preamble_text = cast_cfg.preamble.text.format(
-            season_title=cast_cfg.season_title or "",
-            episode=cast_cfg.episode,
-            title=cast_cfg.title or "",
-        )
+        preamble_text = _resolve_preamble_text(cast_cfg)
 
     if args.dry_run:
-        if cast_cfg.preamble and preamble_text is not None:
-            print(f" [PREAMBLE] {cast_cfg.preamble.speaker} | {len(preamble_text)} chars")
-            print(f"   stem: preamble_tina.mp3\n")
+        if cast_cfg.preamble:
+            _dry_run_preamble(cast_cfg, preamble_voice_stem)
         dry_run(config, dialogue_entries, start_from=args.start_from,
                 stop_at=args.stop_at,
                 sfx_entries=sfx_entries, sfx_config=sfx_config_data,
                 stems_dir=stems_dir)
     else:
         check_elevenlabs_quota()
-        if cast_cfg.preamble and preamble_text is not None:
+        if cast_cfg.preamble:
             os.makedirs(stems_dir, exist_ok=True)
-            # Generate Tina's voice stem (skip if exists and non-zero)
-            if os.path.exists(preamble_voice_stem) and os.path.getsize(preamble_voice_stem) > 0:
-                print(f"   Exists: {preamble_voice_stem} — skipping")
-            else:
-                speaker = cast_cfg.preamble.speaker
-                voice_id = config.get(speaker, {}).get("id", "TBD")
-                if voice_id == "TBD":
-                    print(f" [!] No voice_id for {speaker} — skipping preamble_tina.mp3")
-                elif has_enough_characters(preamble_text):
-                    current_model = get_best_model_for_budget()
-                    print(f" > [PREAMBLE] {speaker} with {current_model} ({len(preamble_text)} chars)...")
-                    voice_settings = None
-                    if cast_cfg.preamble.speed is not None:
-                        voice_settings = VoiceSettings(speed=cast_cfg.preamble.speed)
-                    audio_stream = client.text_to_speech.convert(
-                        text=preamble_text,
-                        voice_id=voice_id,
-                        model_id=current_model,
-                        output_format="mp3_44100_128",
-                        voice_settings=voice_settings,
-                    )
-                    with open(preamble_voice_stem, "wb") as f:
-                        for chunk in audio_stream:
-                            if chunk:
-                                f.write(chunk)
-                    print(f"   Saved: {preamble_voice_stem}")
+            _generate_preamble_voice(cast_cfg, config, preamble_voice_stem)
             # Copy intro music from sfx config 'INTRO MUSIC' source
             if not os.path.exists(preamble_music_stem):
                 if sfx_config_model and "INTRO MUSIC" in sfx_config_model.effects:

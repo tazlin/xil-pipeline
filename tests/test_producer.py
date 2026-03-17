@@ -846,3 +846,139 @@ class TestPreambleDryRun:
             os.chdir(original_cwd)
         out = capsys.readouterr().out
         assert "[PREAMBLE]" not in out
+
+
+class TestPreambleSegments:
+    """Unit tests for the multi-segment preamble helpers."""
+
+    def _make_cast_cfg(self, preamble_dict: dict):
+        import json
+        from models import CastConfiguration
+        data = {
+            "show": "TEST", "season": 2, "episode": 3,
+            "title": "The Bridge", "season_title": "The Letters",
+            "cast": {
+                "tina": {
+                    "full_name": "Tina", "voice_id": "voice_tina",
+                    "pan": 0.0, "filter": False, "role": "Producer",
+                },
+            },
+            "preamble": preamble_dict,
+        }
+        return CastConfiguration(**data)
+
+    # ------------------------------------------------------------------
+    # _resolve_preamble_text
+    # ------------------------------------------------------------------
+
+    def test_resolve_segments_joins_text(self):
+        cfg = self._make_cast_cfg({
+            "speaker": "tina",
+            "segments": [
+                {"text": "Stock intro, ", "shared_key": "preamble-intro"},
+                {"text": "{season_title}, Episode {episode}, {title}.", "shared_key": None},
+                {"text": " Stock outro.", "shared_key": "preamble-outro"},
+            ],
+        })
+        result = producer._resolve_preamble_text(cfg)
+        assert result == "Stock intro, The Letters, Episode 3, The Bridge. Stock outro."
+
+    def test_resolve_legacy_text(self):
+        cfg = self._make_cast_cfg({
+            "speaker": "tina",
+            "text": "Hello {season_title}, Episode {episode}, {title}.",
+        })
+        result = producer._resolve_preamble_text(cfg)
+        assert result == "Hello The Letters, Episode 3, The Bridge."
+
+    # ------------------------------------------------------------------
+    # _dry_run_preamble — segments path
+    # ------------------------------------------------------------------
+
+    def test_dry_run_segments_shows_segment_count(self, tmp_path, capsys):
+        cfg = self._make_cast_cfg({
+            "speaker": "tina",
+            "segments": [
+                {"text": "Stock intro ", "shared_key": "preamble-intro"},
+                {"text": "{season_title}, Episode {episode}.", "shared_key": None},
+                {"text": " Stock outro.", "shared_key": "preamble-outro"},
+            ],
+        })
+        stem = str(tmp_path / "n002_preamble_tina.mp3")
+        producer._dry_run_preamble(cfg, stem)
+        out = capsys.readouterr().out
+        assert "3 segments" in out
+        assert "tina" in out
+
+    def test_dry_run_segments_cached_vs_new(self, tmp_path, capsys):
+        # Create the intro cache file; outro is absent
+        sfx_dir = tmp_path / "SFX"
+        sfx_dir.mkdir()
+        intro = sfx_dir / "preamble-intro.mp3"
+        intro.write_bytes(b"\xff\xfb" + b"\x00" * 100)  # non-zero dummy MP3
+
+        cfg = self._make_cast_cfg({
+            "speaker": "tina",
+            "segments": [
+                {"text": "Stock intro ", "shared_key": "preamble-intro"},
+                {"text": "{season_title}.", "shared_key": None},
+                {"text": " Outro.", "shared_key": "preamble-outro"},
+            ],
+        })
+        stem = str(tmp_path / "n002_preamble_tina.mp3")
+        original_cwd = os.getcwd()
+        os.chdir(str(tmp_path))
+        try:
+            producer._dry_run_preamble(cfg, stem)
+        finally:
+            os.chdir(original_cwd)
+        out = capsys.readouterr().out
+        assert "CACHED" in out
+        assert "NEW" in out
+
+    def test_dry_run_stem_exists_skips(self, tmp_path, capsys):
+        stem = tmp_path / "n002_preamble_tina.mp3"
+        stem.write_bytes(b"\xff\xfb" + b"\x00" * 100)
+        cfg = self._make_cast_cfg({
+            "speaker": "tina",
+            "segments": [
+                {"text": "Intro ", "shared_key": "k"},
+                {"text": "{title}.", "shared_key": None},
+            ],
+        })
+        producer._dry_run_preamble(cfg, str(stem))
+        out = capsys.readouterr().out
+        assert "skip" in out.lower()
+
+    # ------------------------------------------------------------------
+    # _generate_preamble_voice — cache-hit path (no API call)
+    # ------------------------------------------------------------------
+
+    def test_generate_skips_existing_stem(self, tmp_path, capsys):
+        stem = tmp_path / "n002_preamble_tina.mp3"
+        stem.write_bytes(b"\xff\xfb" + b"\x00" * 100)
+        cfg = self._make_cast_cfg({
+            "speaker": "tina",
+            "segments": [
+                {"text": "Intro ", "shared_key": "k"},
+                {"text": "{title}.", "shared_key": None},
+            ],
+        })
+        config = {"tina": {"id": "voice_tina"}}
+        producer._generate_preamble_voice(cfg, config, str(stem))
+        out = capsys.readouterr().out
+        assert "skipping" in out.lower()
+        # stem must be unchanged
+        assert stem.read_bytes()[:2] == b"\xff\xfb"
+
+    def test_generate_missing_voice_id_skips(self, tmp_path, capsys):
+        cfg = self._make_cast_cfg({
+            "speaker": "tina",
+            "segments": [{"text": "Hello.", "shared_key": None}],
+        })
+        config = {"tina": {"id": "TBD"}}
+        stem = str(tmp_path / "n002_preamble_tina.mp3")
+        producer._generate_preamble_voice(cfg, config, stem)
+        out = capsys.readouterr().out
+        assert "No voice_id" in out
+        assert not os.path.exists(stem)

@@ -425,6 +425,7 @@ class TestPreamble:
     def test_model_dump_roundtrip(self):
         raw = {
             "text": "Today on The 4 1 3, {season_title}, Episode {episode}, {title}.",
+            "segments": None,
             "speaker": "tina",
             "speed": 0.85,
         }
@@ -449,6 +450,7 @@ class TestPreamble:
     def test_model_dump_roundtrip_no_speed(self):
         raw = {
             "text": "Hello, listeners.",
+            "segments": None,
             "speaker": "tina",
             "speed": None,
         }
@@ -637,9 +639,11 @@ class TestSfxEntry:
             self._make(type="unknown")
 
     def test_duration_range_min(self):
-        self._make(duration_seconds=0.5)  # boundary OK
+        self._make(duration_seconds=0.5)   # well above minimum
+        self._make(duration_seconds=0.1)   # valid: ge=0.0 allows sub-0.5 (stop-marker support)
+        # type=sfx with duration_seconds=0.0 is still rejected (would produce empty API call)
         with pytest.raises(ValidationError):
-            self._make(duration_seconds=0.1)
+            models.SfxEntry(type="sfx", prompt="x", duration_seconds=0.0)
 
     def test_duration_range_max(self):
         self._make(duration_seconds=30.0)  # boundary OK for API effects
