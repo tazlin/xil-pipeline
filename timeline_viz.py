@@ -19,6 +19,7 @@ import math
 import os
 import shutil
 from dataclasses import dataclass, field
+from datetime import datetime
 
 
 @dataclass
@@ -286,7 +287,7 @@ _HTML_TEMPLATE = """\
 </head>
 <body>
 <h1>Timeline: {tag}</h1>
-<p class="subtitle">Duration: {duration_fmt} &middot; {span_count} assets across 4 layers</p>
+<p class="subtitle">Duration: {duration_fmt} &middot; {span_count} assets across 4 layers &middot; Generated {generated_at}</p>
 <div class="controls">
   <button onclick="zoomIn()">Zoom +</button>
   <button onclick="zoomOut()">Zoom &minus;</button>
@@ -303,8 +304,8 @@ _HTML_TEMPLATE = """\
 <script>
 const DATA = {data_json};
 const TOTAL = DATA.total_duration_s;
-const COLORS = {{dialogue:'c-dialogue', ambience:'c-ambience', music:'c-music', sfx:'c-sfx'}};
-const LABELS = {{dialogue:'Dialogue', ambience:'Ambience', music:'Music', sfx:'SFX'}};
+const COLORS = {{dialogue:'c-dialogue', sfx:'c-sfx', music:'c-music', ambience:'c-ambience'}};
+const LABELS = {{dialogue:'Dialogue', sfx:'SFX', music:'Music', ambience:'Ambience'}};
 let zoom = 1;
 const BASE_WIDTH = Math.max(document.getElementById('tc').clientWidth - 100, 400);
 const tips = {{}};  // span index → tooltip HTML
@@ -329,7 +330,7 @@ function render() {{
   // Layers
   let lhtml = '';
   let ti = 0;
-  for (const key of ['dialogue','ambience','music','sfx']) {{
+  for (const key of ['dialogue','sfx','music','ambience']) {{
     const spans = DATA.layers[key] || [];
     lhtml += '<div class="layer"><div class="layer-label">' + LABELS[key] + '</div><div class="layer-track" style="width:'+W+'px">';
     for (const sp of spans) {{
@@ -435,6 +436,7 @@ def render_html_timeline(data: TimelineData, output_path: str) -> str:
         duration_fmt=_format_time(data.total_duration_s),
         span_count=span_count,
         data_json=json.dumps(json_data),
+        generated_at=datetime.now().strftime("%Y-%m-%d %H:%M"),
     )
 
     os.makedirs(os.path.dirname(output_path) or ".", exist_ok=True)
