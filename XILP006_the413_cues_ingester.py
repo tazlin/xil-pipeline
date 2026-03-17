@@ -40,6 +40,8 @@ import json
 import os
 import re
 
+from sfx_common import run_banner
+
 SFX_DIR = "SFX"
 CUES_DIR = "cues"
 DEFAULT_SFX_DURATION = 5.0   # seconds when no duration given in cues sheet
@@ -464,86 +466,87 @@ def find_cues_file(episode: str, cues_dir: str = CUES_DIR) -> str | None:
 
 def main() -> None:
     """CLI entry point for the cues sheet ingester."""
-    parser = argparse.ArgumentParser(
-        description=(
-            "Parse a sound cues & music prompts markdown file into an asset "
-            "manifest, audit the SFX library, and optionally generate new "
-            "assets or enrich the episode sfx config."
-        )
-    )
-    parser.add_argument(
-        "--episode", required=True,
-        help="Episode tag (e.g. S02E03) — derives sfx config path",
-    )
-    parser.add_argument(
-        "--cues", default=None,
-        help=(
-            "Path to cues markdown file "
-            "(auto-detected from cues/ if omitted)"
-        ),
-    )
-    parser.add_argument(
-        "--dry-run", action="store_true",
-        help=(
-            "Show audit report and enrichment diff without API calls or "
-            "sfx config writes (manifest is always written)"
-        ),
-    )
-    parser.add_argument(
-        "--generate", action="store_true",
-        help="Generate NEW assets via ElevenLabs API into SFX/",
-    )
-    parser.add_argument(
-        "--enrich-sfx-config", action="store_true",
-        help="Update sfx_the413_<TAG>.json with cues-sheet prompts/durations",
-    )
-    args = parser.parse_args()
-
-    # Resolve cues file
-    cues_path = args.cues or find_cues_file(args.episode)
-    if cues_path is None:
-        parser.error(
-            f"No cues file found for {args.episode}. "
-            "Pass --cues PATH or name your file "
-            f"cues/cues_the413_{args.episode}.md"
-        )
-
-    sfx_config_path = f"sfx_the413_{args.episode}.json"
-
-    # Parse
-    print(f"Parsing: {cues_path}")
-    assets = parse_cues_markdown(cues_path)
-    new_count = sum(1 for a in assets if not a["reuse"])
-    reuse_count = sum(1 for a in assets if a["reuse"])
-    print(f"Found {len(assets)} assets ({new_count} new, {reuse_count} reuse)")
-
-    # Always write manifest and show audit report
-    write_manifest(assets, args.episode, cues_path)
-    dry_run_report(assets, SFX_DIR)
-
-    # Generate new assets
-    if args.generate:
-        if args.dry_run:
-            print("--dry-run active: skipping API generation.")
-        else:
-            api_key = os.environ.get("ELEVENLABS_API_KEY")
-            if not api_key:
-                print("ERROR: ELEVENLABS_API_KEY not set. Cannot generate assets.")
-            else:
-                from elevenlabs.client import ElevenLabs
-                client = ElevenLabs(api_key=api_key)
-                generate_new_assets(assets, SFX_DIR, client=client)
-
-    # Enrich sfx config
-    if args.enrich_sfx_config:
-        if not os.path.exists(sfx_config_path):
-            print(
-                f"WARNING: {sfx_config_path} not found — "
-                "skipping sfx config enrichment."
+    with run_banner():
+        parser = argparse.ArgumentParser(
+            description=(
+                "Parse a sound cues & music prompts markdown file into an asset "
+                "manifest, audit the SFX library, and optionally generate new "
+                "assets or enrich the episode sfx config."
             )
-        else:
-            print(f"\nEnriching {sfx_config_path}…")
-            enrich_sfx_config(assets, sfx_config_path, dry_run=args.dry_run)
+        )
+        parser.add_argument(
+            "--episode", required=True,
+            help="Episode tag (e.g. S02E03) — derives sfx config path",
+        )
+        parser.add_argument(
+            "--cues", default=None,
+            help=(
+                "Path to cues markdown file "
+                "(auto-detected from cues/ if omitted)"
+            ),
+        )
+        parser.add_argument(
+            "--dry-run", action="store_true",
+            help=(
+                "Show audit report and enrichment diff without API calls or "
+                "sfx config writes (manifest is always written)"
+            ),
+        )
+        parser.add_argument(
+            "--generate", action="store_true",
+            help="Generate NEW assets via ElevenLabs API into SFX/",
+        )
+        parser.add_argument(
+            "--enrich-sfx-config", action="store_true",
+            help="Update sfx_the413_<TAG>.json with cues-sheet prompts/durations",
+        )
+        args = parser.parse_args()
+
+        # Resolve cues file
+        cues_path = args.cues or find_cues_file(args.episode)
+        if cues_path is None:
+            parser.error(
+                f"No cues file found for {args.episode}. "
+                "Pass --cues PATH or name your file "
+                f"cues/cues_the413_{args.episode}.md"
+            )
+
+        sfx_config_path = f"sfx_the413_{args.episode}.json"
+
+        # Parse
+        print(f"Parsing: {cues_path}")
+        assets = parse_cues_markdown(cues_path)
+        new_count = sum(1 for a in assets if not a["reuse"])
+        reuse_count = sum(1 for a in assets if a["reuse"])
+        print(f"Found {len(assets)} assets ({new_count} new, {reuse_count} reuse)")
+
+        # Always write manifest and show audit report
+        write_manifest(assets, args.episode, cues_path)
+        dry_run_report(assets, SFX_DIR)
+
+        # Generate new assets
+        if args.generate:
+            if args.dry_run:
+                print("--dry-run active: skipping API generation.")
+            else:
+                api_key = os.environ.get("ELEVENLABS_API_KEY")
+                if not api_key:
+                    print("ERROR: ELEVENLABS_API_KEY not set. Cannot generate assets.")
+                else:
+                    from elevenlabs.client import ElevenLabs
+                    client = ElevenLabs(api_key=api_key)
+                    generate_new_assets(assets, SFX_DIR, client=client)
+
+        # Enrich sfx config
+        if args.enrich_sfx_config:
+            if not os.path.exists(sfx_config_path):
+                print(
+                    f"WARNING: {sfx_config_path} not found — "
+                    "skipping sfx config enrichment."
+                )
+            else:
+                print(f"\nEnriching {sfx_config_path}…")
+                enrich_sfx_config(assets, sfx_config_path, dry_run=args.dry_run)
 
 
 if __name__ == "__main__":

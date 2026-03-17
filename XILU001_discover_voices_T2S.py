@@ -29,6 +29,7 @@ import json as _json
 import os
 
 from elevenlabs.client import ElevenLabs
+from sfx_common import run_banner
 
 # Human-readable category labels matching the portal display
 CATEGORY_LABELS = {
@@ -211,106 +212,107 @@ def update_cast(cast_path: str, records_by_id: dict, dry_run: bool = False) -> N
 
 def main() -> None:
     """CLI entry point for voice discovery."""
-    parser = argparse.ArgumentParser(
-        description="List ElevenLabs voices with enriched metadata"
-    )
-    parser.add_argument(
-        "--category", nargs="+",
-        metavar="CAT",
-        help="Filter by category: premade cloned generated professional",
-    )
-    parser.add_argument(
-        "--search",
-        metavar="TEXT",
-        help="Case-insensitive substring filter on name or description",
-    )
-    parser.add_argument(
-        "--id",
-        metavar="VOICE_ID",
-        help="Show full detail for a single voice ID",
-    )
-    parser.add_argument(
-        "--verbose", "-v", action="store_true",
-        help="Print all fields for each voice",
-    )
-    parser.add_argument(
-        "--json", action="store_true",
-        help="Output results as JSON array",
-    )
-    parser.add_argument(
-        "--update-cast",
-        metavar="CAST_JSON",
-        help="Back-fill role and language_code in a cast JSON from API voice metadata",
-    )
-    parser.add_argument(
-        "--dry-run", action="store_true",
-        help="With --update-cast: show changes without writing the file",
-    )
-    args = parser.parse_args()
+    with run_banner():
+        parser = argparse.ArgumentParser(
+            description="List ElevenLabs voices with enriched metadata"
+        )
+        parser.add_argument(
+            "--category", nargs="+",
+            metavar="CAT",
+            help="Filter by category: premade cloned generated professional",
+        )
+        parser.add_argument(
+            "--search",
+            metavar="TEXT",
+            help="Case-insensitive substring filter on name or description",
+        )
+        parser.add_argument(
+            "--id",
+            metavar="VOICE_ID",
+            help="Show full detail for a single voice ID",
+        )
+        parser.add_argument(
+            "--verbose", "-v", action="store_true",
+            help="Print all fields for each voice",
+        )
+        parser.add_argument(
+            "--json", action="store_true",
+            help="Output results as JSON array",
+        )
+        parser.add_argument(
+            "--update-cast",
+            metavar="CAST_JSON",
+            help="Back-fill role and language_code in a cast JSON from API voice metadata",
+        )
+        parser.add_argument(
+            "--dry-run", action="store_true",
+            help="With --update-cast: show changes without writing the file",
+        )
+        args = parser.parse_args()
 
-    client = ElevenLabs(api_key=os.environ.get("ELEVENLABS_API_KEY"))
-    response = client.voices.get_all()
-    voices = response.voices
+        client = ElevenLabs(api_key=os.environ.get("ELEVENLABS_API_KEY"))
+        response = client.voices.get_all()
+        voices = response.voices
 
-    records = [build_voice_record(v) for v in voices]
-    records_by_id = {r["voice_id"]: r for r in records}
+        records = [build_voice_record(v) for v in voices]
+        records_by_id = {r["voice_id"]: r for r in records}
 
-    # --update-cast: enrich a cast JSON from API metadata, then exit
-    if args.update_cast:
-        print(f"\n--- Updating cast file: {args.update_cast} ---")
-        update_cast(args.update_cast, records_by_id, dry_run=args.dry_run)
-        return
-
-    # --id: single voice detail
-    if args.id:
-        matches = [r for r in records if r["voice_id"] == args.id]
-        if not matches:
-            print(f"Voice ID {args.id!r} not found in your workspace.")
+        # --update-cast: enrich a cast JSON from API metadata, then exit
+        if args.update_cast:
+            print(f"\n--- Updating cast file: {args.update_cast} ---")
+            update_cast(args.update_cast, records_by_id, dry_run=args.dry_run)
             return
-        print_verbose(matches[0])
-        return
 
-    # Category filter
-    if args.category:
-        cats = {c.lower() for c in args.category}
-        records = [r for r in records if (r["category"] or "").lower() in cats]
+        # --id: single voice detail
+        if args.id:
+            matches = [r for r in records if r["voice_id"] == args.id]
+            if not matches:
+                print(f"Voice ID {args.id!r} not found in your workspace.")
+                return
+            print_verbose(matches[0])
+            return
 
-    # Search filter
-    if args.search:
-        q = args.search.lower()
-        records = [
-            r for r in records
-            if q in (r["name"] or "").lower()
-            or q in (r["description"] or "").lower()
-            or q in (r["library_name"] or "").lower()
-        ]
+        # Category filter
+        if args.category:
+            cats = {c.lower() for c in args.category}
+            records = [r for r in records if (r["category"] or "").lower() in cats]
 
-    # Sort: bookmarked first, then by name
-    records.sort(key=lambda r: (not r["is_bookmarked"], r["name"].lower()))
+        # Search filter
+        if args.search:
+            q = args.search.lower()
+            records = [
+                r for r in records
+                if q in (r["name"] or "").lower()
+                or q in (r["description"] or "").lower()
+                or q in (r["library_name"] or "").lower()
+            ]
 
-    if args.json:
-        print(_json.dumps(records, indent=2))
-        return
+        # Sort: bookmarked first, then by name
+        records.sort(key=lambda r: (not r["is_bookmarked"], r["name"].lower()))
 
-    # Summary header
-    cat_counts: dict[str, int] = {}
-    for r in records:
-        cat_counts[r["category"] or "unknown"] = cat_counts.get(r["category"] or "unknown", 0) + 1
+        if args.json:
+            print(_json.dumps(records, indent=2))
+            return
 
-    print(f"\n--- ElevenLabs Voices ({len(records)} shown) ---")
-    for cat, count in sorted(cat_counts.items()):
-        print(f"  {CATEGORY_LABELS.get(cat, cat)}: {count}")
-    print()
+        # Summary header
+        cat_counts: dict[str, int] = {}
+        for r in records:
+            cat_counts[r["category"] or "unknown"] = cat_counts.get(r["category"] or "unknown", 0) + 1
 
-    if args.verbose:
-        for rec in records:
-            print_verbose(rec)
-    else:
-        for rec in records:
-            print_compact(rec)
+        print(f"\n--- ElevenLabs Voices ({len(records)} shown) ---")
+        for cat, count in sorted(cat_counts.items()):
+            print(f"  {CATEGORY_LABELS.get(cat, cat)}: {count}")
         print()
-        print("  Use --verbose for full details, --json for machine-readable output,")
-        print("  --id <VOICE_ID> for a single voice, --category / --search to filter.")
+
+        if args.verbose:
+            for rec in records:
+                print_verbose(rec)
+        else:
+            for rec in records:
+                print_compact(rec)
+            print()
+            print("  Use --verbose for full details, --json for machine-readable output,")
+            print("  --id <VOICE_ID> for a single voice, --category / --search to filter.")
 
 
 if __name__ == "__main__":

@@ -32,6 +32,7 @@ import os
 import httpx
 from mutagen.mp3 import MP3
 from mutagen.id3 import ID3, USLT
+from sfx_common import run_banner
 
 SFX_DIR = "SFX"
 ELEVENLABS_BASE = "https://api.elevenlabs.io"
@@ -281,128 +282,129 @@ def print_compact_api(rec: dict) -> None:
 
 def main() -> None:
     """CLI entry point for SFX discovery."""
-    parser = argparse.ArgumentParser(
-        description="Discover personally generated Sound Effects from the ElevenLabs account or local SFX/ directory"
-    )
-    mode = parser.add_mutually_exclusive_group()
-    mode.add_argument(
-        "--api",
-        action="store_true",
-        help="Query ElevenLabs /v1/sound-generation/history (requires sound_generation permission)",
-    )
-    mode.add_argument(
-        "--local",
-        action="store_true",
-        help="Scan local SFX/ directory only (no API key needed)",
-    )
-    parser.add_argument(
-        "--sfx-dir",
-        default=SFX_DIR,
-        metavar="DIR",
-        help=f"Local SFX directory to scan (default: {SFX_DIR}/)",
-    )
-    parser.add_argument(
-        "--search",
-        metavar="TEXT",
-        help="Case-insensitive substring filter on the prompt/filename",
-    )
-    parser.add_argument(
-        "--all",
-        action="store_true",
-        help="(API mode) Paginate through the full account history; default: most recent 100",
-    )
-    parser.add_argument(
-        "--verbose", "-v",
-        action="store_true",
-        help="Print all fields for each record",
-    )
-    parser.add_argument(
-        "--json",
-        action="store_true",
-        help="Output results as a JSON array",
-    )
-    args = parser.parse_args()
+    with run_banner():
+        parser = argparse.ArgumentParser(
+            description="Discover personally generated Sound Effects from the ElevenLabs account or local SFX/ directory"
+        )
+        mode = parser.add_mutually_exclusive_group()
+        mode.add_argument(
+            "--api",
+            action="store_true",
+            help="Query ElevenLabs /v1/sound-generation/history (requires sound_generation permission)",
+        )
+        mode.add_argument(
+            "--local",
+            action="store_true",
+            help="Scan local SFX/ directory only (no API key needed)",
+        )
+        parser.add_argument(
+            "--sfx-dir",
+            default=SFX_DIR,
+            metavar="DIR",
+            help=f"Local SFX directory to scan (default: {SFX_DIR}/)",
+        )
+        parser.add_argument(
+            "--search",
+            metavar="TEXT",
+            help="Case-insensitive substring filter on the prompt/filename",
+        )
+        parser.add_argument(
+            "--all",
+            action="store_true",
+            help="(API mode) Paginate through the full account history; default: most recent 100",
+        )
+        parser.add_argument(
+            "--verbose", "-v",
+            action="store_true",
+            help="Print all fields for each record",
+        )
+        parser.add_argument(
+            "--json",
+            action="store_true",
+            help="Output results as a JSON array",
+        )
+        args = parser.parse_args()
 
-    api_key = os.environ.get("ELEVENLABS_API_KEY", "")
-    # Default to local scan — the /v1/sound-generation/history endpoint appears
-    # to be internal-only and is not accessible via public API keys regardless
-    # of permission settings.  Pass --api explicitly to attempt it anyway.
-    use_api = args.api
+        api_key = os.environ.get("ELEVENLABS_API_KEY", "")
+        # Default to local scan — the /v1/sound-generation/history endpoint appears
+        # to be internal-only and is not accessible via public API keys regardless
+        # of permission settings.  Pass --api explicitly to attempt it anyway.
+        use_api = args.api
 
-    if use_api and not api_key:
-        print("[!] ELEVENLABS_API_KEY not set.")
-        raise SystemExit(1)
+        if use_api and not api_key:
+            print("[!] ELEVENLABS_API_KEY not set.")
+            raise SystemExit(1)
 
-    # --- Fetch records ---
-    if use_api:
-        max_items = None if args.all else 100
-        try:
-            records = fetch_api_records(api_key, max_items=max_items)
-            data_source = "API"
-        except SystemExit:
-            if args.api:
-                raise  # user explicitly asked for API — propagate the error
-            print()
-            print("  Falling back to local SFX/ directory scan.")
-            print()
+        # --- Fetch records ---
+        if use_api:
+            max_items = None if args.all else 100
+            try:
+                records = fetch_api_records(api_key, max_items=max_items)
+                data_source = "API"
+            except SystemExit:
+                if args.api:
+                    raise  # user explicitly asked for API — propagate the error
+                print()
+                print("  Falling back to local SFX/ directory scan.")
+                print()
+                records = fetch_local_records(args.sfx_dir)
+                data_source = f"local ({args.sfx_dir}/)"
+        else:
             records = fetch_local_records(args.sfx_dir)
             data_source = f"local ({args.sfx_dir}/)"
-    else:
-        records = fetch_local_records(args.sfx_dir)
-        data_source = f"local ({args.sfx_dir}/)"
 
-    # --- Search filter ---
-    if args.search:
-        q = args.search.lower()
-        records = [
-            r for r in records
-            if q in r.get("prompt", "").lower()
-            or q in r.get("filename", "").lower()
-        ]
-
-    # --- Sort ---
-    if records and records[0].get("date_unix"):
-        records.sort(key=lambda r: r.get("date_unix", 0), reverse=True)
-    else:
-        records.sort(key=lambda r: r.get("filename", "").lower())
-
-    # --- Output ---
-    if args.json:
-        print(_json.dumps(records, indent=2))
-        return
-
-    print(f"\n--- ElevenLabs Sound Effects  [{data_source}]  ({len(records)} items) ---\n")
-
-    if not records:
-        print("  No sound-effect records found.")
+        # --- Search filter ---
         if args.search:
-            print(f"  (search filter: {args.search!r})")
-        return
+            q = args.search.lower()
+            records = [
+                r for r in records
+                if q in r.get("prompt", "").lower()
+                or q in r.get("filename", "").lower()
+            ]
 
-    if args.verbose:
-        for rec in records:
-            if rec["source"] == "local":
-                print_verbose_local(rec)
-            else:
-                print_verbose_api(rec)
-    else:
-        for rec in records:
-            if rec["source"] == "local":
-                print_compact_local(rec)
-            else:
-                print_compact_api(rec)
-        print()
-
-        if data_source.startswith("local"):
-            total_size = sum(r.get("size_bytes", 0) for r in records)
-            print(f"  Total size: {total_size / (1024*1024):.1f} MB  ({len(records)} files)")
+        # --- Sort ---
+        if records and records[0].get("date_unix"):
+            records.sort(key=lambda r: r.get("date_unix", 0), reverse=True)
         else:
-            total_credits = sum(r.get("credits_used", 0) for r in records)
-            print(f"  Total credits used: {total_credits:,}")
+            records.sort(key=lambda r: r.get("filename", "").lower())
 
-        print()
-        print("  Use --verbose for full details, --json for machine-readable output,")
-        print("  --search <text> to filter, --local / --api to select data source.")
+        # --- Output ---
+        if args.json:
+            print(_json.dumps(records, indent=2))
+            return
+
+        print(f"\n--- ElevenLabs Sound Effects  [{data_source}]  ({len(records)} items) ---\n")
+
+        if not records:
+            print("  No sound-effect records found.")
+            if args.search:
+                print(f"  (search filter: {args.search!r})")
+            return
+
+        if args.verbose:
+            for rec in records:
+                if rec["source"] == "local":
+                    print_verbose_local(rec)
+                else:
+                    print_verbose_api(rec)
+        else:
+            for rec in records:
+                if rec["source"] == "local":
+                    print_compact_local(rec)
+                else:
+                    print_compact_api(rec)
+            print()
+
+            if data_source.startswith("local"):
+                total_size = sum(r.get("size_bytes", 0) for r in records)
+                print(f"  Total size: {total_size / (1024*1024):.1f} MB  ({len(records)} files)")
+            else:
+                total_credits = sum(r.get("credits_used", 0) for r in records)
+                print(f"  Total credits used: {total_credits:,}")
+
+            print()
+            print("  Use --verbose for full details, --json for machine-readable output,")
+            print("  --search <text> to filter, --local / --api to select data source.")
 
 
 if __name__ == "__main__":

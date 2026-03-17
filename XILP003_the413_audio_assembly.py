@@ -40,6 +40,7 @@ from mix_common import (
     build_ambience_layer,
     build_music_layer,
 )
+from sfx_common import run_banner
 
 STEMS_DIR = "stems"
 SILENCE_GAP_MS = 600
@@ -159,52 +160,53 @@ def main() -> None:
     runs two-pass multi-track mixing.  Otherwise falls back to sequential
     concatenation.  Does not require an ElevenLabs API key.
     """
-    parser = argparse.ArgumentParser(
-        description="THE 413 Audio Assembly — assemble voice stems into master MP3"
-    )
-    parser.add_argument(
-        "--episode", required=True,
-        help="Episode tag (e.g. S01E01) — derives cast config path"
-    )
-    parser.add_argument(
-        "--output", default=None,
-        help="Output master MP3 path (default: the413_<TAG>_master.mp3)"
-    )
-    parser.add_argument(
-        "--parsed", default=None,
-        help="Path to parsed script JSON (default: parsed/parsed_the413_<TAG>.json)"
-    )
-    args = parser.parse_args()
-
-    cast_path = f"cast_the413_{args.episode}.json"
-    with open(cast_path, "r", encoding="utf-8") as f:
-        cast_data = json.load(f)
-
-    cast_cfg = CastConfiguration(**cast_data)
-    tag = cast_cfg.tag
-    config = {
-        key: VoiceConfig(id=member.voice_id, pan=member.pan, filter=member.filter).model_dump()
-        for key, member in cast_cfg.cast.items()
-    }
-
-    stems_dir = os.path.join(STEMS_DIR, tag)
-    output = args.output or f"the413_{tag}_master.mp3"
-
-    parsed_path = args.parsed or f"parsed/parsed_the413_{tag}.json"
-    sfx_path = f"sfx_the413_{tag}.json"
-    sfx_config = None
-    if os.path.exists(sfx_path):
-        with open(sfx_path, "r", encoding="utf-8") as f:
-            sfx_config = SfxConfiguration(**json.load(f))
-
-    if os.path.exists(parsed_path):
-        assemble_multitrack(
-            config, stems_dir, parsed_path, output,
-            sfx_config=sfx_config,
+    with run_banner():
+        parser = argparse.ArgumentParser(
+            description="THE 413 Audio Assembly — assemble voice stems into master MP3"
         )
-    else:
-        print(f"   [info] No parsed JSON at {parsed_path!r} — using sequential assembly.")
-        assemble_audio(config, stems_dir, output)
+        parser.add_argument(
+            "--episode", required=True,
+            help="Episode tag (e.g. S01E01) — derives cast config path"
+        )
+        parser.add_argument(
+            "--output", default=None,
+            help="Output master MP3 path (default: the413_<TAG>_master.mp3)"
+        )
+        parser.add_argument(
+            "--parsed", default=None,
+            help="Path to parsed script JSON (default: parsed/parsed_the413_<TAG>.json)"
+        )
+        args = parser.parse_args()
+
+        cast_path = f"cast_the413_{args.episode}.json"
+        with open(cast_path, "r", encoding="utf-8") as f:
+            cast_data = json.load(f)
+
+        cast_cfg = CastConfiguration(**cast_data)
+        tag = cast_cfg.tag
+        config = {
+            key: VoiceConfig(id=member.voice_id, pan=member.pan, filter=member.filter).model_dump()
+            for key, member in cast_cfg.cast.items()
+        }
+
+        stems_dir = os.path.join(STEMS_DIR, tag)
+        output = args.output or f"the413_{tag}_master.mp3"
+
+        parsed_path = args.parsed or f"parsed/parsed_the413_{tag}.json"
+        sfx_path = f"sfx_the413_{tag}.json"
+        sfx_config = None
+        if os.path.exists(sfx_path):
+            with open(sfx_path, "r", encoding="utf-8") as f:
+                sfx_config = SfxConfiguration(**json.load(f))
+
+        if os.path.exists(parsed_path):
+            assemble_multitrack(
+                config, stems_dir, parsed_path, output,
+                sfx_config=sfx_config,
+            )
+        else:
+            print(f"   [info] No parsed JSON at {parsed_path!r} — using sequential assembly.")
+            assemble_audio(config, stems_dir, output)
 
 
 if __name__ == "__main__":

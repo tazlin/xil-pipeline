@@ -18,6 +18,7 @@ import os
 import sys
 
 from models import ScriptEntry, ScriptStats, ParsedScript, episode_tag
+from sfx_common import run_banner
 
 # Known speakers — ordered longest-first so compound names match before short ones
 KNOWN_SPEAKERS = [
@@ -807,62 +808,63 @@ def generate_sfx_config(parsed: dict, sfx_path: str) -> None:
 
 def main() -> None:
     """CLI entry point for script parsing."""
-    parser = argparse.ArgumentParser(description="Parse THE 413 production script markdown into structured JSON")
-    parser.add_argument("script", help="Path to the production script markdown file")
-    parser.add_argument("--episode", default=None,
-                        help="Episode tag (e.g. S01E01) — validates header and auto-generates absent cast/sfx configs")
-    parser.add_argument("--output", "-o", default=None,
-                        help="Output JSON path (default: parsed/parsed_the413_<TAG>.json)")
-    parser.add_argument("--preview", type=int, default=None,
-                        help="Show first N dialogue lines (default: show all)")
-    parser.add_argument("--quiet", action="store_true",
-                        help="Only output JSON, skip summary/preview")
-    parser.add_argument("--debug", action="store_true",
-                        help="Write diagnostic CSV alongside JSON output")
-    args = parser.parse_args()
+    with run_banner():
+        parser = argparse.ArgumentParser(description="Parse THE 413 production script markdown into structured JSON")
+        parser.add_argument("script", help="Path to the production script markdown file")
+        parser.add_argument("--episode", default=None,
+                            help="Episode tag (e.g. S01E01) — validates header and auto-generates absent cast/sfx configs")
+        parser.add_argument("--output", "-o", default=None,
+                            help="Output JSON path (default: parsed/parsed_the413_<TAG>.json)")
+        parser.add_argument("--preview", type=int, default=None,
+                            help="Show first N dialogue lines (default: show all)")
+        parser.add_argument("--quiet", action="store_true",
+                            help="Only output JSON, skip summary/preview")
+        parser.add_argument("--debug", action="store_true",
+                            help="Write diagnostic CSV alongside JSON output")
+        args = parser.parse_args()
 
-    # Parse first so we can derive the output path from metadata
-    parsed = parse_script(args.script)
+        # Parse first so we can derive the output path from metadata
+        parsed = parse_script(args.script)
 
-    # Derive tag from parsed header
-    tag = episode_tag(parsed.get("season"), parsed["episode"])
+        # Derive tag from parsed header
+        tag = episode_tag(parsed.get("season"), parsed["episode"])
 
-    # Validate --episode matches script header
-    if args.episode is not None and args.episode != tag:
-        print(f"ERROR: Script header indicates {tag} but "
-              f"--episode {args.episode} was specified")
-        sys.exit(1)
+        # Validate --episode matches script header
+        if args.episode is not None and args.episode != tag:
+            print(f"ERROR: Script header indicates {tag} but "
+                  f"--episode {args.episode} was specified")
+            sys.exit(1)
 
-    # Derive default output path from parsed season/episode
-    if args.output is None:
-        args.output = f"parsed/parsed_the413_{tag}.json"
+        # Derive default output path from parsed season/episode
+        if args.output is None:
+            args.output = f"parsed/parsed_the413_{tag}.json"
 
-    # Write debug CSV if requested (must happen after output path is resolved)
-    if args.debug:
-        debug_csv_path = os.path.splitext(args.output)[0] + ".csv"
-        # Re-parse with debug output enabled
-        parsed = parse_script(args.script, debug_output=debug_csv_path)
-
-    # Write JSON output
-    os.makedirs(os.path.dirname(args.output) or ".", exist_ok=True)
-    with open(args.output, "w", encoding="utf-8") as f:
-        json.dump(parsed, f, indent=2, ensure_ascii=False)
-
-    if not args.quiet:
-        print_summary(parsed)
-        print_dialogue_preview(parsed, limit=args.preview)
-        print(f"JSON written to: {args.output}")
+        # Write debug CSV if requested (must happen after output path is resolved)
         if args.debug:
-            print(f"Debug CSV written to: {os.path.splitext(args.output)[0]}.csv")
+            debug_csv_path = os.path.splitext(args.output)[0] + ".csv"
+            # Re-parse with debug output enabled
+            parsed = parse_script(args.script, debug_output=debug_csv_path)
 
-    # Auto-generate cast/sfx configs if --episode provided and files absent
-    if args.episode:
-        cast_path = f"cast_the413_{args.episode}.json"
-        sfx_path = f"sfx_the413_{args.episode}.json"
-        if not os.path.exists(cast_path):
-            generate_cast_config(parsed, cast_path)
-        if not os.path.exists(sfx_path):
-            generate_sfx_config(parsed, sfx_path)
+        # Write JSON output
+        os.makedirs(os.path.dirname(args.output) or ".", exist_ok=True)
+        with open(args.output, "w", encoding="utf-8") as f:
+            json.dump(parsed, f, indent=2, ensure_ascii=False)
+
+        if not args.quiet:
+            print_summary(parsed)
+            print_dialogue_preview(parsed, limit=args.preview)
+            print(f"JSON written to: {args.output}")
+            if args.debug:
+                print(f"Debug CSV written to: {os.path.splitext(args.output)[0]}.csv")
+
+        # Auto-generate cast/sfx configs if --episode provided and files absent
+        if args.episode:
+            cast_path = f"cast_the413_{args.episode}.json"
+            sfx_path = f"sfx_the413_{args.episode}.json"
+            if not os.path.exists(cast_path):
+                generate_cast_config(parsed, cast_path)
+            if not os.path.exists(sfx_path):
+                generate_sfx_config(parsed, sfx_path)
 
 
 if __name__ == "__main__":

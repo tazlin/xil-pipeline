@@ -18,6 +18,7 @@ import json
 import argparse
 
 from elevenlabs.client import ElevenLabs
+from sfx_common import run_banner
 
 # ---------------------------------------------------------------------------
 # ElevenLabs client (lazily used — only needed for non-dry-run)
@@ -255,62 +256,63 @@ def dry_run(chapters: list[dict], cast: dict) -> None:
 # ---------------------------------------------------------------------------
 
 def main():
-    parser = argparse.ArgumentParser(
-        description="Onboard an episode to an ElevenLabs Studio project."
-    )
-    parser.add_argument(
-        "--episode", required=True,
-        help="Episode tag (e.g. S01E02)"
-    )
-    parser.add_argument(
-        "--dry-run", action="store_true",
-        help="Build and display content JSON without calling the API"
-    )
-    parser.add_argument(
-        "--quality", default="standard",
-        choices=["standard", "high", "ultra", "ultra_lossless"],
-        help="Quality preset (default: standard)"
-    )
-    parser.add_argument(
-        "--model", default="eleven_v3",
-        help="TTS model ID (default: eleven_v3)"
-    )
+    with run_banner():
+        parser = argparse.ArgumentParser(
+            description="Onboard an episode to an ElevenLabs Studio project."
+        )
+        parser.add_argument(
+            "--episode", required=True,
+            help="Episode tag (e.g. S01E02)"
+        )
+        parser.add_argument(
+            "--dry-run", action="store_true",
+            help="Build and display content JSON without calling the API"
+        )
+        parser.add_argument(
+            "--quality", default="standard",
+            choices=["standard", "high", "ultra", "ultra_lossless"],
+            help="Quality preset (default: standard)"
+        )
+        parser.add_argument(
+            "--model", default="eleven_v3",
+            help="TTS model ID (default: eleven_v3)"
+        )
 
-    args = parser.parse_args()
+        args = parser.parse_args()
 
-    parsed, cast = load_episode(args.episode)
-    chapters = build_content_json(parsed, cast)
+        parsed, cast = load_episode(args.episode)
+        chapters = build_content_json(parsed, cast)
 
-    if args.dry_run:
-        dry_run(chapters, cast)
-        return
+        if args.dry_run:
+            dry_run(chapters, cast)
+            return
 
-    # Determine narrator voice for defaults
-    narrator_voice = None
-    for info in cast["cast"].values():
-        if info.get("role") == "Host/Narrator":
-            narrator_voice = info["voice_id"]
-            break
-    if narrator_voice is None:
-        narrator_voice = next(iter(cast["cast"].values()))["voice_id"]
+        # Determine narrator voice for defaults
+        narrator_voice = None
+        for info in cast["cast"].values():
+            if info.get("role") == "Host/Narrator":
+                narrator_voice = info["voice_id"]
+                break
+        if narrator_voice is None:
+            narrator_voice = next(iter(cast["cast"].values()))["voice_id"]
 
-    show = parsed.get("show", "THE 413")
-    title = parsed.get("title", args.episode)
-    project_name = f"XILP004 - {show} — {title} ({args.episode})"
+        show = parsed.get("show", "THE 413")
+        title = parsed.get("title", args.episode)
+        project_name = f"XILP004 - {show} — {title} ({args.episode})"
 
-    print(f"Creating Studio project: {project_name}")
-    check_elevenlabs_quota()
+        print(f"Creating Studio project: {project_name}")
+        check_elevenlabs_quota()
 
-    response = create_project(
-        name=project_name,
-        content_json=chapters,
-        default_voice_id=narrator_voice,
-        model_id=args.model,
-        quality=args.quality,
-    )
+        response = create_project(
+            name=project_name,
+            content_json=chapters,
+            default_voice_id=narrator_voice,
+            model_id=args.model,
+            quality=args.quality,
+        )
 
-    print(f"\nProject created successfully!")
-    print(f"  Project ID: {response.project.project_id}")
+        print(f"\nProject created successfully!")
+        print(f"  Project ID: {response.project.project_id}")
 
 
 if __name__ == "__main__":

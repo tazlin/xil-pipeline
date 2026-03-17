@@ -20,7 +20,7 @@ import argparse
 from elevenlabs.client import ElevenLabs
 
 from models import CastConfiguration
-from sfx_common import tag_mp3
+from sfx_common import tag_mp3, run_banner
 
 # Setup ElevenLabs Client
 client = ElevenLabs(api_key=os.environ.get("ELEVENLABS_API_KEY"))
@@ -109,115 +109,116 @@ def get_best_model_for_budget() -> str:
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(
-        description="Generate a voice sample MP3 for each assigned cast member."
-    )
-    group = parser.add_mutually_exclusive_group(required=True)
-    group.add_argument(
-        "--episode",
-        metavar="TAG",
-        help="Episode tag (e.g. S02E03); derives cast_the413_<TAG>.json",
-    )
-    group.add_argument(
-        "--cast",
-        metavar="PATH",
-        help="Explicit path to cast JSON file",
-    )
-    parser.add_argument(
-        "--dry-run",
-        action="store_true",
-        help="Print what would be generated without calling the API",
-    )
-    parser.add_argument(
-        "--force",
-        action="store_true",
-        help="Regenerate samples even if files already exist on disk",
-    )
-    args = parser.parse_args()
+    with run_banner():
+        parser = argparse.ArgumentParser(
+            description="Generate a voice sample MP3 for each assigned cast member."
+        )
+        group = parser.add_mutually_exclusive_group(required=True)
+        group.add_argument(
+            "--episode",
+            metavar="TAG",
+            help="Episode tag (e.g. S02E03); derives cast_the413_<TAG>.json",
+        )
+        group.add_argument(
+            "--cast",
+            metavar="PATH",
+            help="Explicit path to cast JSON file",
+        )
+        parser.add_argument(
+            "--dry-run",
+            action="store_true",
+            help="Print what would be generated without calling the API",
+        )
+        parser.add_argument(
+            "--force",
+            action="store_true",
+            help="Regenerate samples even if files already exist on disk",
+        )
+        args = parser.parse_args()
 
-    # Resolve cast config path
-    if args.cast:
-        cast_path = args.cast
-    else:
-        cast_path = f"cast_the413_{args.episode}.json"
+        # Resolve cast config path
+        if args.cast:
+            cast_path = args.cast
+        else:
+            cast_path = f"cast_the413_{args.episode}.json"
 
-    if not os.path.exists(cast_path):
-        print(f"[!] Cast config not found: {cast_path}")
-        raise SystemExit(1)
+        if not os.path.exists(cast_path):
+            print(f"[!] Cast config not found: {cast_path}")
+            raise SystemExit(1)
 
-    import json
-    with open(cast_path, "r", encoding="utf-8") as f:
-        cast_data = json.load(f)
-    cast_cfg = CastConfiguration(**cast_data)
-    tag = cast_cfg.tag
+        import json
+        with open(cast_path, "r", encoding="utf-8") as f:
+            cast_data = json.load(f)
+        cast_cfg = CastConfiguration(**cast_data)
+        tag = cast_cfg.tag
 
-    out_dir = os.path.join(VOICE_SAMPLES_DIR, tag)
+        out_dir = os.path.join(VOICE_SAMPLES_DIR, tag)
 
-    print(f"Cast config : {cast_path}")
-    print(f"Episode tag : {tag}")
-    print(f"Output dir  : {out_dir}")
-    print(f"Cast members: {len(cast_cfg.cast)}")
-    print()
+        print(f"Cast config : {cast_path}")
+        print(f"Episode tag : {tag}")
+        print(f"Output dir  : {out_dir}")
+        print(f"Cast members: {len(cast_cfg.cast)}")
+        print()
 
-    if not args.dry_run:
-        check_elevenlabs_quota()
-        os.makedirs(out_dir, exist_ok=True)
+        if not args.dry_run:
+            check_elevenlabs_quota()
+            os.makedirs(out_dir, exist_ok=True)
 
-    generated = 0
-    skipped_tbd = 0
-    skipped_exists = 0
+        generated = 0
+        skipped_tbd = 0
+        skipped_exists = 0
 
-    for key, member in cast_cfg.cast.items():
-        if member.voice_id == "TBD":
-            print(f"  [ SKIP] {key:12s}  voice_id=TBD")
-            skipped_tbd += 1
-            continue
+        for key, member in cast_cfg.cast.items():
+            if member.voice_id == "TBD":
+                print(f"  [ SKIP] {key:12s}  voice_id=TBD")
+                skipped_tbd += 1
+                continue
 
-        out_path = os.path.join(out_dir, f"{key}.mp3")
-        text = f"I am {member.full_name} not yo momma"
+            out_path = os.path.join(out_dir, f"{key}.mp3")
+            text = f"I am {member.full_name} not yo momma"
 
-        if not args.force and os.path.exists(out_path):
-            print(f"  [EXISTS] {key:12s}  {out_path}")
-            skipped_exists += 1
-            continue
+            if not args.force and os.path.exists(out_path):
+                print(f"  [EXISTS] {key:12s}  {out_path}")
+                skipped_exists += 1
+                continue
 
-        if args.dry_run:
-            print(f"  [DRY RUN] {key:12s}  ({member.full_name})  →  {out_path}  ({len(text)} chars)")
+            if args.dry_run:
+                print(f"  [DRY RUN] {key:12s}  ({member.full_name})  →  {out_path}  ({len(text)} chars)")
+                generated += 1
+                continue
+
+            if not has_enough_characters(text):
+                print(f"  [ STOP] {key:12s}  insufficient quota")
+                break
+
+            current_model = get_best_model_for_budget()
+            print(f"  [   GEN] {key:12s}  {member.full_name}  …", end="", flush=True)
+
+            audio_stream = client.text_to_speech.convert(
+                text=text,
+                voice_id=member.voice_id,
+                model_id=current_model,
+                output_format="mp3_44100_128",
+            )
+            with open(out_path, "wb") as f:
+                for chunk in audio_stream:
+                    if chunk:
+                        f.write(chunk)
+
+            tag_mp3(
+                out_path,
+                title=f"Sample: {member.full_name}",
+                artist=member.full_name,
+                lyrics=text,
+            )
+            print(f"  saved → {out_path}")
             generated += 1
-            continue
 
-        if not has_enough_characters(text):
-            print(f"  [ STOP] {key:12s}  insufficient quota")
-            break
-
-        current_model = get_best_model_for_budget()
-        print(f"  [   GEN] {key:12s}  {member.full_name}  …", end="", flush=True)
-
-        audio_stream = client.text_to_speech.convert(
-            text=text,
-            voice_id=member.voice_id,
-            model_id=current_model,
-            output_format="mp3_44100_128",
-        )
-        with open(out_path, "wb") as f:
-            for chunk in audio_stream:
-                if chunk:
-                    f.write(chunk)
-
-        tag_mp3(
-            out_path,
-            title=f"Sample: {member.full_name}",
-            artist=member.full_name,
-            lyrics=text,
-        )
-        print(f"  saved → {out_path}")
-        generated += 1
-
-    print()
-    if args.dry_run:
-        print(f"Dry run: {generated} would be generated, {skipped_tbd} TBD skipped.")
-    else:
-        print(f"Done: {generated} generated, {skipped_exists} already existed, {skipped_tbd} TBD skipped.")
+        print()
+        if args.dry_run:
+            print(f"Dry run: {generated} would be generated, {skipped_tbd} TBD skipped.")
+        else:
+            print(f"Done: {generated} generated, {skipped_exists} already existed, {skipped_tbd} TBD skipped.")
 
 
 if __name__ == "__main__":

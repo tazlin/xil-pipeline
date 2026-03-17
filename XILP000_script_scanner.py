@@ -21,6 +21,8 @@ import sys
 
 import importlib.util as _il
 
+from sfx_common import run_banner
+
 # Import XILP001's pure utility functions — no re-implementation needed.
 _spec = _il.spec_from_file_location(
     "_parser",
@@ -222,41 +224,42 @@ def format_report(scan: dict, header: dict) -> str:
 # ---------------------------------------------------------------------------
 
 def main():
-    parser = argparse.ArgumentParser(
-        description="Pre-flight scanner: check a production script for unknown speakers/sections."
-    )
-    parser.add_argument("path", help="Path to the markdown production script")
-    parser.add_argument(
-        "--json", action="store_true",
-        help="Output machine-readable JSON instead of the human report"
-    )
-    args = parser.parse_args()
+    with run_banner():
+        parser = argparse.ArgumentParser(
+            description="Pre-flight scanner: check a production script for unknown speakers/sections."
+        )
+        parser.add_argument("path", help="Path to the markdown production script")
+        parser.add_argument(
+            "--json", action="store_true",
+            help="Output machine-readable JSON instead of the human report"
+        )
+        args = parser.parse_args()
 
-    if not os.path.exists(args.path):
-        print(f"[ERROR] File not found: {args.path}")
-        sys.exit(1)
+        if not os.path.exists(args.path):
+            print(f"[ERROR] File not found: {args.path}")
+            sys.exit(1)
 
-    lines = load_and_normalize(args.path)
+        lines = load_and_normalize(args.path)
 
-    # Extract header for display — parse_script_header returns (show, season, episode, title)
-    header = {}
-    for line in lines[:10]:
-        if line.strip():
-            result = parse_script_header(line)
-            if result:
-                show, season, episode, title = result
-                header = {"show": show, "season": season, "episode": episode, "title": title}
-            break
+        # Extract header for display — parse_script_header returns (show, season, episode, title)
+        header = {}
+        for line in lines[:10]:
+            if line.strip():
+                result = parse_script_header(line)
+                if result:
+                    show, season, episode, title = result
+                    header = {"show": show, "season": season, "episode": episode, "title": title}
+                break
 
-    scan = scan_script(lines)
+        scan = scan_script(lines)
 
-    if args.json:
-        print(json.dumps(scan, indent=2))
-    else:
-        print(format_report(scan, header))
+        if args.json:
+            print(json.dumps(scan, indent=2))
+        else:
+            print(format_report(scan, header))
 
-    if scan["unrecognized"]:
-        sys.exit(1)
+        if scan["unrecognized"]:
+            sys.exit(1)
 
 
 if __name__ == "__main__":

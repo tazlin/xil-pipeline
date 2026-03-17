@@ -21,6 +21,7 @@ from sfx_common import (
     generate_sfx as generate_sfx_stems,
     dry_run_sfx,
     tag_mp3,
+    run_banner,
 )
 
 # Setup ElevenLabs Client
@@ -657,148 +658,149 @@ def main() -> None:
     costs before committing API quota. For audio assembly, run
     ``XILP003_the413_audio_assembly.py`` separately.
     """
-    parser = argparse.ArgumentParser(
-        description="THE 413 Voice Generation — generate voice stems via ElevenLabs"
-    )
-    parser.add_argument("--episode", required=True,
-                        help="Episode tag (e.g. S01E01) — derives cast and SFX config paths")
-    parser.add_argument("--script", default=None,
-                        help="Path to parsed script JSON (default: derived from cast config)")
-    parser.add_argument("--dry-run", action="store_true",
-                        help="Preview all lines and TTS cost without API calls")
-    parser.add_argument("--start-from", type=int, default=1,
-                        help="Start generation from sequence number N (for resuming)")
-    parser.add_argument("--stop-at", type=int, default=None,
-                        help="Stop generation at sequence number N, inclusive (for previewing a section)")
-    parser.add_argument("--terse", action="store_true",
-                        help="Truncate each line to 3 words to minimize TTS character cost")
-    parser.add_argument("--gen-sfx", action="store_true",
-                        help="Generate SFX and BEAT stems")
-    parser.add_argument("--gen-music", action="store_true",
-                        help="Generate music stems")
-    parser.add_argument("--gen-ambience", action="store_true",
-                        help="Generate ambience stems")
-    parser.add_argument("--sfx-music", action="store_true",
-                        help="(deprecated) shorthand for --gen-sfx --gen-music --gen-ambience")
-    args = parser.parse_args()
+    with run_banner():
+        parser = argparse.ArgumentParser(
+            description="THE 413 Voice Generation — generate voice stems via ElevenLabs"
+        )
+        parser.add_argument("--episode", required=True,
+                            help="Episode tag (e.g. S01E01) — derives cast and SFX config paths")
+        parser.add_argument("--script", default=None,
+                            help="Path to parsed script JSON (default: derived from cast config)")
+        parser.add_argument("--dry-run", action="store_true",
+                            help="Preview all lines and TTS cost without API calls")
+        parser.add_argument("--start-from", type=int, default=1,
+                            help="Start generation from sequence number N (for resuming)")
+        parser.add_argument("--stop-at", type=int, default=None,
+                            help="Stop generation at sequence number N, inclusive (for previewing a section)")
+        parser.add_argument("--terse", action="store_true",
+                            help="Truncate each line to 3 words to minimize TTS character cost")
+        parser.add_argument("--gen-sfx", action="store_true",
+                            help="Generate SFX and BEAT stems")
+        parser.add_argument("--gen-music", action="store_true",
+                            help="Generate music stems")
+        parser.add_argument("--gen-ambience", action="store_true",
+                            help="Generate ambience stems")
+        parser.add_argument("--sfx-music", action="store_true",
+                            help="(deprecated) shorthand for --gen-sfx --gen-music --gen-ambience")
+        args = parser.parse_args()
 
-    # Derive config paths from --episode
-    cast_path = f"cast_the413_{args.episode}.json"
-    sfx_path = f"sfx_the413_{args.episode}.json"
+        # Derive config paths from --episode
+        cast_path = f"cast_the413_{args.episode}.json"
+        sfx_path = f"sfx_the413_{args.episode}.json"
 
-    # Always load cast_cfg for metadata (preamble, season_title, tag)
-    with open(cast_path, "r", encoding="utf-8") as f:
-        cast_data = json.load(f)
-    cast_cfg = CastConfiguration(**cast_data)
+        # Always load cast_cfg for metadata (preamble, season_title, tag)
+        with open(cast_path, "r", encoding="utf-8") as f:
+            cast_data = json.load(f)
+        cast_cfg = CastConfiguration(**cast_data)
 
-    # Derive default --script path from cast config metadata
-    if args.script is None:
-        args.script = f"parsed/parsed_the413_{cast_cfg.tag}.json"
+        # Derive default --script path from cast config metadata
+        if args.script is None:
+            args.script = f"parsed/parsed_the413_{cast_cfg.tag}.json"
 
-    config, dialogue_entries, tag = load_production(args.script, cast_path)
-    stems_dir = os.path.join(STEMS_DIR, tag)
+        config, dialogue_entries, tag = load_production(args.script, cast_path)
+        stems_dir = os.path.join(STEMS_DIR, tag)
 
-    if args.terse:
-        dialogue_entries = [
-            {**e, "text": truncate_to_words(e["text"])} for e in dialogue_entries
-        ]
+        if args.terse:
+            dialogue_entries = [
+                {**e, "text": truncate_to_words(e["text"])} for e in dialogue_entries
+            ]
 
-    # Load SFX config (always, for preamble music lookup)
-    sfx_config_model = None
-    sfx_config_data = None
-    if os.path.exists(sfx_path):
-        with open(sfx_path, "r", encoding="utf-8") as f:
-            sfx_config_data = json.load(f)
-        sfx_config_model = SfxConfiguration(**sfx_config_data)
+        # Load SFX config (always, for preamble music lookup)
+        sfx_config_model = None
+        sfx_config_data = None
+        if os.path.exists(sfx_path):
+            with open(sfx_path, "r", encoding="utf-8") as f:
+                sfx_config_data = json.load(f)
+            sfx_config_model = SfxConfiguration(**sfx_config_data)
 
-    # Build direction_types filter from gen flags (--sfx-music is deprecated all-in-one)
-    gen_sfx      = args.gen_sfx      or args.sfx_music
-    gen_music    = args.gen_music    or args.sfx_music
-    gen_ambience = args.gen_ambience or args.sfx_music
-    sfx_entries = None
-    if gen_sfx or gen_music or gen_ambience:
-        direction_types: set[str] = set()
-        if gen_sfx:      direction_types |= {"SFX", "BEAT"}
-        if gen_music:    direction_types.add("MUSIC")
-        if gen_ambience: direction_types.add("AMBIENCE")
-        sfx_entries = load_sfx_entries(args.script, sfx_path,
-                                       direction_types=direction_types)
-        # Pre-filter SFX entries to the requested range
-        if args.stop_at is not None:
-            sfx_entries = [e for e in sfx_entries if e["seq"] <= args.stop_at]
+        # Build direction_types filter from gen flags (--sfx-music is deprecated all-in-one)
+        gen_sfx      = args.gen_sfx      or args.sfx_music
+        gen_music    = args.gen_music    or args.sfx_music
+        gen_ambience = args.gen_ambience or args.sfx_music
+        sfx_entries = None
+        if gen_sfx or gen_music or gen_ambience:
+            direction_types: set[str] = set()
+            if gen_sfx:      direction_types |= {"SFX", "BEAT"}
+            if gen_music:    direction_types.add("MUSIC")
+            if gen_ambience: direction_types.add("AMBIENCE")
+            sfx_entries = load_sfx_entries(args.script, sfx_path,
+                                           direction_types=direction_types)
+            # Pre-filter SFX entries to the requested range
+            if args.stop_at is not None:
+                sfx_entries = [e for e in sfx_entries if e["seq"] <= args.stop_at]
 
-    # --- Preamble ---
-    speaker = cast_cfg.preamble.speaker if cast_cfg.preamble else "tina"
-    preamble_voice_stem = os.path.join(stems_dir, f"n002_preamble_{speaker}.mp3")
-    preamble_music_stem = os.path.join(stems_dir, "n001_preamble_sfx.mp3")
+        # --- Preamble ---
+        speaker = cast_cfg.preamble.speaker if cast_cfg.preamble else "tina"
+        preamble_voice_stem = os.path.join(stems_dir, f"n002_preamble_{speaker}.mp3")
+        preamble_music_stem = os.path.join(stems_dir, "n001_preamble_sfx.mp3")
 
-    # Resolve the full preamble text (used for dry-run char count + legacy path)
-    preamble_text = None
-    if cast_cfg.preamble:
-        preamble_text = _resolve_preamble_text(cast_cfg)
-
-    # --- Postamble stem names (seqs determined at inject time; derive here for dry-run) ---
-    postamble_text = None
-    postamble_voice_stem = None
-    postamble_music_stem = None
-    if cast_cfg.postamble and os.path.exists(args.script):
-        postamble_text = _resolve_postamble_text(cast_cfg)
-        with open(args.script, "r", encoding="utf-8") as f:
-            _parsed = json.load(f)
-        _episode_seqs = [e["seq"] for e in _parsed["entries"]
-                         if e["seq"] > 0 and e.get("section") != "postamble"]
-        _max_seq = max(_episode_seqs) if _episode_seqs else 0
-        spk_post = cast_cfg.postamble.speaker
-        postamble_voice_stem = os.path.join(stems_dir, f"{_max_seq + 1:03d}_postamble_{spk_post}.mp3")
-        # no postamble music — voice only
-
-    if args.dry_run:
+        # Resolve the full preamble text (used for dry-run char count + legacy path)
+        preamble_text = None
         if cast_cfg.preamble:
-            _dry_run_preamble(cast_cfg, preamble_voice_stem)
-        dry_run(config, dialogue_entries, start_from=args.start_from,
-                stop_at=args.stop_at,
-                sfx_entries=sfx_entries, sfx_config=sfx_config_data,
-                stems_dir=stems_dir)
-        if cast_cfg.postamble and postamble_voice_stem:
-            _dry_run_postamble(cast_cfg, postamble_voice_stem)
-    else:
-        check_elevenlabs_quota()
-        if cast_cfg.preamble:
-            os.makedirs(stems_dir, exist_ok=True)
-            _generate_preamble_voice(cast_cfg, config, preamble_voice_stem)
-            # Copy intro music from sfx config 'INTRO MUSIC' source
-            if not os.path.exists(preamble_music_stem):
-                if sfx_config_model and "INTRO MUSIC" in sfx_config_model.effects:
-                    intro_entry = sfx_config_model.effects["INTRO MUSIC"]
-                    if intro_entry.source:
-                        clip = AudioSegment.from_file(intro_entry.source)
-                        if intro_entry.play_duration is not None:
-                            trim_ms = int(len(clip) * intro_entry.play_duration / 100.0)
-                            clip = clip[:trim_ms]
-                            print(f"   Trimmed intro music to {trim_ms/1000:.1f}s ({intro_entry.play_duration}%)")
-                        clip.export(preamble_music_stem, format="mp3")
-                        print(f"   Saved: {preamble_music_stem}")
-                    else:
-                        print(" [!] INTRO MUSIC entry has no 'source' — skipping music stem")
-                else:
-                    print(" [!] No 'INTRO MUSIC' entry in sfx config — skipping music stem")
-        generate_voices(config, dialogue_entries, stems_dir,
-                        start_from=args.start_from, stop_at=args.stop_at)
-        if sfx_entries and sfx_config_data:
-            generate_sfx_stems(sfx_entries, sfx_config_data, stems_dir,
-                               client=client, start_from=args.start_from)
-        # Inject preamble entries into parsed JSON (idempotent)
-        if cast_cfg.preamble and preamble_text is not None and os.path.exists(args.script):
-            inject_preamble_entries(args.script, preamble_text, cast_cfg.preamble.speaker)
-        # --- Postamble ---
-        if cast_cfg.postamble and postamble_text is not None and os.path.exists(args.script):
-            os.makedirs(stems_dir, exist_ok=True)
-            voice_seq = inject_postamble_entries(
-                args.script, postamble_text, cast_cfg.postamble.speaker
-            )
+            preamble_text = _resolve_preamble_text(cast_cfg)
+
+        # --- Postamble stem names (seqs determined at inject time; derive here for dry-run) ---
+        postamble_text = None
+        postamble_voice_stem = None
+        postamble_music_stem = None
+        if cast_cfg.postamble and os.path.exists(args.script):
+            postamble_text = _resolve_postamble_text(cast_cfg)
+            with open(args.script, "r", encoding="utf-8") as f:
+                _parsed = json.load(f)
+            _episode_seqs = [e["seq"] for e in _parsed["entries"]
+                             if e["seq"] > 0 and e.get("section") != "postamble"]
+            _max_seq = max(_episode_seqs) if _episode_seqs else 0
             spk_post = cast_cfg.postamble.speaker
-            postamble_voice_stem = os.path.join(stems_dir, f"{voice_seq:03d}_postamble_{spk_post}.mp3")
-            _generate_postamble_voice(cast_cfg, config, postamble_voice_stem)
+            postamble_voice_stem = os.path.join(stems_dir, f"{_max_seq + 1:03d}_postamble_{spk_post}.mp3")
+            # no postamble music — voice only
+
+        if args.dry_run:
+            if cast_cfg.preamble:
+                _dry_run_preamble(cast_cfg, preamble_voice_stem)
+            dry_run(config, dialogue_entries, start_from=args.start_from,
+                    stop_at=args.stop_at,
+                    sfx_entries=sfx_entries, sfx_config=sfx_config_data,
+                    stems_dir=stems_dir)
+            if cast_cfg.postamble and postamble_voice_stem:
+                _dry_run_postamble(cast_cfg, postamble_voice_stem)
+        else:
+            check_elevenlabs_quota()
+            if cast_cfg.preamble:
+                os.makedirs(stems_dir, exist_ok=True)
+                _generate_preamble_voice(cast_cfg, config, preamble_voice_stem)
+                # Copy intro music from sfx config 'INTRO MUSIC' source
+                if not os.path.exists(preamble_music_stem):
+                    if sfx_config_model and "INTRO MUSIC" in sfx_config_model.effects:
+                        intro_entry = sfx_config_model.effects["INTRO MUSIC"]
+                        if intro_entry.source:
+                            clip = AudioSegment.from_file(intro_entry.source)
+                            if intro_entry.play_duration is not None:
+                                trim_ms = int(len(clip) * intro_entry.play_duration / 100.0)
+                                clip = clip[:trim_ms]
+                                print(f"   Trimmed intro music to {trim_ms/1000:.1f}s ({intro_entry.play_duration}%)")
+                            clip.export(preamble_music_stem, format="mp3")
+                            print(f"   Saved: {preamble_music_stem}")
+                        else:
+                            print(" [!] INTRO MUSIC entry has no 'source' — skipping music stem")
+                    else:
+                        print(" [!] No 'INTRO MUSIC' entry in sfx config — skipping music stem")
+            generate_voices(config, dialogue_entries, stems_dir,
+                            start_from=args.start_from, stop_at=args.stop_at)
+            if sfx_entries and sfx_config_data:
+                generate_sfx_stems(sfx_entries, sfx_config_data, stems_dir,
+                                   client=client, start_from=args.start_from)
+            # Inject preamble entries into parsed JSON (idempotent)
+            if cast_cfg.preamble and preamble_text is not None and os.path.exists(args.script):
+                inject_preamble_entries(args.script, preamble_text, cast_cfg.preamble.speaker)
+            # --- Postamble ---
+            if cast_cfg.postamble and postamble_text is not None and os.path.exists(args.script):
+                os.makedirs(stems_dir, exist_ok=True)
+                voice_seq = inject_postamble_entries(
+                    args.script, postamble_text, cast_cfg.postamble.speaker
+                )
+                spk_post = cast_cfg.postamble.speaker
+                postamble_voice_stem = os.path.join(stems_dir, f"{voice_seq:03d}_postamble_{spk_post}.mp3")
+                _generate_postamble_voice(cast_cfg, config, postamble_voice_stem)
 
 
 if __name__ == "__main__":

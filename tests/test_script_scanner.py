@@ -287,7 +287,10 @@ class TestMainCLI:
         with unittest.mock.patch("sys.argv", ["XILP000", str(p), "--json"]):
             scanner.main()
         out = capsys.readouterr().out
-        data = json.loads(out)
+        # Strip run_banner header/footer lines; find the JSON object
+        json_start = out.find("{")
+        json_end = out.rfind("}") + 1
+        data = json.loads(out[json_start:json_end])
         assert "speakers" in data
         assert "sections" in data
         assert "unrecognized" in data

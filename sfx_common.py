@@ -10,11 +10,13 @@ Module Attributes:
     SFX_DIR: Default path for the shared SFX asset library.
 """
 
+import contextlib
 import datetime
 import json
 import os
 import re
 import shutil
+import sys
 import time
 
 from mutagen.id3 import ID3, TALB, TCON, TDRC, TIT2, TPE1, USLT
@@ -24,6 +26,37 @@ from pydub import AudioSegment
 from models import SfxConfiguration, SfxEntry
 
 SFX_DIR = "SFX"
+
+_BAR = "=" * 70
+
+
+@contextlib.contextmanager
+def run_banner(script_name: str | None = None):
+    """Context manager that prints a start header and end trailer.
+
+    Usage::
+
+        def main():
+            with run_banner():
+                ...  # all application logic
+
+    Args:
+        script_name: Override the script name shown in the banner.
+                     Defaults to ``os.path.basename(sys.argv[0])``.
+    """
+    name = script_name or os.path.basename(sys.argv[0])
+    start = datetime.datetime.now()
+    print(f"\n{_BAR}")
+    print(f"  {name}  |  started {start.strftime('%Y-%m-%d %H:%M:%S')}")
+    print(f"{_BAR}\n")
+    try:
+        yield
+    finally:
+        end = datetime.datetime.now()
+        elapsed = end - start
+        print(f"\n{_BAR}")
+        print(f"  {name}  |  finished {end.strftime('%Y-%m-%d %H:%M:%S')}  ({elapsed.total_seconds():.1f}s)")
+        print(f"{_BAR}\n")
 
 
 def slugify_effect_key(text: str) -> str:

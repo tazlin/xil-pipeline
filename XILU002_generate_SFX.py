@@ -31,7 +31,7 @@ import argparse
 from elevenlabs.client import ElevenLabs
 
 from models import CastConfiguration
-from sfx_common import load_sfx_entries, generate_sfx, dry_run_sfx
+from sfx_common import load_sfx_entries, generate_sfx, dry_run_sfx, run_banner
 
 client = ElevenLabs(api_key=os.environ.get("ELEVENLABS_API_KEY"))
 
@@ -77,60 +77,61 @@ def load_sfx_plan(
 
 def main() -> None:
     """CLI entry point for standalone SFX stem generation."""
-    parser = argparse.ArgumentParser(
-        description="Generate SFX stems from an SFX config (standalone utility)"
-    )
-    parser.add_argument("--episode", required=True,
-                        help="Episode tag (e.g. S01E01) — derives cast and SFX config paths")
-    parser.add_argument("--script", default=None,
-                        help="Path to parsed script JSON (default: derived from cast config)")
-    parser.add_argument("--dry-run", action="store_true",
-                        help="Preview existing vs. new stems and estimated credit cost")
-    parser.add_argument("--max-duration", type=float, default=None,
-                        help="Only process effects with duration_seconds <= this value")
-    parser.add_argument("--gen-sfx", action="store_true",
-                        help="Limit to SFX and BEAT entries only")
-    parser.add_argument("--gen-music", action="store_true",
-                        help="Limit to MUSIC entries only")
-    parser.add_argument("--gen-ambience", action="store_true",
-                        help="Limit to AMBIENCE entries only")
-    parser.add_argument("--sfx-music", action="store_true",
-                        help="(deprecated) shorthand for --gen-sfx --gen-music --gen-ambience")
-    args = parser.parse_args()
-
-    # Derive config paths from --episode
-    cast_path = f"cast_the413_{args.episode}.json"
-    sfx_path = f"sfx_the413_{args.episode}.json"
-
-    # Derive default --script from cast config
-    if args.script is None:
-        with open(cast_path, "r", encoding="utf-8") as f:
-            cast_data = json.load(f)
-        cast_cfg = CastConfiguration(**cast_data)
-        args.script = f"parsed/parsed_the413_{cast_cfg.tag}.json"
-
-    direction_types: set[str] | None = None
-    if args.gen_sfx or args.gen_music or args.gen_ambience or args.sfx_music:
-        direction_types = set()
-        if args.gen_sfx   or args.sfx_music: direction_types |= {"SFX", "BEAT"}
-        if args.gen_music or args.sfx_music: direction_types.add("MUSIC")
-        if args.gen_ambience or args.sfx_music: direction_types.add("AMBIENCE")
-
-    entries, stems_dir = load_sfx_plan(
-        args.script, sfx_path, cast_path,
-        max_duration=args.max_duration,
-        direction_types=direction_types,
-    )
-
-    with open(sfx_path, "r", encoding="utf-8") as f:
-        sfx_config_data = json.load(f)
-
-    if args.dry_run:
-        dry_run_sfx(entries, sfx_config_data, stems_dir)
-    else:
-        generate_sfx(
-            entries, sfx_config_data, stems_dir, client=client,
+    with run_banner():
+        parser = argparse.ArgumentParser(
+            description="Generate SFX stems from an SFX config (standalone utility)"
         )
+        parser.add_argument("--episode", required=True,
+                            help="Episode tag (e.g. S01E01) — derives cast and SFX config paths")
+        parser.add_argument("--script", default=None,
+                            help="Path to parsed script JSON (default: derived from cast config)")
+        parser.add_argument("--dry-run", action="store_true",
+                            help="Preview existing vs. new stems and estimated credit cost")
+        parser.add_argument("--max-duration", type=float, default=None,
+                            help="Only process effects with duration_seconds <= this value")
+        parser.add_argument("--gen-sfx", action="store_true",
+                            help="Limit to SFX and BEAT entries only")
+        parser.add_argument("--gen-music", action="store_true",
+                            help="Limit to MUSIC entries only")
+        parser.add_argument("--gen-ambience", action="store_true",
+                            help="Limit to AMBIENCE entries only")
+        parser.add_argument("--sfx-music", action="store_true",
+                            help="(deprecated) shorthand for --gen-sfx --gen-music --gen-ambience")
+        args = parser.parse_args()
+
+        # Derive config paths from --episode
+        cast_path = f"cast_the413_{args.episode}.json"
+        sfx_path = f"sfx_the413_{args.episode}.json"
+
+        # Derive default --script from cast config
+        if args.script is None:
+            with open(cast_path, "r", encoding="utf-8") as f:
+                cast_data = json.load(f)
+            cast_cfg = CastConfiguration(**cast_data)
+            args.script = f"parsed/parsed_the413_{cast_cfg.tag}.json"
+
+        direction_types: set[str] | None = None
+        if args.gen_sfx or args.gen_music or args.gen_ambience or args.sfx_music:
+            direction_types = set()
+            if args.gen_sfx   or args.sfx_music: direction_types |= {"SFX", "BEAT"}
+            if args.gen_music or args.sfx_music: direction_types.add("MUSIC")
+            if args.gen_ambience or args.sfx_music: direction_types.add("AMBIENCE")
+
+        entries, stems_dir = load_sfx_plan(
+            args.script, sfx_path, cast_path,
+            max_duration=args.max_duration,
+            direction_types=direction_types,
+        )
+
+        with open(sfx_path, "r", encoding="utf-8") as f:
+            sfx_config_data = json.load(f)
+
+        if args.dry_run:
+            dry_run_sfx(entries, sfx_config_data, stems_dir)
+        else:
+            generate_sfx(
+                entries, sfx_config_data, stems_dir, client=client,
+            )
 
 
 if __name__ == "__main__":

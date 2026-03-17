@@ -37,7 +37,7 @@ import textwrap
 from pydub import AudioSegment
 
 from models import CastConfiguration, VoiceConfig, SfxConfiguration
-from sfx_common import tag_wav
+from sfx_common import tag_wav, run_banner
 from mix_common import (
     apply_phone_filter,
     collect_stem_plans,
@@ -504,105 +504,106 @@ def main() -> None:
     episode tag, builds four per-layer WAV files and an Audacity helper
     script.  No ElevenLabs API key required.
     """
-    parser = argparse.ArgumentParser(
-        description="THE 413 DAW Export — export episode as layered WAV files for Audacity"
-    )
-    parser.add_argument(
-        "--episode", required=True,
-        help="Episode tag (e.g. S01E02) — derives cast config, stems, and parsed JSON paths"
-    )
-    parser.add_argument(
-        "--parsed", default=None,
-        help="Path to parsed script JSON (default: parsed/parsed_the413_<TAG>.json)"
-    )
-    parser.add_argument(
-        "--output-dir", default=None,
-        help="Output directory for layer WAVs (default: daw/<TAG>/)"
-    )
-    parser.add_argument(
-        "--dry-run", action="store_true",
-        help="Show export summary without writing files"
-    )
-    parser.add_argument(
-        "--save-aup3", action="store_true",
-        help="Include SaveProject2 step in the Audacity helper script (requires mod-script-pipe)"
-    )
-    parser.add_argument(
-        "--macro", action="store_true",
-        help="Write an Audacity macro to %%APPDATA%%\\audacity\\Macros\\ for one-click import"
-    )
-    parser.add_argument(
-        "--timeline", action="store_true",
-        help="Print an ASCII timeline visualization of asset placement to stdout"
-    )
-    parser.add_argument(
-        "--timeline-html", action="store_true",
-        help="Write an interactive HTML timeline to daw/<TAG>/<TAG>_timeline.html"
-    )
-    args = parser.parse_args()
+    with run_banner():
+        parser = argparse.ArgumentParser(
+            description="THE 413 DAW Export — export episode as layered WAV files for Audacity"
+        )
+        parser.add_argument(
+            "--episode", required=True,
+            help="Episode tag (e.g. S01E02) — derives cast config, stems, and parsed JSON paths"
+        )
+        parser.add_argument(
+            "--parsed", default=None,
+            help="Path to parsed script JSON (default: parsed/parsed_the413_<TAG>.json)"
+        )
+        parser.add_argument(
+            "--output-dir", default=None,
+            help="Output directory for layer WAVs (default: daw/<TAG>/)"
+        )
+        parser.add_argument(
+            "--dry-run", action="store_true",
+            help="Show export summary without writing files"
+        )
+        parser.add_argument(
+            "--save-aup3", action="store_true",
+            help="Include SaveProject2 step in the Audacity helper script (requires mod-script-pipe)"
+        )
+        parser.add_argument(
+            "--macro", action="store_true",
+            help="Write an Audacity macro to %%APPDATA%%\\audacity\\Macros\\ for one-click import"
+        )
+        parser.add_argument(
+            "--timeline", action="store_true",
+            help="Print an ASCII timeline visualization of asset placement to stdout"
+        )
+        parser.add_argument(
+            "--timeline-html", action="store_true",
+            help="Write an interactive HTML timeline to daw/<TAG>/<TAG>_timeline.html"
+        )
+        args = parser.parse_args()
 
-    cast_path = f"cast_the413_{args.episode}.json"
-    with open(cast_path, "r", encoding="utf-8") as f:
-        cast_data = json.load(f)
+        cast_path = f"cast_the413_{args.episode}.json"
+        with open(cast_path, "r", encoding="utf-8") as f:
+            cast_data = json.load(f)
 
-    cast_cfg = CastConfiguration(**cast_data)
-    tag = cast_cfg.tag
-    config = {
-        key: VoiceConfig(id=member.voice_id, pan=member.pan, filter=member.filter).model_dump()
-        for key, member in cast_cfg.cast.items()
-    }
+        cast_cfg = CastConfiguration(**cast_data)
+        tag = cast_cfg.tag
+        config = {
+            key: VoiceConfig(id=member.voice_id, pan=member.pan, filter=member.filter).model_dump()
+            for key, member in cast_cfg.cast.items()
+        }
 
-    stems_dir = os.path.join(STEMS_DIR, tag)
-    parsed_path = args.parsed or f"parsed/parsed_the413_{tag}.json"
-    output_dir = args.output_dir or os.path.join(DAW_DIR, tag)
+        stems_dir = os.path.join(STEMS_DIR, tag)
+        parsed_path = args.parsed or f"parsed/parsed_the413_{tag}.json"
+        output_dir = args.output_dir or os.path.join(DAW_DIR, tag)
 
-    if not os.path.exists(parsed_path):
-        print(f" [!] Parsed JSON not found: {parsed_path!r}. Run XILP001 first.")
-        return
+        if not os.path.exists(parsed_path):
+            print(f" [!] Parsed JSON not found: {parsed_path!r}. Run XILP001 first.")
+            return
 
-    sfx_path = f"sfx_the413_{tag}.json"
-    sfx_config = None
-    if os.path.exists(sfx_path):
-        with open(sfx_path, "r", encoding="utf-8") as f:
-            sfx_config = SfxConfiguration(**json.load(f))
+        sfx_path = f"sfx_the413_{tag}.json"
+        sfx_config = None
+        if os.path.exists(sfx_path):
+            with open(sfx_path, "r", encoding="utf-8") as f:
+                sfx_config = SfxConfiguration(**json.load(f))
 
-    entries_index = load_entries_index(parsed_path)
-    stem_plans = collect_stem_plans(stems_dir, entries_index, sfx_config=sfx_config)
+        entries_index = load_entries_index(parsed_path)
+        stem_plans = collect_stem_plans(stems_dir, entries_index, sfx_config=sfx_config)
 
-    if args.dry_run:
-        dry_run_daw(tag, stem_plans, entries_index, output_dir)
-        if args.timeline or args.timeline_html:
-            total_ms, timeline = build_foreground_timeline_only(
-                stem_plans, gap_ms=SILENCE_GAP_MS
-            )
-            dlg_labels = compute_dialogue_labels(stem_plans, timeline)
-            amb_labels = compute_ambience_labels(stem_plans, timeline, total_ms)
-            mus_labels = compute_music_labels(stem_plans, timeline, total_ms)
-            sfx_labels = compute_sfx_labels(stem_plans, timeline, total_ms)
-            td = build_timeline_data(
-                tag, total_ms / 1000.0,
-                dlg_labels, amb_labels, mus_labels, sfx_labels,
-            )
-            if args.timeline:
-                print(render_terminal_timeline(td))
-            if args.timeline_html:
-                html_path = os.path.join(output_dir, f"{tag}_timeline.html")
-                render_html_timeline(td, html_path)
-                print(f"    Written: {html_path}")
-        return
+        if args.dry_run:
+            dry_run_daw(tag, stem_plans, entries_index, output_dir)
+            if args.timeline or args.timeline_html:
+                total_ms, timeline = build_foreground_timeline_only(
+                    stem_plans, gap_ms=SILENCE_GAP_MS
+                )
+                dlg_labels = compute_dialogue_labels(stem_plans, timeline)
+                amb_labels = compute_ambience_labels(stem_plans, timeline, total_ms)
+                mus_labels = compute_music_labels(stem_plans, timeline, total_ms)
+                sfx_labels = compute_sfx_labels(stem_plans, timeline, total_ms)
+                td = build_timeline_data(
+                    tag, total_ms / 1000.0,
+                    dlg_labels, amb_labels, mus_labels, sfx_labels,
+                )
+                if args.timeline:
+                    print(render_terminal_timeline(td))
+                if args.timeline_html:
+                    html_path = os.path.join(output_dir, f"{tag}_timeline.html")
+                    render_html_timeline(td, html_path)
+                    print(f"    Written: {html_path}")
+            return
 
-    export_daw_layers(
-        config, stems_dir, parsed_path, output_dir, tag,
-        save_aup3=args.save_aup3,
-        macro=args.macro,
-        show=cast_cfg.show,
-        season_title=cast_cfg.season_title,
-        episode_title=cast_cfg.title,
-        artist=cast_cfg.artist,
-        timeline=args.timeline,
-        timeline_html=args.timeline_html,
-        sfx_config=sfx_config,
-    )
+        export_daw_layers(
+            config, stems_dir, parsed_path, output_dir, tag,
+            save_aup3=args.save_aup3,
+            macro=args.macro,
+            show=cast_cfg.show,
+            season_title=cast_cfg.season_title,
+            episode_title=cast_cfg.title,
+            artist=cast_cfg.artist,
+            timeline=args.timeline,
+            timeline_html=args.timeline_html,
+            sfx_config=sfx_config,
+        )
 
 
 if __name__ == "__main__":

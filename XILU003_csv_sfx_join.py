@@ -16,7 +16,7 @@ import json
 import os
 import sys
 
-from sfx_common import slugify_effect_key
+from sfx_common import slugify_effect_key, run_banner
 
 # ---------------------------------------------------------------------------
 # Column definitions
@@ -191,49 +191,50 @@ def annotate_csv(
 # ---------------------------------------------------------------------------
 
 def main() -> None:
-    parser = argparse.ArgumentParser(
-        description="Annotate a parsed episode CSV with SFX and cast config data."
-    )
-    parser.add_argument(
-        "--episode", required=True,
-        help="Episode tag (e.g. S02E03) — derives default input/output paths",
-    )
-    parser.add_argument("--csv", dest="csv_path", help="Override input CSV path")
-    parser.add_argument("--sfx", dest="sfx_path", help="Override SFX JSON path")
-    parser.add_argument("--cast", dest="cast_path", help="Override cast JSON path")
-    parser.add_argument("--output", dest="out_path", help="Override output CSV path")
-    args = parser.parse_args()
-
-    csv_def, sfx_def, cast_def, out_def = derive_paths(args.episode)
-    csv_path = args.csv_path or csv_def
-    sfx_path = args.sfx_path or sfx_def
-    cast_path = args.cast_path or cast_def
-    out_path = args.out_path or out_def
-
-    if os.path.abspath(out_path) == os.path.abspath(csv_path):
-        print(
-            f"ERROR: output path '{out_path}' is the same as input '{csv_path}'",
-            file=sys.stderr,
+    with run_banner():
+        parser = argparse.ArgumentParser(
+            description="Annotate a parsed episode CSV with SFX and cast config data."
         )
-        sys.exit(1)
+        parser.add_argument(
+            "--episode", required=True,
+            help="Episode tag (e.g. S02E03) — derives default input/output paths",
+        )
+        parser.add_argument("--csv", dest="csv_path", help="Override input CSV path")
+        parser.add_argument("--sfx", dest="sfx_path", help="Override SFX JSON path")
+        parser.add_argument("--cast", dest="cast_path", help="Override cast JSON path")
+        parser.add_argument("--output", dest="out_path", help="Override output CSV path")
+        args = parser.parse_args()
 
-    for path, label in [
-        (csv_path, "CSV"),
-        (sfx_path, "SFX JSON"),
-        (cast_path, "Cast JSON"),
-    ]:
-        if not os.path.exists(path):
-            print(f"ERROR: {label} file not found: {path}", file=sys.stderr)
+        csv_def, sfx_def, cast_def, out_def = derive_paths(args.episode)
+        csv_path = args.csv_path or csv_def
+        sfx_path = args.sfx_path or sfx_def
+        cast_path = args.cast_path or cast_def
+        out_path = args.out_path or out_def
+
+        if os.path.abspath(out_path) == os.path.abspath(csv_path):
+            print(
+                f"ERROR: output path '{out_path}' is the same as input '{csv_path}'",
+                file=sys.stderr,
+            )
             sys.exit(1)
 
-    total, n_dir, sfx_hit, n_dlg, cast_hit = annotate_csv(
-        csv_path, sfx_path, cast_path, out_path
-    )
+        for path, label in [
+            (csv_path, "CSV"),
+            (sfx_path, "SFX JSON"),
+            (cast_path, "Cast JSON"),
+        ]:
+            if not os.path.exists(path):
+                print(f"ERROR: {label} file not found: {path}", file=sys.stderr)
+                sys.exit(1)
 
-    print(f"Rows written: {total}")
-    print(f"  SFX matched:  {sfx_hit} / {n_dir} direction rows")
-    print(f"  Cast matched: {cast_hit} / {n_dlg} dialogue rows")
-    print(f"Output: {out_path}")
+        total, n_dir, sfx_hit, n_dlg, cast_hit = annotate_csv(
+            csv_path, sfx_path, cast_path, out_path
+        )
+
+        print(f"Rows written: {total}")
+        print(f"  SFX matched:  {sfx_hit} / {n_dir} direction rows")
+        print(f"  Cast matched: {cast_hit} / {n_dlg} dialogue rows")
+        print(f"Output: {out_path}")
 
 
 if __name__ == "__main__":
