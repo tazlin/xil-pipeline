@@ -266,10 +266,9 @@ _HTML_TEMPLATE = """\
   .layer-track {{ position: relative; flex: 1; height: 28px; background: #222238; border-radius: 3px; overflow: visible; }}
   .span {{ position: absolute; height: 100%; border-radius: 2px; cursor: pointer; min-width: 2px; opacity: 0.85; transition: opacity 0.15s; }}
   .span:hover {{ opacity: 1; z-index: 10; }}
-  .span .tooltip {{ display: none; position: absolute; bottom: 110%; left: 50%; transform: translateX(-50%);
-    background: #333; color: #fff; padding: 6px 10px; border-radius: 4px; font-size: 12px; white-space: nowrap;
-    z-index: 100; pointer-events: none; box-shadow: 0 2px 8px rgba(0,0,0,0.5); }}
-  .span:hover .tooltip {{ display: block; }}
+  #floattip {{ display: none; position: fixed; background: #333; color: #fff; padding: 6px 10px; border-radius: 4px;
+    font-size: 12px; white-space: nowrap; z-index: 1000; pointer-events: none;
+    box-shadow: 0 2px 8px rgba(0,0,0,0.5); line-height: 1.5; }}
   .c-dialogue {{ background: #4a9eff; }}
   .c-ambience {{ background: #4caf50; }}
   .c-music {{ background: #ffc107; }}
@@ -294,6 +293,7 @@ _HTML_TEMPLATE = """\
   <button onclick="zoomReset()">Reset</button>
   <span class="zoom-info" id="zoom-info">100%</span>
 </div>
+<div id="floattip"></div>
 <div class="timeline-container" id="tc">
   <div class="timeline-inner" id="ti">
     <div class="ruler" id="ruler"></div>
@@ -307,6 +307,7 @@ const COLORS = {{dialogue:'c-dialogue', ambience:'c-ambience', music:'c-music', 
 const LABELS = {{dialogue:'Dialogue', ambience:'Ambience', music:'Music', sfx:'SFX'}};
 let zoom = 1;
 const BASE_WIDTH = Math.max(document.getElementById('tc').clientWidth - 100, 400);
+const tips = {{}};  // span index → tooltip HTML
 
 function fmtTime(s) {{
   const m = Math.floor(s/60), sec = Math.floor(s%60);
@@ -322,12 +323,12 @@ function render() {{
   if (TOTAL > 600) interval = 120;
   let rhtml = '';
   for (let t = 0; t <= TOTAL; t += interval) {{
-    const pct = (t / TOTAL * 100);
     rhtml += '<div class="ruler-tick" style="left:calc(90px + ' + (t/TOTAL*W) + 'px)"><span>' + fmtTime(t) + '</span></div>';
   }}
   document.getElementById('ruler').innerHTML = rhtml;
   // Layers
   let lhtml = '';
+  let ti = 0;
   for (const key of ['dialogue','ambience','music','sfx']) {{
     const spans = DATA.layers[key] || [];
     lhtml += '<div class="layer"><div class="layer-label">' + LABELS[key] + '</div><div class="layer-track" style="width:'+W+'px">';
@@ -335,22 +336,48 @@ function render() {{
       const left = sp.start_s / TOTAL * 100;
       const w = Math.max((sp.end_s - sp.start_s) / TOTAL * 100, 0.15);
       const dur = (sp.end_s - sp.start_s).toFixed(1);
-      // Build ramp indicator badges (↑ for ramp-in, ↓ for ramp-out, % for play_duration)
       let rampBadges = '';
       let rampTip = '';
-      if (sp.ramp_in_s) {{ rampBadges += '<span class="ramp-badge ri" title="ramp in: '+sp.ramp_in_s+'s">\u2191</span>'; rampTip += '\u2191 ramp in: '+sp.ramp_in_s+'s  '; }}
-      if (sp.ramp_out_s) {{ rampBadges += '<span class="ramp-badge ro" title="ramp out: '+sp.ramp_out_s+'s">\u2193</span>'; rampTip += '\u2193 ramp out: '+sp.ramp_out_s+'s  '; }}
-      if (sp.play_duration != null) {{ rampBadges += '<span class="ramp-badge pd" title="play: '+sp.play_duration+'%">%</span>'; rampTip += '% play: '+sp.play_duration+'%'; }}
+      if (sp.ramp_in_s) {{ rampBadges += '<span class="ramp-badge ri">\u2191</span>'; rampTip += '\u2191 ramp in: '+sp.ramp_in_s+'s  '; }}
+      if (sp.ramp_out_s) {{ rampBadges += '<span class="ramp-badge ro">\u2193</span>'; rampTip += '\u2193 ramp out: '+sp.ramp_out_s+'s  '; }}
+      if (sp.play_duration != null) {{ rampBadges += '<span class="ramp-badge pd">%</span>'; rampTip += '% play: '+sp.play_duration+'%'; }}
       const tipExtra = rampTip ? '<br><span style="opacity:0.8">'+rampTip.trim()+'</span>' : '';
       const snippetLine = sp.snippet ? '<br><em style="opacity:0.75">'+sp.snippet.replace(/</g,'&lt;')+'\u2026</em>' : '';
-      lhtml += '<div class="span '+COLORS[key]+'" style="left:'+left+'%;width:'+w+'%">'+rampBadges+'<div class="tooltip">'+
-        sp.label.replace(/</g,'&lt;')+snippetLine+'<br>'+fmtTime(sp.start_s)+' \u2192 '+fmtTime(sp.end_s)+' ('+dur+'s)'+tipExtra+'</div></div>';
+      tips[ti] = '<strong>'+sp.label.replace(/</g,'&lt;')+'</strong>'+snippetLine+'<br>'+fmtTime(sp.start_s)+' \u2192 '+fmtTime(sp.end_s)+' ('+dur+'s)'+tipExtra;
+      lhtml += '<div class="span '+COLORS[key]+'" style="left:'+left+'%;width:'+w+'%" data-ti="'+ti+'">'+rampBadges+'</div>';
+      ti++;
     }}
     lhtml += '</div></div>';
   }}
   document.getElementById('layers').innerHTML = lhtml;
   document.getElementById('zoom-info').textContent = Math.round(zoom*100) + '%';
 }}
+
+// Floating tooltip — uses position:fixed to escape overflow clipping
+(function() {{
+  const tip = document.getElementById('floattip');
+  document.addEventListener('mouseover', function(e) {{
+    const sp = e.target.closest('.span[data-ti]');
+    if (sp) {{
+      tip.innerHTML = tips[sp.dataset.ti] || '';
+      tip.style.display = 'block';
+    }}
+  }});
+  document.addEventListener('mouseout', function(e) {{
+    if (!e.relatedTarget || !e.relatedTarget.closest('.span[data-ti]')) {{
+      tip.style.display = 'none';
+    }}
+  }});
+  document.addEventListener('mousemove', function(e) {{
+    if (tip.style.display === 'block') {{
+      let x = e.clientX + 14, y = e.clientY - 10;
+      if (x + tip.offsetWidth > window.innerWidth - 8) x = e.clientX - tip.offsetWidth - 14;
+      if (y + tip.offsetHeight > window.innerHeight - 8) y = e.clientY - tip.offsetHeight - 10;
+      tip.style.left = x + 'px';
+      tip.style.top = y + 'px';
+    }}
+  }});
+}})();
 
 function zoomIn() {{ zoom = Math.min(zoom * 1.5, 20); render(); }}
 function zoomOut() {{ zoom = Math.max(zoom / 1.5, 0.5); render(); }}
