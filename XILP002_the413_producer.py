@@ -215,7 +215,9 @@ def dry_run(
     """
     print(f"\n{'='*70}")
     print(f"DRY RUN — {len(dialogue_entries)} dialogue lines")
-    print(f"{'='*70}\n")
+    print(f"{'='*70}")
+    print(f" [.] {'seq':<3} | {'speaker':<14} | {'chars':>10} | voice check [lang]")
+    print(f" {'-'*67}")
 
     total_chars = 0
     lines_to_generate = 0
