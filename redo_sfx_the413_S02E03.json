@@ -1,0 +1,411 @@
+{
+  "show": "THE 413",
+  "season": 2,
+  "episode": 3,
+  "defaults": {
+    "prompt_influence": 0.3,
+    "music_volume_percentage": 80,
+    "music_ramp_in_seconds": 1.0,
+    "music_ramp_out_seconds": 1.0,
+    "ambience_volume_percentage": 20,
+    "ambience_ramp_in_seconds": 1.0,
+    "ambience_ramp_out_seconds": 1.0
+  },
+  "effects": {
+    "INTRO MUSIC": {
+      "source": "SFX/The Porch Light.mp3",
+      "play_duration": 45
+    },
+    "AMBIENCE: RADIO BOOTH \u2014 SOFT EQUIPMENT HUM, SLIGHT STATIC, INTIMATE": {
+      "source": "SFX/Invitation to Action.mp3",
+      "prompt": "AMBIENCE: RADIO BOOTH \u2014 SOFT EQUIPMENT HUM, SLIGHT STATIC, INTIMATE",
+      "duration_seconds": 30.0,
+      "loop": false
+    },
+    "MUSIC: MUS-THEME-MAIN-01 \u2014 EERIE INDIE FOLK, FADES UNDER": {
+      "prompt": "Eerie indie folk theme, acoustic guitar with subtle synth, mysterious but warm, late-night radio feel, 60 seconds",
+      "duration_seconds": 30.0,
+      "source": "SFX/beat.mp3"
+    },
+    "BEAT": {
+      "type": "silence",
+      "duration_seconds": 1.0
+    },
+    "MUSIC: THEME FADES TO SOFT PULSE": {
+      "prompt": "MUSIC: THEME FADES TO SOFT PULSE",
+      "duration_seconds": 15.0
+    },
+    "MUSIC: MUS-THEME-MAIN-01 \u2014 UP BRIEFLY, THEN OUT": {
+      "prompt": "Eerie indie folk theme, acoustic guitar with subtle synth, mysterious but warm, late-night radio feel, 60 seconds",
+      "duration_seconds": 30.0
+    },
+    "SFX: RADIO STATIC, TUNING \u2014 TRANSITION": {
+      "prompt": "SFX: RADIO STATIC, TUNING \u2014 TRANSITION",
+      "duration_seconds": 5.0,
+      "source": "SFX/Radio station ambience, equipment hum, slight electronic static, quiet studio, late night broadcast booth atmosphere_.mp3"
+    },
+    "AMBIENCE: DINER \u2014 MORNING, SUBDUED, COFFEE MACHINE HISSING, OCCASIONAL PLATE CLINK, QUIETER THAN USUAL": {
+      "prompt": "AMBIENCE: DINER \u2014 MORNING, SUBDUED, COFFEE MACHINE HISSING, OCCASIONAL PLATE CLINK, QUIETER THAN USUAL",
+      "duration_seconds": 30.0,
+      "loop": false,
+      "source": "SFX/Retro American diner interior ambience at night, quiet late-night atmosphere with sparse customers, soft background conversation murmur, occasional coffee cup clink on ceramic saucer, distant ki.mp3"
+    },
+    "SFX: COFFEE BEING POURED INTO CERAMIC MUG": {
+      "prompt": "SFX: COFFEE BEING POURED INTO CERAMIC MUG",
+      "duration_seconds": 5.0
+    },
+    "SFX: DINER DOOR OPENS, BELL CHIMES": {
+      "prompt": "SFX: DINER DOOR OPENS, BELL CHIMES",
+      "duration_seconds": 5.0
+    },
+    "SFX: BOOTS STAMPING SNOW OFF ON DOORMAT": {
+      "prompt": "SFX: BOOTS STAMPING SNOW OFF ON DOORMAT",
+      "duration_seconds": 5.0
+    },
+    "SFX: BOOTH SEAT SLIDING \u2014 KAREN SITTING AT EDGE": {
+      "prompt": "SFX: BOOTH SEAT SLIDING \u2014 KAREN SITTING AT EDGE",
+      "duration_seconds": 5.0
+    },
+    "SFX: COFFEE MUG SET DOWN FIRMLY \u2014 SHARPER THAN INTENDED": {
+      "prompt": "SFX: COFFEE MUG SET DOWN FIRMLY \u2014 SHARPER THAN INTENDED",
+      "duration_seconds": 5.0
+    },
+    "SFX: COFFEE BEING POURED": {
+      "prompt": "SFX: COFFEE BEING POURED",
+      "duration_seconds": 5.0
+    },
+    "SFX: PHONE BUZZING ON TABLE \u2014 SHARP VIBRATION": {
+      "prompt": "SFX: PHONE BUZZING ON TABLE \u2014 SHARP VIBRATION",
+      "duration_seconds": 5.0
+    },
+    "MUSIC: MUS-STING-RELIEF-01 \u2014 BRIEF, TENSION DISSOLVING INTO WARMTH": {
+      "prompt": "Brief musical release, tension dissolving into warmth, acoustic guitar resolve, hopeful, 5 seconds",
+      "duration_seconds": 5.0
+    },
+    "SFX: PHONE BUZZING \u2014 DIFFERENT TONE": {
+      "prompt": "SFX: PHONE BUZZING \u2014 DIFFERENT TONE",
+      "duration_seconds": 5.0
+    },
+    "SFX: CHAIR SCRAPING \u2014 ELENA STANDING": {
+      "prompt": "SFX: CHAIR SCRAPING \u2014 ELENA STANDING",
+      "duration_seconds": 5.0
+    },
+    "SFX: THERMOS BEING HANDED OVER \u2014 METAL, WARM, CAREFUL TRANSFER": {
+      "prompt": "SFX: THERMOS BEING HANDED OVER \u2014 METAL, WARM, CAREFUL TRANSFER",
+      "duration_seconds": 5.0
+    },
+    "MUSIC: MUS-UNDER-CONTEMPLATIVE-01 \u2014 FADES IN, TRANSITION": {
+      "prompt": "Soft contemplative underscore, sparse piano, gentle pads, introspective, 2 minutes loopable",
+      "duration_seconds": 5.0,
+      "loop": false
+    },
+    "AMBIENCE: DINER FADES OUT": {
+      "type": "silence",
+      "duration_seconds": 0.0
+    },
+    "AMBIENCE: B&B SITTING ROOM \u2014 FIREPLACE CRACKLING, GRANDFATHER CLOCK TICKING STEADY, OLD BUILDING SETTLING, INTIMATE": {
+      "prompt": "AMBIENCE: B&B SITTING ROOM \u2014 FIREPLACE CRACKLING, GRANDFATHER CLOCK TICKING STEADY, OLD BUILDING SETTLING, INTIMATE",
+      "duration_seconds": 30.0,
+      "loop": false
+    },
+    "SFX: FIRE CRACKLING \u2014 CONTINUOUS THROUGHOUT": {
+      "prompt": "SFX: FIRE CRACKLING \u2014 CONTINUOUS THROUGHOUT",
+      "duration_seconds": 5.0
+    },
+    "SFX: CLOCK TICKING \u2014 CONTINUOUS THROUGHOUT": {
+      "prompt": "SFX: CLOCK TICKING \u2014 CONTINUOUS THROUGHOUT",
+      "duration_seconds": 5.0
+    },
+    "SFX: CHAIR CREAKING \u2014 SARAH STANDING": {
+      "prompt": "SFX: CHAIR CREAKING \u2014 SARAH STANDING",
+      "duration_seconds": 5.0
+    },
+    "SFX: FOOTSTEPS ON WOODEN STAIRS \u2014 ASCENDING, OLD INN, CREAKING": {
+      "prompt": "SFX: FOOTSTEPS ON WOODEN STAIRS \u2014 ASCENDING, OLD INN, CREAKING",
+      "duration_seconds": 5.0
+    },
+    "BEAT \u2014 3 SECONDS": {
+      "type": "silence",
+      "duration_seconds": 3.0
+    },
+    "SFX: FOOTSTEPS ON WOODEN STAIRS \u2014 DESCENDING": {
+      "prompt": "SFX: FOOTSTEPS ON WOODEN STAIRS \u2014 DESCENDING",
+      "duration_seconds": 5.0
+    },
+    "SFX: WOODEN BOX SET DOWN ON COFFEE TABLE \u2014 CAREFUL, REVERENT": {
+      "prompt": "SFX: WOODEN BOX SET DOWN ON COFFEE TABLE \u2014 CAREFUL, REVERENT",
+      "duration_seconds": 5.0
+    },
+    "SFX: CHAIR CREAKING \u2014 SARAH SITTING": {
+      "prompt": "SFX: CHAIR CREAKING \u2014 SARAH SITTING",
+      "duration_seconds": 5.0
+    },
+    "SFX: FIRE POP \u2014 SINGLE LOUD POP, SPARKS": {
+      "prompt": "SFX: FIRE POP \u2014 SINGLE LOUD POP, SPARKS",
+      "duration_seconds": 5.0
+    },
+    "SFX: FINGERS BRUSHING WOODEN BOX LID": {
+      "prompt": "SFX: FINGERS BRUSHING WOODEN BOX LID",
+      "duration_seconds": 5.0
+    },
+    "SFX: WOODEN BOX LID OPENING \u2014 HINGES WHISPERING": {
+      "prompt": "SFX: WOODEN BOX LID OPENING \u2014 HINGES WHISPERING",
+      "duration_seconds": 5.0
+    },
+    "SFX: ENVELOPE BEING LIFTED \u2014 PAPER RUSTLING": {
+      "prompt": "SFX: ENVELOPE BEING LIFTED \u2014 PAPER RUSTLING",
+      "duration_seconds": 5.0
+    },
+    "SFX: ENVELOPE BEING TORN OPEN \u2014 CAREFUL, DELIBERATE": {
+      "prompt": "SFX: ENVELOPE BEING TORN OPEN \u2014 CAREFUL, DELIBERATE",
+      "duration_seconds": 5.0
+    },
+    "SFX: PAPER BEING UNFOLDED": {
+      "prompt": "SFX: PAPER BEING UNFOLDED",
+      "duration_seconds": 5.0
+    },
+    "MUSIC: MUS-EMOTIONAL-SWELL-01 \u2014 FADES IN SOFTLY, STRINGS AND PIANO": {
+      "prompt": "Emotional underscore building slowly, strings and piano, ache and love intertwined, grandmother's letter feeling, raw and tender, 90 seconds",
+      "duration_seconds": 30.0
+    },
+    "TRANSITION: ELENA\u2019S VOICE FADES AS MARGARET\u2019S VOICE RISES \u2014 CLEAR AUDIO CROSSFADE": {
+      "prompt": "TRANSITION: ELENA\u2019S VOICE FADES AS MARGARET\u2019S VOICE RISES \u2014 CLEAR AUDIO CROSSFADE",
+      "duration_seconds": 5.0
+    },
+    "MUSIC: SWELLS SLIGHTLY": {
+      "prompt": "MUSIC: SWELLS SLIGHTLY",
+      "duration_seconds": 15.0
+    },
+    "MUSIC: HOLDS": {
+      "prompt": "MUSIC: HOLDS",
+      "duration_seconds": 15.0
+    },
+    "MUSIC: MUS-EMOTIONAL-SWELL-01 \u2014 FADES TO SOFT PULSE": {
+      "prompt": "Emotional underscore building slowly, strings and piano, ache and love intertwined, grandmother's letter feeling, raw and tender, 90 seconds",
+      "duration_seconds": 30.0
+    },
+    "BEAT \u2014 LONG, 5 SECONDS": {
+      "type": "silence",
+      "duration_seconds": 5.0
+    },
+    "SFX: CLOCK TICKING \u2014 EMPHASIZED, THREE BEATS": {
+      "prompt": "SFX: CLOCK TICKING \u2014 EMPHASIZED, THREE BEATS",
+      "duration_seconds": 5.0
+    },
+    "SFX: OLD BUILDING SETTLING \u2014 WOOD AND WALLS SHIFTING": {
+      "prompt": "SFX: OLD BUILDING SETTLING \u2014 WOOD AND WALLS SHIFTING",
+      "duration_seconds": 5.0
+    },
+    "SFX: SOFT KNOCK ON INTERIOR DOOR": {
+      "prompt": "SFX: SOFT KNOCK ON INTERIOR DOOR",
+      "duration_seconds": 5.0
+    },
+    "SFX: DOOR OPENING SOFTLY": {
+      "prompt": "SFX: DOOR OPENING SOFTLY",
+      "duration_seconds": 5.0
+    },
+    "SFX: PAPER RUSTLING \u2014 ENVELOPE CHANGING HANDS": {
+      "prompt": "SFX: PAPER RUSTLING \u2014 ENVELOPE CHANGING HANDS",
+      "duration_seconds": 5.0
+    },
+    "SFX: FOOTSTEPS RETREATING": {
+      "prompt": "SFX: FOOTSTEPS RETREATING",
+      "duration_seconds": 5.0
+    },
+    "SFX: DOOR CLOSING SOFTLY": {
+      "prompt": "SFX: DOOR CLOSING SOFTLY",
+      "duration_seconds": 5.0
+    },
+    "SFX: ENVELOPE BEING TORN OPEN \u2014 QUICKER THIS TIME": {
+      "prompt": "SFX: ENVELOPE BEING TORN OPEN \u2014 QUICKER THIS TIME",
+      "duration_seconds": 5.0
+    },
+    "MUSIC: MUS-FORWARD-HOPE-01 \u2014 FADES IN, GENTLER THAN MARGARET\u2019S THEME": {
+      "prompt": "Gentle forward-looking theme, warmer than main theme, acceptance not resolution, acoustic guitar and soft synth, mother reaching toward daughter, 60 seconds",
+      "duration_seconds": 30.0
+    },
+    "TRANSITION: KAREN\u2019S VOICE RISES": {
+      "prompt": "TRANSITION: KAREN\u2019S VOICE RISES",
+      "duration_seconds": 5.0
+    },
+    "MUSIC: MUS-FORWARD-HOPE-01 \u2014 FADES TO SOFT PULSE": {
+      "prompt": "Gentle forward-looking theme, warmer than main theme, acceptance not resolution, acoustic guitar and soft synth, mother reaching toward daughter, 60 seconds",
+      "duration_seconds": 30.0
+    },
+    "BEAT \u2014 LONG, 4 SECONDS": {
+      "type": "silence",
+      "duration_seconds": 4.0
+    },
+    "SFX: PAPER BEING FOLDED CAREFULLY": {
+      "prompt": "SFX: PAPER BEING FOLDED CAREFULLY",
+      "duration_seconds": 5.0
+    },
+    "SFX: FOOTSTEPS \u2014 FEW STEPS ACROSS CARPET": {
+      "prompt": "SFX: FOOTSTEPS \u2014 FEW STEPS ACROSS CARPET",
+      "duration_seconds": 5.0
+    },
+    "SFX: COUCH CUSHION \u2014 SITTING DOWN": {
+      "prompt": "SFX: COUCH CUSHION \u2014 SITTING DOWN",
+      "duration_seconds": 5.0
+    },
+    "SFX: FIRE CRACKLING \u2014 CONTINUES": {
+      "prompt": "SFX: FIRE CRACKLING \u2014 CONTINUES",
+      "duration_seconds": 5.0
+    },
+    "SFX: CLOCK TICKING \u2014 CONTINUES": {
+      "prompt": "SFX: CLOCK TICKING \u2014 CONTINUES",
+      "duration_seconds": 5.0
+    },
+    "MUSIC: MUS-FORWARD-HOPE-01 \u2014 SWELLS SLIGHTLY, THEN TRANSITIONS": {
+      "prompt": "Gentle forward-looking theme, warmer than main theme, acceptance not resolution, acoustic guitar and soft synth, mother reaching toward daughter, 60 seconds",
+      "duration_seconds": 30.0
+    },
+    "AMBIENCE: B&B FADES OUT": {
+      "type": "silence",
+      "duration_seconds": 0.0
+    },
+    "AMBIENCE: QUARRY \u2014 WINTER, WIND MOANING THROUGH MARBLE CANYON, VAST OUTDOOR SPACE, TWILIGHT": {
+      "prompt": "AMBIENCE: QUARRY \u2014 WINTER, WIND MOANING THROUGH MARBLE CANYON, VAST OUTDOOR SPACE, TWILIGHT",
+      "duration_seconds": 30.0,
+      "loop": false
+    },
+    "SFX: WIND \u2014 HOLLOW, ANCIENT SOUND, ECHOING OFF MARBLE": {
+      "prompt": "SFX: WIND \u2014 HOLLOW, ANCIENT SOUND, ECHOING OFF MARBLE",
+      "duration_seconds": 5.0
+    },
+    "SFX: SNOWSHOES CRUNCHING THROUGH HEAVY DRIFTS \u2014 RHYTHMIC, FOUR PEOPLE": {
+      "prompt": "SFX: SNOWSHOES CRUNCHING THROUGH HEAVY DRIFTS \u2014 RHYTHMIC, FOUR PEOPLE",
+      "duration_seconds": 5.0
+    },
+    "SFX: SNOWSHOES STOPPING \u2014 CRUNCH ENDING IN SILENCE": {
+      "prompt": "SFX: SNOWSHOES STOPPING \u2014 CRUNCH ENDING IN SILENCE",
+      "duration_seconds": 5.0
+    },
+    "SFX: SINGLE CRYSTALLINE SYNTHESIZER TONE \u2014 PURE, STEADY, ETHEREAL": {
+      "prompt": "SFX: SINGLE CRYSTALLINE SYNTHESIZER TONE \u2014 PURE, STEADY, ETHEREAL",
+      "duration_seconds": 5.0
+    },
+    "SFX: SECOND SYNTHESIZER TONE \u2014 PERFECT FIFTH HIGHER, JOINING FIRST": {
+      "prompt": "SFX: SECOND SYNTHESIZER TONE \u2014 PERFECT FIFTH HIGHER, JOINING FIRST",
+      "duration_seconds": 5.0
+    },
+    "MUSIC: MUS-COSMIC-STILLNESS-01 \u2014 BUILDING SLOWLY, AMBIENT TONES": {
+      "prompt": "Ambient synthesizer tones, pure and ethereal, planetary alignment feeling, echoing off marble walls, slowly shifting harmonics, ten distinct tones pulsing gently, 3 minutes",
+      "duration_seconds": 30.0
+    },
+    "MUSIC: SWELLS \u2014 PULSING SYMPHONY OF SHIFTING TONES": {
+      "prompt": "MUSIC: SWELLS \u2014 PULSING SYMPHONY OF SHIFTING TONES",
+      "duration_seconds": 15.0
+    },
+    "SFX: PARKAS RUSTLING \u2014 NYLON ON NYLON, PEOPLE SETTLING": {
+      "prompt": "SFX: PARKAS RUSTLING \u2014 NYLON ON NYLON, PEOPLE SETTLING",
+      "duration_seconds": 5.0
+    },
+    "SFX: SLEEPING BAG CRINKLING \u2014 WEIGHT SETTLING": {
+      "prompt": "SFX: SLEEPING BAG CRINKLING \u2014 WEIGHT SETTLING",
+      "duration_seconds": 5.0
+    },
+    "MUSIC: MUS-COSMIC-STILLNESS-01 \u2014 FULL, MEDITATIVE": {
+      "prompt": "Ambient synthesizer tones, pure and ethereal, planetary alignment feeling, echoing off marble walls, slowly shifting harmonics, ten distinct tones pulsing gently, 3 minutes",
+      "duration_seconds": 30.0
+    },
+    "BEAT \u2014 EXTENDED, 8 SECONDS \u2014 LET THE MUSIC BREATHE": {
+      "type": "silence",
+      "duration_seconds": 8.0
+    },
+    "MUSIC: TONES BEGIN TO FADE \u2014 ONE BY ONE, LIKE PLANETS SETTING": {
+      "prompt": "MUSIC: TONES BEGIN TO FADE \u2014 ONE BY ONE, LIKE PLANETS SETTING",
+      "duration_seconds": 15.0
+    },
+    "SFX: THERMOS BEING UNSCREWED \u2014 METALLIC CLICK AND HISS": {
+      "prompt": "SFX: THERMOS BEING UNSCREWED \u2014 METALLIC CLICK AND HISS",
+      "duration_seconds": 5.0
+    },
+    "SFX: LIQUID POURING INTO CERAMIC CUP \u2014 GLUG-GLUG-GLUG, THICK": {
+      "prompt": "SFX: LIQUID POURING INTO CERAMIC CUP \u2014 GLUG-GLUG-GLUG, THICK",
+      "duration_seconds": 5.0
+    },
+    "SFX: QUIET SIP \u2014 HOT LIQUID, SATISFACTION": {
+      "prompt": "SFX: QUIET SIP \u2014 HOT LIQUID, SATISFACTION",
+      "duration_seconds": 5.0
+    },
+    "SFX: CUP BEING PASSED \u2014 CERAMIC CLINKING SOFTLY": {
+      "prompt": "SFX: CUP BEING PASSED \u2014 CERAMIC CLINKING SOFTLY",
+      "duration_seconds": 5.0
+    },
+    "SFX: LAUGH ECHOING OFF MARBLE WALLS \u2014 GENUINE, MULTIPLIED": {
+      "prompt": "SFX: LAUGH ECHOING OFF MARBLE WALLS \u2014 GENUINE, MULTIPLIED",
+      "duration_seconds": 5.0
+    },
+    "MUSIC: MUS-THEME-WARM-01 \u2014 FADES IN SOFTLY": {
+      "prompt": "Main theme variation, warmer arrangement, resolution feeling, acoustic guitar prominent, hopeful not conclusive, 45 seconds",
+      "duration_seconds": 30.0
+    },
+    "SFX: SNOWSHOES CRUNCHING \u2014 WALKING AWAY": {
+      "prompt": "SFX: SNOWSHOES CRUNCHING \u2014 WALKING AWAY",
+      "duration_seconds": 5.0
+    },
+    "SFX: CAR ENGINE STARTING \u2014 COLD WEATHER START": {
+      "prompt": "SFX: CAR ENGINE STARTING \u2014 COLD WEATHER START",
+      "duration_seconds": 5.0
+    },
+    "MUSIC: MUS-THEME-WARM-01 \u2014 SWELLS, THEN TRANSITIONS": {
+      "prompt": "Main theme variation, warmer arrangement, resolution feeling, acoustic guitar prominent, hopeful not conclusive, 45 seconds",
+      "duration_seconds": 30.0
+    },
+    "AMBIENCE: QUARRY FADES OUT": {
+      "type": "silence",
+      "duration_seconds": 0.0
+    },
+    "AMBIENCE: RADIO BOOTH \u2014 SOFT, INTIMATE": {
+      "prompt": "AMBIENCE: RADIO BOOTH \u2014 SOFT, INTIMATE",
+      "duration_seconds": 30.0,
+      "loop": false
+    },
+    "MUSIC: MUS-THEME-WARM-01 \u2014 CONTINUES UNDER": {
+      "prompt": "Main theme variation, warmer arrangement, resolution feeling, acoustic guitar prominent, hopeful not conclusive, 45 seconds",
+      "duration_seconds": 30.0
+    },
+    "MUSIC: MUS-THEME-MAIN-01 \u2014 UP, FULL VERSION": {
+      "prompt": "Eerie indie folk theme, acoustic guitar with subtle synth, mysterious but warm, late-night radio feel, 60 seconds",
+      "duration_seconds": 30.0
+    },
+    "MUSIC: THEME CONTINUES \u2014 TRANSITION TO DEZ\u2019S NARRATION": {
+      "prompt": "MUSIC: THEME CONTINUES \u2014 TRANSITION TO DEZ\u2019S NARRATION",
+      "duration_seconds": 15.0
+    },
+    "MUSIC: MUS-THEME-WARM-01 \u2014 SOFT, UNDER NARRATION": {
+      "prompt": "Main theme variation, warmer arrangement, resolution feeling, acoustic guitar prominent, hopeful not conclusive, 45 seconds",
+      "duration_seconds": 30.0
+    },
+    "MUSIC: MUS-THEME-WARM-01 \u2014 FINAL CHORD, HOLDS": {
+      "prompt": "Main theme variation, warmer arrangement, resolution feeling, acoustic guitar prominent, hopeful not conclusive, 45 seconds",
+      "duration_seconds": 30.0
+    },
+    "SFX: RADIO CLICK OFF": {
+      "prompt": "SFX: RADIO CLICK OFF",
+      "duration_seconds": 5.0
+    },
+    "MUSIC: FADES TO SILENCE": {
+      "prompt": "MUSIC: FADES TO SILENCE",
+      "duration_seconds": 15.0
+    },
+    "AMBIENCE: RADIO BOOTH \u2014 SOFT, CONVERSATIONAL": {
+      "prompt": "AMBIENCE: RADIO BOOTH \u2014 SOFT, CONVERSATIONAL",
+      "duration_seconds": 30.0,
+      "loop": false
+    },
+    "MUSIC: MUS-THEME-MAIN-01 \u2014 BRIEF STING, THEN OUT": {
+      "prompt": "Eerie indie folk theme, acoustic guitar with subtle synth, mysterious but warm, late-night radio feel, 60 seconds",
+      "duration_seconds": 30.0
+    },
+    "MUSIC: MUS-THEME-MAIN-01 \u2014 FADES IN, WARM VERSION": {
+      "prompt": "Eerie indie folk theme, acoustic guitar with subtle synth, mysterious but warm, late-night radio feel, 60 seconds",
+      "duration_seconds": 30.0
+    },
+    "MUSIC: THEME UP, FULL, THEN FADES": {
+      "prompt": "MUSIC: THEME UP, FULL, THEN FADES",
+      "duration_seconds": 15.0
+    }
+  }
+}
