@@ -233,9 +233,15 @@ def collect_stem_plans(
         # Cross-check filename suffix vs parsed entry type to catch stale stems.
         # SFX/direction stems always end with `_sfx`; dialogue stems end with a
         # speaker key (never `_sfx`).
-        suffix = os.path.splitext(os.path.basename(filepath))[0].rsplit("_", 1)[-1]
+        basename = os.path.splitext(os.path.basename(filepath))[0]
+        suffix = basename.rsplit("_", 1)[-1]
         is_sfx_stem = suffix == "sfx"
 
+        # Header entries (section_header, scene_header) never have stems
+        if entry_type not in ("dialogue", "direction", None):
+            print(f" [W] Stale stem skipped: {os.path.basename(filepath)} "
+                  f"(seq {seq} is now a {entry_type} entry)")
+            continue
         if is_sfx_stem and entry_type == "dialogue":
             print(f" [W] Stale stem skipped: {os.path.basename(filepath)} "
                   f"(seq {seq} is now a dialogue entry)")
@@ -244,6 +250,13 @@ def collect_stem_plans(
             print(f" [W] Stale stem skipped: {os.path.basename(filepath)} "
                   f"(seq {seq} is now a direction entry)")
             continue
+        # Check speaker suffix matches parsed speaker for dialogue stems
+        if entry_type == "dialogue" and entry.get("speaker"):
+            expected_suffix = f"_{entry['speaker']}"
+            if not basename.endswith(expected_suffix):
+                print(f" [W] Stale stem skipped: {os.path.basename(filepath)} "
+                      f"(seq {seq} speaker is now {entry['speaker']})")
+                continue
 
         plan = StemPlan(
             seq=seq,
@@ -272,6 +285,19 @@ def collect_stem_plans(
             if src_entry.loop is False:
                 plan.loop = False
         plans.append(plan)
+
+    # Deduplicate: if multiple stems share the same seq (e.g. old and new
+    # section names for an SFX entry), keep only the first one and warn.
+    deduped = []
+    seen_plan_seqs: set[int] = set()
+    for plan in plans:
+        if plan.seq in seen_plan_seqs:
+            print(f" [W] Duplicate stem skipped: {os.path.basename(plan.filepath)} "
+                  f"(seq {plan.seq} already loaded)")
+            continue
+        seen_plan_seqs.add(plan.seq)
+        deduped.append(plan)
+    plans = deduped
 
     # Inject synthetic stop markers for ambience-end directives in the index.
     # "AMBIENCE: STOP" and "AMBIENCE: * FADES OUT" have no stem file on disk

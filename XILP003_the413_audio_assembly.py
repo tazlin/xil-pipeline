@@ -46,7 +46,7 @@ STEMS_DIR = "stems"
 SILENCE_GAP_MS = 600
 
 
-def assemble_audio(config: dict[str, dict], stems_dir: str, final_output: str) -> None:
+def assemble_audio(config: dict[str, dict], stems_dir: str, final_output: str, gap_ms: int = 600) -> None:
     """Assemble voice stems sequentially into a master audio file.
 
     Loads all MP3 stems from the stems directory sorted by filename
@@ -87,7 +87,7 @@ def assemble_audio(config: dict[str, dict], stems_dir: str, final_output: str) -
                 segment = apply_phone_filter(segment)
             segment = segment.pan(config[speaker]["pan"])
 
-        full_vocals += segment + AudioSegment.silent(duration=SILENCE_GAP_MS)
+        full_vocals += segment + AudioSegment.silent(duration=gap_ms)
 
     full_vocals.export(final_output, format="mp3")
     print(f"--- Success! Created: {final_output} (Duration: {len(full_vocals)/1000:.1f}s) ---")
@@ -100,6 +100,7 @@ def assemble_multitrack(
     parsed_path: str,
     final_output: str,
     sfx_config=None,
+    gap_ms: int = 600,
 ) -> None:
     """Assemble stems using a two-pass multi-track mix.
 
@@ -128,7 +129,7 @@ def assemble_multitrack(
     print(f"--- Phase 2: Assembling {len(stem_plans)} stems (multi-track) ---")
 
     foreground, timeline = build_foreground(
-        stem_plans, config, apply_phone_filter, gap_ms=SILENCE_GAP_MS
+        stem_plans, config, apply_phone_filter, gap_ms=gap_ms
     )
 
     if len(foreground) == 0:
@@ -176,6 +177,10 @@ def main() -> None:
             "--parsed", default=None,
             help="Path to parsed script JSON (default: parsed/parsed_the413_<TAG>.json)"
         )
+        parser.add_argument(
+            "--gap-ms", type=int, default=SILENCE_GAP_MS,
+            help=f"Silence gap between foreground stems in ms (default: {SILENCE_GAP_MS})"
+        )
         args = parser.parse_args()
 
         cast_path = f"cast_the413_{args.episode}.json"
@@ -203,10 +208,11 @@ def main() -> None:
             assemble_multitrack(
                 config, stems_dir, parsed_path, output,
                 sfx_config=sfx_config,
+                gap_ms=args.gap_ms,
             )
         else:
             print(f"   [info] No parsed JSON at {parsed_path!r} — using sequential assembly.")
-            assemble_audio(config, stems_dir, output)
+            assemble_audio(config, stems_dir, output, gap_ms=args.gap_ms)
 
 
 if __name__ == "__main__":

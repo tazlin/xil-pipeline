@@ -359,6 +359,7 @@ def export_daw_layers(
     timeline: bool = False,
     timeline_html: bool = False,
     sfx_config=None,
+    gap_ms: int = 600,
 ) -> None:
     """Build and export all four DAW layer WAV files.
 
@@ -385,7 +386,7 @@ def export_daw_layers(
 
     print(f"--- Building foreground timeline from {len(stem_plans)} stems ---")
     foreground, timeline = build_foreground(
-        stem_plans, config, apply_phone_filter, gap_ms=SILENCE_GAP_MS
+        stem_plans, config, apply_phone_filter, gap_ms=gap_ms
     )
 
     if len(foreground) == 0:
@@ -541,6 +542,10 @@ def main() -> None:
             "--timeline-html", action="store_true",
             help="Write an interactive HTML timeline to daw/<TAG>/<TAG>_timeline.html"
         )
+        parser.add_argument(
+            "--gap-ms", type=int, default=SILENCE_GAP_MS,
+            help=f"Silence gap between foreground stems in ms (default: {SILENCE_GAP_MS})"
+        )
         args = parser.parse_args()
 
         cast_path = f"cast_the413_{args.episode}.json"
@@ -575,7 +580,7 @@ def main() -> None:
             dry_run_daw(tag, stem_plans, entries_index, output_dir)
             if args.timeline or args.timeline_html:
                 total_ms, timeline = build_foreground_timeline_only(
-                    stem_plans, gap_ms=SILENCE_GAP_MS
+                    stem_plans, gap_ms=args.gap_ms
                 )
                 dlg_labels = compute_dialogue_labels(stem_plans, timeline)
                 amb_labels = compute_ambience_labels(stem_plans, timeline, total_ms)
@@ -604,6 +609,7 @@ def main() -> None:
             timeline=args.timeline,
             timeline_html=args.timeline_html,
             sfx_config=sfx_config,
+            gap_ms=args.gap_ms,
         )
 
 

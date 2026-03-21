@@ -29,7 +29,7 @@ python XILP000_script_scanner.py "scripts/<script>.md" --json
 - Imports XILP001's pure functions directly — no duplicated logic
 - `--json` outputs machine-readable scan results
 
-## Architecture: Six-Stage Pipeline (+ Cues Ingester Pre-Processing)
+## Architecture: Eight-Stage Pipeline (+ Cues Ingester Pre-Processing)
 
 ### Stage 1: Script Parsing
 `XILP001_script_parser.py` — Parses markdown production scripts into structured JSON.
@@ -88,7 +88,7 @@ python XILP002_the413_producer.py --episode S01E01 --dry-run
 - After generation, injects seq −2/−1 entries into the parsed JSON via `inject_preamble_entries()` — idempotent, re-running replaces existing preamble entries
 - **Postamble stems** (when cast config has a `postamble` block): `{max+1:03d}_postamble_{speaker}.mp3` (voice) and `{max+2:03d}_postamble_sfx.mp3` (outro music, source from `sfx_config.effects["OUTRO MUSIC"].source`); injected into parsed JSON with `section="postamble"` via `inject_postamble_entries()` — idempotent
 - Both `preamble` and `postamble` support multi-segment TTS: `segments` list with optional `shared_key` caches stock parts to `SFX/{shared_key}.mp3` (generated once, reused across episodes); episode-specific segments (no `shared_key`) are generated as temp files, concatenated with pydub, then cleaned up; legacy `text` field still works as a fallback
-- Supports `--start-from N` for resuming interrupted runs
+- Supports `--start-from N` for resuming interrupted runs; `--stop-at N` to halt after a specific seq (useful for previewing a section without regenerating the full episode)
 - Supports `--dry-run` to preview lines and TTS character cost without API calls
 - Supports `--terse` to truncate each line to 3 words (minimizes TTS character cost)
 - Supports `--gen-sfx`, `--gen-music`, `--gen-ambience` to generate only the specified categories of stems (replaces deprecated `--sfx-music` which is kept as a shorthand for all three)
@@ -112,6 +112,7 @@ python XILP003_the413_audio_assembly.py --episode S01E01 --parsed parsed/parsed_
 - Shared mixing logic lives in `mix_common.py` — also used by XILP005
 - Applies per-speaker effects (pan, phone filter) from cast config
 - Supports `--output` to set the master MP3 path (default: `the413_S01E01_master.mp3`)
+- `--gap-ms N` sets the silence gap between foreground stems in milliseconds (default: 600); reducing to 200–300 can shorten episode runtime by 1.5–2 minutes
 - No ElevenLabs API key required — safe to re-run freely
 
 ### Stage 4: Studio Project Onboarding
@@ -156,11 +157,54 @@ python XILP005_the413_daw_export.py --episode S01E01 --timeline --timeline-html
 - Generates `{TAG}_open_in_audacity.py` — prints WAV import instructions (labels listed separately as optional)
 - `--macro` writes an Audacity macro (`THE413_{TAG}.txt`) to `%APPDATA%\audacity\Macros\` for one-click WAV import via `Tools > Macros`
 - `--dry-run` shows stem counts and output paths without writing files
+- `--gap-ms N` sets the silence gap between foreground stems in milliseconds (default: 600); reducing to 200–300 can shorten episode runtime by 1.5–2 minutes
+- `--save-aup3` includes a `SaveProject2` command in the generated `{TAG}_open_in_audacity.py` helper script (requires mod-script-pipe in Audacity)
 - `--timeline` prints an ASCII multitrack timeline to stdout (works with `--dry-run` via fast mutagen header reads)
 - `--timeline-html` writes a self-contained interactive HTML timeline to `daw/{TAG}/{TAG}_timeline.html` (hover tooltips, Ctrl+scroll zoom)
 - Preamble stems (`n002_preamble_tina.mp3`, `n001_preamble_sfx.mp3`) are picked up automatically via `collect_stem_plans()` when their seq −2/−1 entries are present in the parsed JSON (injected by XILP002)
 - No ElevenLabs API key required — no API calls made
 - Shared mixing logic imported from `mix_common.py`; visualization via `timeline_viz.py`
+
+### Stage 6: Stem Migration (Punch-In Workflow)
+`XILP007_stem_migrator.py` — Migrates episode stems when a parsed script is revised. Compares an old and new parsed JSON, copies unchanged stems to their new seq-numbered filenames, and reports which entries need fresh TTS/SFX generation. Run XILP002 afterwards to fill only the gaps.
+
+```bash
+python XILP007_stem_migrator.py --episode S02E03 --dry-run
+python XILP007_stem_migrator.py --episode S02E03
+python XILP007_stem_migrator.py \
+    --old parsed/orig_parsed_the413_S02E03.json \
+    --new parsed/parsed_the413_S02E03.json \
+    --stems stems/S02E03 [--dry-run] [--strict]
+```
+
+- `--episode TAG` derives `--old` (`parsed/orig_parsed_the413_{TAG}.json`), `--new` (`parsed/parsed_the413_{TAG}.json`), and `--stems` (`stems/{TAG}`) automatically
+- `--orig-prefix` (default: `orig_`) sets the filename prefix for the old parsed JSON
+- `--dry-run` — shows the full plan without copying any files
+- `--strict` — exact text match only; default is **fuzzy** (normalises em-dash, ellipsis, curly quotes so punctuation-only edits don't force unnecessary regen)
+- `--quiet` — prints only the summary, not per-stem details
+- Status codes printed per stem: `COPY` (unchanged, will be/was copied), `SPEAKER` (text matches but speaker reassigned → regen), `NEW` (no old entry matches → generate), `MISSING` (match found but old file absent → generate)
+- Two-phase matching: phase 1 matches on (text, speaker); phase 2 (dialogue only) falls back to text-only to detect speaker reassignments
+- After running (without `--dry-run`), run `XILP002_the413_producer.py --episode TAG` — it skips stems already on disk, so only SPEAKER/NEW/MISSING slots get API calls
+- No ElevenLabs API key required — no API calls made
+
+### Stage 7: Stale Stem Cleanup
+`XILP008_stale_stem_cleanup.py` — Removes stale stems left behind after a parsed script revision and stem migration. After XILP007 copies unchanged stems to new seq-numbered filenames, old stems whose seq numbers now map to a different entry type remain on disk. This script finds and deletes them.
+
+```bash
+python XILP008_stale_stem_cleanup.py --episode S02E03 --dry-run
+python XILP008_stale_stem_cleanup.py --episode S02E03
+python XILP008_stale_stem_cleanup.py \
+    --parsed parsed/parsed_the413_S02E03.json \
+    --stems stems/S02E03 [--dry-run]
+```
+
+- `--episode TAG` derives `--parsed` (`parsed/parsed_the413_{TAG}.json`) and `--stems` (`stems/{TAG}`) automatically
+- `--parsed` and `--stems` override individual paths (both required if `--episode` is omitted)
+- `--dry-run` — lists stale stems without deleting them
+- A stem is stale when its filename disagrees with the current parsed entry: entry type is a header (`section_header`/`scene_header`), `_sfx` suffix but entry is now `dialogue`, speaker suffix but entry is now `direction`, dialogue stem whose speaker suffix doesn't match the parsed speaker, or seq not present in parsed JSON at all
+- Duplicate detection: when multiple stems share the same seq, keeps only the one whose basename matches the expected `{seq}_{section}[-{scene}]_{speaker|sfx}` pattern
+- Uses `extract_seq()` and `load_entries_index()` from `mix_common.py`
+- No ElevenLabs API key required — no API calls made
 
 ## ElevenLabs API Cost Controls
 
@@ -175,17 +219,20 @@ Always use `--dry-run` before running voice generation on a new script to verify
 
 Scripts use prefix `XIL` (ElevenLabs, avoiding numeric prefixes). The suffix pattern is:
 - `XILP000_*` — pre-flight script scanner (no API, no side effects)
-- `XILU001_*` — voice discovery
+- `XILU001_*` — voice discovery (browse ElevenLabs voices; `--update-cast` back-fills role/language_code into a cast JSON)
 - `XILU002_*` — standalone SFX stem generation
+- `XILU003_*` — CSV + SFX/cast annotation utility (joins parsed episode CSV with SFX JSON and cast JSON for review)
 - `XILU004_*` — voice sample generator (audition cast voices)
-- `XILU005_*` — SFX library discovery (local scan of SFX/ directory)
+- `XILU005_*` — SFX library discovery (`--local` scans `SFX/` directory, default; `--api` queries ElevenLabs history)
 - `XILP001_*` — script parser
 - `XILP002_*` — voice generation (ElevenLabs TTS)
 - `XILP003_*` — audio assembly (stems → master MP3, two-pass multi-track mix)
 - `XILP004_*` — Studio project onboarding (ElevenLabs Studio Projects API)
 - `XILP005_*` — DAW layer export (stems → per-layer WAVs for Audacity)
 - `XILP006_*` — cues sheet ingester (cues markdown → SFX library + sfx config enrichment)
-- `mix_common.py` — shared mixing utilities (timeline, layer builders, fast label helpers) used by XILP003 and XILP005; `StemPlan.loop` field: `True` (default) tiles audio, `False` plays once up to scene boundary; `StemPlan.pre_trimmed` flag: skips play_duration trim for source-based stems already trimmed at copy time; `collect_stem_plans()` injects synthetic stop-marker `StemPlan` entries (filepath="") for `AMBIENCE: STOP` and `AMBIENCE: * FADES OUT` directives found in the entries index; `build_ambience_layer()` skips corrupt or unreadable stem files with a warning rather than crashing
+- `XILP007_*` — stem migrator (diff old vs new parsed JSON, copy unchanged stems, report what needs regen)
+- `XILP008_*` — stale stem cleanup (delete stems whose seq no longer matches the current parsed JSON)
+- `mix_common.py` — shared mixing utilities (timeline, layer builders, fast label helpers) used by XILP003 and XILP005; `StemPlan.loop` field: `True` (default) tiles audio, `False` plays once up to scene boundary; `StemPlan.pre_trimmed` flag: skips play_duration trim for source-based stems already trimmed at copy time; `StemPlan.volume_percentage` (float|None): volume as a percentage (100 = unity, None = no change); `StemPlan.ramp_in_seconds` / `StemPlan.ramp_out_seconds`: fade durations in seconds (None = no fade); `collect_stem_plans()` skips stale stems (header entries, type mismatch, speaker mismatch), deduplicates by seq number, and injects synthetic stop-marker `StemPlan` entries (filepath="") for `AMBIENCE: STOP` and `AMBIENCE: * FADES OUT` directives found in the entries index; `build_ambience_layer()` skips corrupt or unreadable stem files with a warning rather than crashing
 - `sfx_common.py` — shared SFX library management, ID3 tagging (`tag_mp3`, `tag_wav`), effect generation; `ensure_shared_asset()` retries on 429 rate-limit errors (up to 5 times, linear backoff); `load_sfx_entries()` accepts `direction_types` filter set, returns `direction_type` field in each entry dict, skips entries with `duration_seconds=0.0`; `dry_run_sfx()` shows per-category credit subtotals in the SUMMARY block
 - `timeline_viz.py` — multitrack timeline visualization; `render_terminal_timeline()` (ASCII) and `render_html_timeline()` (interactive HTML); no pydub dependency
 
@@ -280,6 +327,19 @@ python XILU002_generate_SFX.py --episode S01E01
 - 429 rate-limit errors are retried automatically up to 5 times with linear backoff (10s, 20s, 30s, 40s, 50s)
 - Skips stems that already exist on disk
 
+### CSV Annotation Utility
+`XILU003_csv_sfx_join.py` — Joins a parsed episode CSV with the SFX JSON and cast JSON, producing an annotated review CSV with SFX prompt, duration, and cast metadata columns appended alongside each dialogue and direction entry.
+
+```bash
+python XILU003_csv_sfx_join.py --episode S02E03
+python XILU003_csv_sfx_join.py --episode S02E03 --output my_review.csv
+```
+
+- `--episode` (required) derives `parsed/parsed_the413_{TAG}.csv`, `sfx_the413_{TAG}.json`, and `cast_the413_{TAG}.json`
+- `--csv`, `--sfx`, `--cast` override individual input paths
+- `--output` overrides the output CSV path (default: `parsed/annotated_the413_{TAG}.csv`)
+- No API key required — read-only join utility
+
 ### Voice Sample Utility
 `XILU004_sample_voices_T2S.py` — Generates a short TTS sample for each cast member to audition voice assignments.
 
@@ -300,15 +360,22 @@ python XILU004_sample_voices_T2S.py --episode S02E03 --force
 
 ```bash
 python XILU005_discover_SFX.py                    # local scan (default)
+python XILU005_discover_SFX.py --local            # explicit local scan
+python XILU005_discover_SFX.py --sfx-dir SFX/    # override local scan directory
 python XILU005_discover_SFX.py --search "diner"   # filter by keyword
 python XILU005_discover_SFX.py --json             # machine-readable output
-python XILU005_discover_SFX.py --api              # attempt API history (endpoint may not be public)
+python XILU005_discover_SFX.py --api              # attempt API history (not publicly accessible)
+python XILU005_discover_SFX.py --api --all        # paginate full API history (default: most recent 100)
 ```
 
-- Default mode: scans `SFX/` directory and reports all assets with duration and file size
+- Default mode: scans `SFX/` directory (equivalent to `--local`) and reports all assets with duration and file size
+- `--local` / `--api` are mutually exclusive mode flags; `--local` is the default
+- `--sfx-dir DIR` overrides the local scan directory (default: `SFX/`)
 - `--search TEXT` filters results by case-insensitive substring match on filename/prompt
 - `--json` outputs results as a JSON array
+- `--verbose` / `-v` prints all metadata fields per asset
 - `--api` attempts to query ElevenLabs sound generation history (endpoint is not publicly accessible as of March 2026 regardless of API key permissions)
+- `--all` (API mode only) paginates through the full account history; default retrieves only the most recent 100 results
 
 ## Developer/Maintainer Rules
 

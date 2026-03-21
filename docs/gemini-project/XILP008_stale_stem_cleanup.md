@@ -1,6 +1,6 @@
-# S02E03 Open In Audacity
+# Xilp008 Stale Stem Cleanup
 
-::: daw.S02E03.S02E03_open_in_audacity
+::: XILP008_stale_stem_cleanup
     options:
       show_root_heading: true
       show_source: true

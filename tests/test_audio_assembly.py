@@ -248,6 +248,15 @@ class TestBuildForeground:
         # seq 2 (AMBIENCE) appears before seq 3 (dialogue) → cue at ms=0
         assert timeline[2] == 0
 
+    def test_gap_ms_affects_duration(self, stems_with_bg, parsed_entries_index, config):
+        plans = mix_common.collect_stem_plans(str(stems_with_bg), parsed_entries_index)
+        fg_wide, _ = mix_common.build_foreground(plans, config, gap_ms=600)
+        fg_narrow, _ = mix_common.build_foreground(plans, config, gap_ms=200)
+        # Narrower gap should produce shorter output
+        assert len(fg_narrow) < len(fg_wide)
+        # Difference should be roughly (600-200)*num_fg_stems ms
+        assert len(fg_wide) - len(fg_narrow) == pytest.approx(800, abs=100)
+
     def test_empty_stems_returns_empty(self, tmp_path, config):
         plans = mix_common.collect_stem_plans(str(tmp_path), {})
         fg, timeline = mix_common.build_foreground(plans, config)

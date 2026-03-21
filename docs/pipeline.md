@@ -1,6 +1,6 @@
 # XILP Pipeline Diagrams
 
-Documentation of the six-stage automated podcast production pipeline for **THE 413**, including the cues sheet ingester pre-processing step.
+Documentation of the eight-stage automated podcast production pipeline for **THE 413**, including the cues sheet ingester pre-processing step, stem migration punch-in workflow, and stale stem cleanup.
 
 ---
 
@@ -56,6 +56,31 @@ flowchart TD
 
     XILU005["XILU005_discover_SFX.py"]
     SFXLIB --> XILU005
+
+    XILU003["XILU003_csv_sfx_join.py"]
+    ANNOT["`📋 parsed/annotated_*.csv
+    Script + SFX/cast metadata joined`"]
+    J --> XILU003
+    SFXCFG --> XILU003
+    C --> XILU003
+    XILU003 --> ANNOT
+
+    P7["XILP007_stem_migrator.py"]
+    JORIG["`📦 parsed/orig_parsed_*.json
+    Previous parsed version`"]
+    MIGR["`stems/<TAG>/*.mp3
+    unchanged stems copied to new seq names`"]
+    JORIG --> P7
+    J --> P7
+    P7 --> MIGR
+
+    P8["XILP008_stale_stem_cleanup.py"]
+    CLEAN["`Delete stale stems
+    seq/type mismatches removed`"]
+    MIGR --> P8
+    J --> P8
+    P8 --> CLEAN
+    CLEAN --> P2
 
     C --> P2
     J --> P2
@@ -242,7 +267,7 @@ Stem file reflects actual playback length
     M->>QG: get_best_model_for_budget
     QG-->>M: eleven_v3 or eleven_flash_v2_5
 
-    loop each dialogue entry from start_from
+    loop each dialogue entry from start_from up to stop_at (inclusive)
         M->>FS: stem file exists?
         alt already on disk
             FS-->>M: skip, no API call
@@ -271,6 +296,10 @@ and seq −1 (INTRO MUSIC)
 
     M-->>User: Generation complete, N new stems
 ```
+
+> **Range control:** `--start-from N` resumes an interrupted run by skipping entries with seq < N.
+> `--stop-at N` halts after seq N (inclusive). Combine them (`--start-from 50 --stop-at 80`) to
+> regenerate a specific scene without touching the rest of the episode.
 
 ---
 
@@ -303,7 +332,8 @@ flowchart TD
     subgraph FG["Foreground Pass — build_foreground()"]
         direction TB
         FG1["`Dialogue + SFX + BEAT stems
-        concatenated with 600ms gaps`"]
+        concatenated with configurable gaps
+        (--gap-ms, default 600ms)`"]
         FG2["`timeline dict
         {seq → start_ms}`"]
         FG1 --> FG2
@@ -335,6 +365,9 @@ flowchart TD
 
 > **Restartability:** XILP003 has no ElevenLabs dependency. Re-running assembly after adjusting
 > effects or adding missing stems requires no API key and carries no TTS quota risk.
+
+> **Runtime control:** `--gap-ms N` sets the silence between foreground stems (default 600ms).
+> With 294 stems in S02E03, reducing to 300ms saves ~1.5 min; to 200ms saves ~2 min.
 
 ---
 
@@ -573,6 +606,11 @@ flowchart TD
 > Audacity 3.7.x does not reliably initialise mod-script-pipe on Windows. The Audacity macro
 > (`--macro`) is the recommended automation path.
 
+> **Auto-save:** Add `--save-aup3` to append a `SaveProject2` command at the end of
+> `{TAG}_open_in_audacity.py`.  This requires mod-script-pipe to be active and will save the
+> project as an `.aup3` file immediately after import.  Only useful when pipe automation is
+> confirmed working; otherwise omit this flag and save manually.
+
 ---
 
 ## 9. XILP006 — Cues Sheet Ingester
@@ -694,7 +732,11 @@ flowchart LR
 
 ```bash
 # 1. Parse script and generate skeleton configs
+python XILP000_script_scanner.py "scripts/<script>.md"          # pre-flight: catch unknown speakers
 python XILP001_script_parser.py "scripts/<script>.md" --episode S02E03
+
+# 1b. (Optional) Review full episode structure before any API spend
+python XILU003_csv_sfx_join.py --episode S02E03                 # annotated CSV: SFX + cast columns
 
 # 2. Ingest cues sheet — enrich sfx config + audit (no API calls yet)
 python XILP006_the413_cues_ingester.py --episode S02E03 \
@@ -726,6 +768,29 @@ python XILP005_the413_daw_export.py --episode S02E03 --macro
 # 7. Inspect asset placement (no audio decode needed with --dry-run)
 python XILP005_the413_daw_export.py --episode S02E03 --dry-run --timeline
 python XILP005_the413_daw_export.py --episode S02E03 --timeline --timeline-html
+```
+
+### 9f. Punch-in run order (script revised after full generation)
+
+```bash
+# 1. Re-parse the revised script (preserves orig_ as the old reference)
+python XILP001_script_parser.py "scripts/<revised>.md" --episode S02E03
+
+# 2. Migrate unchanged stems to new seq-numbered filenames
+python XILP007_stem_migrator.py --episode S02E03 --dry-run   # preview first
+python XILP007_stem_migrator.py --episode S02E03
+
+# 2b. Clean up stale stems left behind by migration
+python XILP008_stale_stem_cleanup.py --episode S02E03 --dry-run  # preview first
+python XILP008_stale_stem_cleanup.py --episode S02E03
+
+# 3. Generate only the gaps (XILP002 skips files already on disk)
+python XILP002_the413_producer.py --episode S02E03 --dry-run
+python XILP002_the413_producer.py --episode S02E03
+
+# 4. Reassemble
+python XILP003_the413_audio_assembly.py --episode S02E03
+python XILP005_the413_daw_export.py --episode S02E03 --macro
 ```
 
 ---
@@ -835,3 +900,152 @@ Script-side directives that end an ambience loop without starting a new one.
 | Effect | Plays file once (no tiling) | Ends loop at cue position |
 | Audio generated | Yes | No |
 | Timeline label | Yes | No |
+
+## 12. XILP007 — Stem Migrator (Punch-In Workflow)
+
+Migrates existing stems when a parsed script is revised. Compares old and
+new parsed JSONs, copies unchanged stems to their new seq-numbered filenames,
+and produces a report of what still needs TTS/SFX generation.  Run XILP002
+afterwards — it skips stems already on disk, so only the gaps get API calls.
+
+### When to use
+
+- Script text corrections after a full TTS run
+- Character renames / speaker reassignments
+- Lines deleted or added (seq numbers shift for the remaining entries)
+- Episode trimming (cutting scenes to meet runtime)
+
+### Workflow
+
+```
+# 1. Edit & re-parse the revised script
+python XILP001_script_parser.py "scripts/<revised>.md" --episode S02E03
+
+# 2. Preview the migration plan (no file changes)
+python XILP007_stem_migrator.py --episode S02E03 --dry-run
+
+# 3. Copy unchanged stems into new seq-numbered filenames
+python XILP007_stem_migrator.py --episode S02E03
+
+# 4. Generate only the missing/changed/new stems
+python XILP002_the413_producer.py --episode S02E03 --dry-run
+python XILP002_the413_producer.py --episode S02E03
+```
+
+### Matching modes
+
+| Mode | Flag | Em-dash / ellipsis variants | Use when |
+|---|---|---|---|
+| Fuzzy (default) | *(omit)* | Treated as identical | Punctuation-only edits |
+| Strict | `--strict` | Must match exactly | Verify every character |
+
+### Status codes
+
+| Code | Meaning | Action needed |
+|---|---|---|
+| `COPY` | Text + speaker unchanged | File copied to new seq name; no TTS |
+| `SPEAKER` | Same text, different speaker | Regen — different voice |
+| `NEW` | No matching old entry | Generate fresh |
+| `MISSING` | Match found, old file absent | Generate fresh |
+| `SKIP` | Section/scene header — no stem | None |
+
+### Two-phase match algorithm
+
+1. **Exact**: `(normalized_text, speaker)` — safe COPY or MISSING
+2. **Text-only fallback** (dialogue only): text matches but speaker differs → `SPEAKER`
+
+The two-phase approach lets the tool distinguish "punctuation edit on same speaker"
+(COPY in fuzzy mode) from "line reassigned to a different character" (SPEAKER).
+
+## 13. XILU003 — CSV Annotation Utility
+
+Read-only utility that joins a parsed episode CSV with the SFX JSON and cast JSON, producing a
+single annotated review spreadsheet.  Useful for verifying that all direction entries have SFX
+config entries, all speakers are assigned voices, and reviewing the full episode structure before
+committing to a TTS run.
+
+```bash
+python XILU003_csv_sfx_join.py --episode S02E03
+python XILU003_csv_sfx_join.py --episode S02E03 --output review/S02E03_annotated.csv
+```
+
+### Inputs / outputs
+
+| File | Default path | Override flag |
+|---|---|---|
+| Input CSV | `parsed/parsed_the413_{TAG}.csv` | `--csv` |
+| SFX config | `sfx_the413_{TAG}.json` | `--sfx` |
+| Cast config | `cast_the413_{TAG}.json` | `--cast` |
+| Output CSV | `parsed/annotated_the413_{TAG}.csv` | `--output` |
+
+### Output columns appended
+
+The output CSV keeps all original parsed columns (`seq`, `type`, `section`, `scene`, `speaker`,
+`direction`, `text`, `direction_type`) and appends:
+
+| Column | Source | Notes |
+|---|---|---|
+| `sfx_prompt` | SFX config `prompt` | Empty for dialogue |
+| `sfx_duration` | SFX config `duration_seconds` | Empty for dialogue / silence |
+| `sfx_type` | SFX config `type` | `sfx` / `silence` / `source` |
+| `cast_full_name` | Cast config `full_name` | Empty for non-dialogue |
+| `cast_voice_id` | Cast config `voice_id` | `TBD` if not yet assigned |
+| `cast_role` | Cast config `role` | Empty if unset |
+
+No API key required — read-only join, no audio generated.
+
+## 14. XILP008 — Stale Stem Cleanup
+
+Removes stale stems left behind after a parsed script revision and stem migration.
+After XILP007 copies unchanged stems to new seq-numbered filenames, old stems whose
+seq numbers now map to a different entry type remain on disk and cause warnings in
+XILP005.  This script finds and deletes them.
+
+### When to use
+
+- After running XILP007 (stem migrator) and before XILP002 (voice generation)
+- When XILP005 reports `[W] Stale stem skipped` warnings
+
+### Stale detection rules
+
+| Condition | Reason |
+|---|---|
+| Parsed entry is a header (`section_header` / `scene_header`) | Header entries never have stems — any stem at that seq is stale |
+| Filename ends with `_sfx` but parsed entry at that seq is `dialogue` | Type mismatch — old SFX stem, now a spoken line |
+| Filename ends with a speaker name but parsed entry is `direction` | Type mismatch — old dialogue stem, now a stage direction |
+| Dialogue stem whose speaker suffix doesn't match the parsed speaker | Speaker mismatch — line reassigned to a different character |
+| Multiple stems share the same seq number | Duplicate — only the one matching the expected basename survives |
+| Seq number not present in the parsed JSON at all | Orphaned stem — entry was deleted or seq range changed |
+
+### Flow
+
+```mermaid
+flowchart TD
+    PARSED["`📦 parsed/parsed_the413_S02E03.json
+    Current parsed script`"]
+    STEMS["`stems/S02E03/*.mp3
+    All stems on disk`"]
+
+    LOAD["`load_entries_index()
+    {seq → entry} dict`"]
+    SCAN["`find_stale_stems()
+    Cross-check filename suffix
+    vs parsed entry type`"]
+
+    PARSED --> LOAD --> SCAN
+    STEMS --> SCAN
+
+    SCAN --> RESULT{"Stale stems found?"}
+    RESULT -->|no| CLEAN["No stale stems — directory is clean"]
+    RESULT -->|yes| MODE{"--dry-run?"}
+    MODE -->|yes| LIST["`List stale stems
+    Show count + reasons`"]
+    MODE -->|no| DELETE["`os.remove() each stale stem
+    Report count deleted`"]
+```
+
+> **Relationship to XILP005 warnings:** Both XILP008 and `collect_stem_plans()` in
+> `mix_common.py` detect stale stems via type mismatch, speaker mismatch, and seq
+> deduplication.  Running XILP008 after migration eliminates the `[W] Stale stem skipped`
+> warnings from XILP005.  XILP008 additionally catches stems whose seq is not present
+> in the parsed JSON at all (orphaned stems), which XILP005 does not warn about.
