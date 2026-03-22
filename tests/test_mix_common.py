@@ -22,6 +22,7 @@ _apply_clip_effects = mix_common._apply_clip_effects
 _volume_pct_to_db = mix_common._volume_pct_to_db
 build_ambience_layer = mix_common.build_ambience_layer
 build_music_layer = mix_common.build_music_layer
+build_sfx_layer = mix_common.build_sfx_layer
 compute_dialogue_labels = mix_common.compute_dialogue_labels
 StemPlan = mix_common.StemPlan
 
@@ -503,15 +504,16 @@ class TestBuildMusicLayerWithVolumeRamp:
 
         _, labels = build_music_layer([plan], timeline, 400, level_db=0)
 
-        assert len(labels[0]) == 6
+        assert len(labels[0]) == 8
         assert labels[0][3] == 0.5   # ramp_in_seconds
         assert labels[0][4] == 1.0   # ramp_out_seconds
         assert labels[0][5] == 75.0  # play_duration
+        assert labels[0][7] is None  # volume_pct (not set)
 
 
 class TestAmbienceLabelRampData:
     def test_ambience_labels_include_ramp_data(self, tmp_path):
-        """Ambience labels should be 5-tuples carrying ramp data."""
+        """Ambience labels should be 8-tuples carrying ramp and volume data."""
         mp3_path = str(tmp_path / "amb.mp3")
         _write_mp3(mp3_path, duration_ms=200)
         plan = _make_plan(1, mp3_path, "AMBIENCE",
@@ -520,9 +522,10 @@ class TestAmbienceLabelRampData:
 
         _, labels = build_ambience_layer([plan], timeline, 400, level_db=0)
 
-        assert len(labels[0]) == 5
+        assert len(labels[0]) == 8
         assert labels[0][3] == 0.5   # ramp_in_seconds
         assert labels[0][4] == 1.5   # ramp_out_seconds
+        assert labels[0][7] is None  # volume_pct (not set)
 
     def test_ambience_labels_none_ramp_when_not_set(self, tmp_path):
         """Ambience labels carry None for ramp when plan has no ramp values."""
@@ -599,3 +602,105 @@ class TestComputeDialogueLabelsSnippet:
         assert tup[3] is None  # ramp_in
         assert tup[4] is None  # ramp_out
         assert tup[5] is None  # play_duration
+
+
+# ─── Tests: SFX volume_percentage support ───
+
+
+class TestSfxVolumePercentage:
+    def test_sfx_plan_gets_category_default(self, tmp_path):
+        """SFX stems should pick up sfx_volume_percentage from defaults."""
+        stem = tmp_path / "007_cold-open_sfx.mp3"
+        _write_mp3(str(stem))
+        index = {7: {"seq": 7, "type": "direction", "direction_type": "SFX", "text": "SFX: BANG"}}
+        sfx_config = _make_sfx_config(sfx_volume_percentage=60)
+
+        plans = collect_stem_plans(str(tmp_path), index, sfx_config=sfx_config)
+
+        assert len(plans) == 1
+        assert plans[0].volume_percentage == 60
+
+    def test_sfx_per_effect_override(self, tmp_path):
+        """Per-effect volume_percentage should override the category default."""
+        stem = tmp_path / "007_cold-open_sfx.mp3"
+        _write_mp3(str(stem))
+        index = {7: {"seq": 7, "type": "direction", "direction_type": "SFX", "text": "SFX: BANG"}}
+        sfx_config = SfxConfiguration(
+            show="THE 413", episode=1,
+            defaults={"sfx_volume_percentage": 60},
+            effects={
+                "SFX: BANG": {
+                    "prompt": "Loud bang",
+                    "duration_seconds": 1.0,
+                    "volume_percentage": 30.0,
+                },
+            },
+        )
+
+        plans = collect_stem_plans(str(tmp_path), index, sfx_config=sfx_config)
+
+        assert plans[0].volume_percentage == 30.0
+
+    def test_sfx_no_default_no_effect_gives_none(self, tmp_path):
+        """SFX with no defaults and no per-effect config should get None."""
+        stem = tmp_path / "007_cold-open_sfx.mp3"
+        _write_mp3(str(stem))
+        index = {7: {"seq": 7, "type": "direction", "direction_type": "SFX", "text": "SFX: BANG"}}
+        sfx_config = _make_sfx_config()  # no sfx_volume_percentage
+
+        plans = collect_stem_plans(str(tmp_path), index, sfx_config=sfx_config)
+
+        assert plans[0].volume_percentage is None
+
+    def test_beat_plan_gets_sfx_category_default(self, tmp_path):
+        """BEAT stems should also pick up sfx_volume_percentage."""
+        stem = tmp_path / "008_cold-open_sfx.mp3"
+        _write_mp3(str(stem))
+        index = {8: {"seq": 8, "type": "direction", "direction_type": "BEAT", "text": "BEAT"}}
+        sfx_config = _make_sfx_config(sfx_volume_percentage=50)
+
+        plans = collect_stem_plans(str(tmp_path), index, sfx_config=sfx_config)
+
+        assert plans[0].volume_percentage == 50
+
+    def test_build_sfx_layer_applies_volume(self, tmp_path):
+        """build_sfx_layer should apply volume_percentage to the overlaid segment."""
+        mp3_path = str(tmp_path / "sfx.mp3")
+        _write_mp3(mp3_path, duration_ms=200)
+        plan = _make_plan(1, mp3_path, "SFX", volume_percentage=20.0)
+        timeline = {1: 0}
+        total_ms = 400
+
+        layer, labels = build_sfx_layer([plan], timeline, total_ms)
+
+        assert len(layer) == total_ms
+        assert len(labels) == 1
+        # With 20% volume the output should be quieter than the raw clip
+        raw_clip = AudioSegment.from_file(mp3_path)
+        # Sample the layer at the position where the SFX was placed
+        sfx_region = layer[:200]
+        assert sfx_region.dBFS < raw_clip.dBFS - 5
+
+    def test_emdash_key_matches_hyphen_text(self, tmp_path):
+        """SFX config with em-dash key should match parsed text with hyphen."""
+        stem = tmp_path / "007_cold-open_sfx.mp3"
+        _write_mp3(str(stem))
+        # Parsed text uses plain hyphen
+        index = {7: {"seq": 7, "type": "direction", "direction_type": "SFX",
+                      "text": "SFX: PHONE BUZZING - DIFFERENT TONE"}}
+        # Config key uses em-dash
+        sfx_config = SfxConfiguration(
+            show="THE 413", episode=1,
+            defaults={},
+            effects={
+                "SFX: PHONE BUZZING \u2014 DIFFERENT TONE": {
+                    "prompt": "Phone buzzing",
+                    "duration_seconds": 5.0,
+                    "volume_percentage": 50.0,
+                },
+            },
+        )
+
+        plans = collect_stem_plans(str(tmp_path), index, sfx_config=sfx_config)
+
+        assert plans[0].volume_percentage == 50.0

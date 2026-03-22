@@ -1445,3 +1445,79 @@ class TestS02E03Fixtures:
 
     def test_mixed_divider_not_recognized(self):
         assert parser.is_divider("-==-") is False
+
+
+# ─── Tests: compute_speaker_stats ───
+
+class TestComputeSpeakerStats:
+    @pytest.fixture
+    def parsed(self, tmp_path):
+        script_file = tmp_path / "script.md"
+        script_file.write_text(MINIMAL_SCRIPT, encoding="utf-8")
+        return parser.parse_script(str(script_file))
+
+    def test_returns_list_of_dicts(self, parsed):
+        stats = parser.compute_speaker_stats(parsed)
+        assert isinstance(stats, list)
+        assert all(isinstance(r, dict) for r in stats)
+
+    def test_all_speakers_present(self, parsed):
+        stats = parser.compute_speaker_stats(parsed)
+        speakers = {r["speaker"] for r in stats}
+        assert "adam" in speakers
+        assert "dez" in speakers
+
+    def test_has_required_keys(self, parsed):
+        stats = parser.compute_speaker_stats(parsed)
+        for r in stats:
+            assert "speaker" in r
+            assert "lines" in r
+            assert "words" in r
+            assert "chars" in r
+            assert "pct_lines" in r
+            assert "pct_words" in r
+            assert "pct_chars" in r
+
+    def test_percentages_sum_to_100(self, parsed):
+        stats = parser.compute_speaker_stats(parsed)
+        assert abs(sum(r["pct_lines"] for r in stats) - 100.0) < 0.5
+        assert abs(sum(r["pct_words"] for r in stats) - 100.0) < 0.5
+        assert abs(sum(r["pct_chars"] for r in stats) - 100.0) < 0.5
+
+    def test_sorted_by_lines_descending(self, parsed):
+        stats = parser.compute_speaker_stats(parsed)
+        lines = [r["lines"] for r in stats]
+        assert lines == sorted(lines, reverse=True)
+
+    def test_word_count_is_positive(self, parsed):
+        stats = parser.compute_speaker_stats(parsed)
+        for r in stats:
+            if r["lines"] > 0:
+                assert r["words"] > 0
+
+
+class TestPrintSpeakerStats:
+    @pytest.fixture
+    def parsed(self, tmp_path):
+        script_file = tmp_path / "script.md"
+        script_file.write_text(MINIMAL_SCRIPT, encoding="utf-8")
+        return parser.parse_script(str(script_file))
+
+    def test_prints_header_and_speakers(self, parsed, capsys):
+        parser.print_speaker_stats(parsed)
+        out = capsys.readouterr().out
+        assert "Speaker" in out
+        assert "Lines" in out
+        assert "Words" in out
+        assert "Chars" in out
+        assert "adam" in out
+
+    def test_prints_total_row(self, parsed, capsys):
+        parser.print_speaker_stats(parsed)
+        out = capsys.readouterr().out
+        assert "TOTAL" in out
+
+    def test_prints_percentages(self, parsed, capsys):
+        parser.print_speaker_stats(parsed)
+        out = capsys.readouterr().out
+        assert "%" in out

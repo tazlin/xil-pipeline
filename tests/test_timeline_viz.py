@@ -515,7 +515,7 @@ class TestComputeMusicLabelsPlayDuration:
         assert (end_s - start_s) > 1.5
 
     def test_music_labels_include_ramp_and_play_duration(self, tmp_path):
-        """compute_music_labels should return 6-tuples with ramp and play_duration data."""
+        """compute_music_labels should return 8-tuples with ramp, play_duration, and volume data."""
         p = tmp_path / "005_act-one_sfx.mp3"
         _write_mp3(p, 1000)
 
@@ -527,7 +527,55 @@ class TestComputeMusicLabelsPlayDuration:
         timeline = {5: 0}
 
         labels = compute_music_labels([plan], timeline, 10000)
-        assert len(labels[0]) == 6
+        assert len(labels[0]) == 8
         assert labels[0][3] == 0.5
         assert labels[0][4] == 1.0
         assert labels[0][5] == 60.0
+        assert labels[0][7] is None  # volume_pct (not set)
+
+
+class TestVolumePercentageInTimeline:
+    def test_volume_pct_populates_from_8_tuple(self):
+        """An 8-tuple label should populate volume_pct on the LayerSpan."""
+        data = build_timeline_data(
+            tag="TEST", total_s=10.0,
+            dlg_labels=[], amb_labels=[],
+            mus_labels=[(0.0, 5.0, "MUSIC: THEME", 0.5, 1.0, 75.0, None, 60.0)],
+            sfx_labels=[(0.0, 1.0, "SFX: BANG", None, None, None, None, 30.0)],
+        )
+        assert data.layers["music"][0].volume_pct == 60.0
+        assert data.layers["sfx"][0].volume_pct == 30.0
+
+    def test_volume_pct_none_when_absent(self):
+        """A 3-tuple label should give volume_pct=None."""
+        data = build_timeline_data(
+            tag="TEST", total_s=10.0,
+            dlg_labels=[(0.0, 2.0, "ADAM")],
+            amb_labels=[], mus_labels=[], sfx_labels=[],
+        )
+        assert data.layers["dialogue"][0].volume_pct is None
+
+    def test_volume_pct_in_html_json(self, tmp_path):
+        """volume_pct should appear in the embedded JSON data."""
+        data = build_timeline_data(
+            tag="TEST", total_s=10.0,
+            dlg_labels=[], amb_labels=[],
+            mus_labels=[(0.0, 5.0, "THEME", None, None, None, None, 80.0)],
+            sfx_labels=[],
+        )
+        out = str(tmp_path / "test.html")
+        render_html_timeline(data, out)
+        html = open(out).read()
+        assert '"volume_pct": 80.0' in html
+
+    def test_volume_pct_tooltip_text_in_html(self, tmp_path):
+        """The JS tooltip code should reference volume_pct."""
+        data = build_timeline_data(
+            tag="TEST", total_s=10.0,
+            dlg_labels=[], amb_labels=[], mus_labels=[], sfx_labels=[],
+        )
+        out = str(tmp_path / "test.html")
+        render_html_timeline(data, out)
+        html = open(out).read()
+        assert "volume_pct" in html
+        assert "vol:" in html

@@ -626,11 +626,80 @@ def parse_script(filepath: str, debug_output: str | None = None) -> dict:
     return parsed.model_dump()
 
 
+def compute_speaker_stats(parsed: dict) -> list[dict]:
+    """Compute per-speaker dialogue distribution.
+
+    Args:
+        parsed: Output dictionary from ``parse_script()``.
+
+    Returns:
+        List of dicts sorted by lines descending, each with keys:
+        ``speaker``, ``lines``, ``words``, ``chars``, ``pct_lines``,
+        ``pct_words``, ``pct_chars``.
+    """
+    dialogue_entries = [e for e in parsed["entries"] if e["type"] == "dialogue"]
+    accum: dict[str, dict] = {}
+    for e in dialogue_entries:
+        sp = e["speaker"]
+        if sp not in accum:
+            accum[sp] = {"lines": 0, "words": 0, "chars": 0}
+        accum[sp]["lines"] += 1
+        accum[sp]["words"] += len(e["text"].split())
+        accum[sp]["chars"] += len(e["text"])
+
+    total_lines = sum(s["lines"] for s in accum.values()) or 1
+    total_words = sum(s["words"] for s in accum.values()) or 1
+    total_chars = sum(s["chars"] for s in accum.values()) or 1
+
+    result = []
+    for sp, s in accum.items():
+        result.append({
+            "speaker": sp,
+            "lines": s["lines"],
+            "words": s["words"],
+            "chars": s["chars"],
+            "pct_lines": round(s["lines"] / total_lines * 100, 1),
+            "pct_words": round(s["words"] / total_words * 100, 1),
+            "pct_chars": round(s["chars"] / total_chars * 100, 1),
+        })
+    result.sort(key=lambda x: x["lines"], reverse=True)
+    return result
+
+
+def print_speaker_stats(parsed: dict) -> None:
+    """Print per-speaker dialogue distribution table.
+
+    Shows lines, words, characters, and percentage share for each speaker,
+    sorted by number of lines descending.
+
+    Args:
+        parsed: Output dictionary from ``parse_script()``.
+    """
+    rows = compute_speaker_stats(parsed)
+    if not rows:
+        print("  No dialogue entries found.")
+        return
+
+    total_lines = sum(r["lines"] for r in rows)
+    total_words = sum(r["words"] for r in rows)
+    total_chars = sum(r["chars"] for r in rows)
+
+    print(f"\n{'Speaker':<15} {'Lines':>6} {'%':>6} {'Words':>7} {'%':>6} {'Chars':>8} {'%':>6}")
+    print(f"{'-'*15} {'-'*6} {'-'*6} {'-'*7} {'-'*6} {'-'*8} {'-'*6}")
+    for r in rows:
+        print(f"{r['speaker']:<15} {r['lines']:>6} {r['pct_lines']:>5.1f}%"
+              f" {r['words']:>7,} {r['pct_words']:>5.1f}%"
+              f" {r['chars']:>8,} {r['pct_chars']:>5.1f}%")
+    print(f"{'-'*15} {'-'*6} {'-'*6} {'-'*7} {'-'*6} {'-'*8} {'-'*6}")
+    print(f"{'TOTAL':<15} {total_lines:>6}        {total_words:>7,}        {total_chars:>8,}")
+    print()
+
+
 def print_summary(parsed: dict) -> None:
     """Print a human-readable summary of the parsed script.
 
     Displays show metadata, entry counts, TTS character budget,
-    and a per-speaker breakdown of lines and characters.
+    and a per-speaker breakdown of lines, words, and characters.
 
     Args:
         parsed: Output dictionary from ``parse_script()``.
@@ -647,24 +716,9 @@ def print_summary(parsed: dict) -> None:
     print(f"  TTS characters:     {stats['characters_for_tts']:,}")
     print(f"  Speakers:           {', '.join(stats['speakers'])}")
     print(f"  Sections:           {', '.join(stats['sections'])}")
-    print(f"{'='*60}\n")
+    print(f"{'='*60}")
 
-    # Per-speaker breakdown
-    dialogue_entries = [e for e in parsed["entries"] if e["type"] == "dialogue"]
-    speaker_stats = {}
-    for e in dialogue_entries:
-        sp = e["speaker"]
-        if sp not in speaker_stats:
-            speaker_stats[sp] = {"lines": 0, "chars": 0}
-        speaker_stats[sp]["lines"] += 1
-        speaker_stats[sp]["chars"] += len(e["text"])
-
-    print(f"{'Speaker':<15} {'Lines':>6} {'Chars':>8}")
-    print(f"{'-'*15} {'-'*6} {'-'*8}")
-    for sp in sorted(speaker_stats.keys()):
-        s = speaker_stats[sp]
-        print(f"{sp:<15} {s['lines']:>6} {s['chars']:>8,}")
-    print()
+    print_speaker_stats(parsed)
 
 
 def print_dialogue_preview(parsed: dict, limit: int | None = None) -> None:
@@ -821,6 +875,8 @@ def main() -> None:
                             help="Only output JSON, skip summary/preview")
         parser.add_argument("--debug", action="store_true",
                             help="Write diagnostic CSV alongside JSON output")
+        parser.add_argument("--stats", action="store_true",
+                            help="Print per-speaker dialogue distribution (lines, words, chars, %%)")
         args = parser.parse_args()
 
         # Parse first so we can derive the output path from metadata
@@ -856,6 +912,10 @@ def main() -> None:
             print(f"JSON written to: {args.output}")
             if args.debug:
                 print(f"Debug CSV written to: {os.path.splitext(args.output)[0]}.csv")
+
+        if args.stats and args.quiet:
+            # --stats with --quiet: show only the speaker table
+            print_speaker_stats(parsed)
 
         # Auto-generate cast/sfx configs if --episode provided and files absent
         if args.episode:

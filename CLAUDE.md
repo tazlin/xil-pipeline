@@ -29,7 +29,7 @@ python XILP000_script_scanner.py "scripts/<script>.md" --json
 - Imports XILP001's pure functions directly — no duplicated logic
 - `--json` outputs machine-readable scan results
 
-## Architecture: Eight-Stage Pipeline (+ Cues Ingester Pre-Processing)
+## Architecture: Nine-Stage Pipeline (+ Cues Ingester Pre-Processing)
 
 ### Stage 1: Script Parsing
 `XILP001_script_parser.py` — Parses markdown production scripts into structured JSON.
@@ -206,6 +206,31 @@ python XILP008_stale_stem_cleanup.py \
 - Uses `extract_seq()` and `load_entries_index()` from `mix_common.py`
 - No ElevenLabs API key required — no API calls made
 
+### Stage 8: Studio Export Import
+`XILP010_studio_import.py` — Extracts dialogue and direction stems from an ElevenLabs Studio export ZIP and renames them to the pipeline's stem naming convention.
+
+```bash
+python XILP010_studio_import.py --episode S02E02 --zip "ElevenLabs_exports/export.zip" --dry-run
+python XILP010_studio_import.py --episode S02E02 --zip "ElevenLabs_exports/export.zip"
+python XILP010_studio_import.py --episode S02E02 --zip "ElevenLabs_exports/export.zip" --gen-sfx --gen-music --gen-beats
+python XILP010_studio_import.py --episode S02E02 --zip "ElevenLabs_exports/export.zip" --all --force
+```
+
+- `--episode TAG` (required) derives parsed JSON path and stems output directory
+- `--zip PATH` (required) path to the ElevenLabs Studio export ZIP
+- `--parsed PATH` overrides parsed JSON path (default: `parsed/parsed_the413_{TAG}.json`)
+- `--stems-dir PATH` overrides stems output directory (default: `stems/{TAG}`)
+- `--dry-run` — shows extraction plan without writing files
+- `--force` — overwrites existing stems on disk (default: skip if exists)
+- `--gen-sfx` — include SFX direction entries (extracted as `_sfx` stems)
+- `--gen-music` — include MUSIC direction entries (extracted as `_sfx` stems)
+- `--gen-beats` — include BEAT direction entries (extracted as `_sfx` stems)
+- `--all` — include all direction types (SFX, MUSIC, BEAT, AMBIENCE); headers are always skipped
+- Dialogue entries are always extracted; direction entries require one of the `--gen-*` or `--all` flags
+- ElevenLabs Studio exports one MP3 per parsed entry (`NNN_Chapter N.mp3`)
+- Reuses `make_stem_name()` from XILP007 for canonical stem filename generation
+- No ElevenLabs API key required — no API calls made
+
 ## ElevenLabs API Cost Controls
 
 Every script that calls the API includes three guard functions (duplicated per file, not shared):
@@ -232,7 +257,9 @@ Scripts use prefix `XIL` (ElevenLabs, avoiding numeric prefixes). The suffix pat
 - `XILP006_*` — cues sheet ingester (cues markdown → SFX library + sfx config enrichment)
 - `XILP007_*` — stem migrator (diff old vs new parsed JSON, copy unchanged stems, report what needs regen)
 - `XILP008_*` — stale stem cleanup (delete stems whose seq no longer matches the current parsed JSON)
-- `mix_common.py` — shared mixing utilities (timeline, layer builders, fast label helpers) used by XILP003 and XILP005; `StemPlan.loop` field: `True` (default) tiles audio, `False` plays once up to scene boundary; `StemPlan.pre_trimmed` flag: skips play_duration trim for source-based stems already trimmed at copy time; `StemPlan.volume_percentage` (float|None): volume as a percentage (100 = unity, None = no change); `StemPlan.ramp_in_seconds` / `StemPlan.ramp_out_seconds`: fade durations in seconds (None = no fade); `collect_stem_plans()` skips stale stems (header entries, type mismatch, speaker mismatch), deduplicates by seq number, and injects synthetic stop-marker `StemPlan` entries (filepath="") for `AMBIENCE: STOP` and `AMBIENCE: * FADES OUT` directives found in the entries index; `build_ambience_layer()` skips corrupt or unreadable stem files with a warning rather than crashing
+- `XILP009_*` — reverse script generator (parsed JSON → production script markdown)
+- `XILP010_*` — Studio export importer (ElevenLabs Studio ZIP → pipeline stems)
+- `mix_common.py` — shared mixing utilities (timeline, layer builders, fast label helpers) used by XILP003 and XILP005; `StemPlan.loop` field: `True` (default) tiles audio, `False` plays once up to scene boundary; `StemPlan.pre_trimmed` flag: skips play_duration trim for source-based stems already trimmed at copy time; `StemPlan.volume_percentage` (float|None): volume as a percentage (100 = unity, None = no change); `StemPlan.ramp_in_seconds` / `StemPlan.ramp_out_seconds`: fade durations in seconds (None = no fade); `_resolve_audio_params()` resolves volume/ramp from per-effect config or category defaults for MUSIC, AMBIENCE, SFX, and BEAT direction types; `collect_stem_plans()` skips stale stems (header entries, type mismatch, speaker mismatch), deduplicates by seq number, and injects synthetic stop-marker `StemPlan` entries (filepath="") for `AMBIENCE: STOP` and `AMBIENCE: * FADES OUT` directives found in the entries index; `build_sfx_layer()` and `build_foreground()` apply `volume_percentage` to SFX/BEAT stems; `build_ambience_layer()` skips corrupt or unreadable stem files with a warning rather than crashing
 - `sfx_common.py` — shared SFX library management, ID3 tagging (`tag_mp3`, `tag_wav`), effect generation; `ensure_shared_asset()` retries on 429 rate-limit errors (up to 5 times, linear backoff); `load_sfx_entries()` accepts `direction_types` filter set, returns `direction_type` field in each entry dict, skips entries with `duration_seconds=0.0`; `dry_run_sfx()` shows per-category credit subtotals in the SUMMARY block
 - `timeline_viz.py` — multitrack timeline visualization; `render_terminal_timeline()` (ASCII) and `render_html_timeline()` (interactive HTML); no pydub dependency
 
@@ -292,6 +319,7 @@ Legacy single-string `"text"` field still works as a fallback for un-migrated ep
 - `type: "sfx"` (default) entries call `client.text_to_sound_effects.convert()` with the `prompt`
 - `type: "silence"` entries (BEAT/LONG BEAT) generate local silent audio — no API call
 - `loop: false` entries play the audio file once up to the scene boundary (no tiling); `loop: true` (default) tiles the file to fill the full scene duration
+- `volume_percentage` — per-effect volume as a percentage (100 = unity, 50 = half volume); applies to SFX, BEAT, MUSIC, and AMBIENCE entries; overrides the category default (`sfx_volume_percentage`, `music_volume_percentage`, `ambience_volume_percentage`) in the `defaults` block
 - `play_duration` — percentage of file to play (e.g. `45` = play 45% of file duration); for INTRO MUSIC, the trim is applied when copying to the stem file so all downstream tools see the correct duration
 - Stop markers: `AMBIENCE: STOP` and `AMBIENCE: * FADES OUT` entries use `type: "silence", duration_seconds: 0.0`; they inject a boundary marker into the mixing timeline without generating audio
 - SFX stems use `_sfx` suffix: `002_cold-open_sfx.mp3`

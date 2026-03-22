@@ -19,6 +19,7 @@ import glob
 import json
 import math
 import os
+import re
 from dataclasses import dataclass, field
 
 from pydub import AudioSegment
@@ -157,6 +158,29 @@ def _apply_clip_effects(
     return clip
 
 
+def _normalize_effect_key(text: str) -> str:
+    """Normalize em-dashes to plain hyphens for effect key matching."""
+    return re.sub(r"\s*\u2014\s*", " - ", text)
+
+
+def _find_effect_entry(sfx_config, text: str):
+    """Look up an effect entry by text, with em-dash normalization fallback.
+
+    Tries exact match first; if that fails, normalizes both sides
+    (em-dash → hyphen) and scans.  Returns the matched entry or ``None``.
+    """
+    if not text:
+        return None
+    entry = sfx_config.effects.get(text)
+    if entry is not None:
+        return entry
+    norm = _normalize_effect_key(text)
+    for k, v in sfx_config.effects.items():
+        if _normalize_effect_key(k) == norm:
+            return v
+    return None
+
+
 def _resolve_audio_params(
     plan: "StemPlan",
     sfx_config,
@@ -172,11 +196,22 @@ def _resolve_audio_params(
         each ``None`` if no value is configured. ``play_duration`` is only resolved
         for MUSIC entries (not AMBIENCE).
     """
-    if sfx_config is None or plan.direction_type not in ("MUSIC", "AMBIENCE"):
+    if sfx_config is None:
         return None, None, None, None
-    prefix = "music" if plan.direction_type == "MUSIC" else "ambience"
     defaults = sfx_config.defaults
-    entry = sfx_config.effects.get(plan.text or "")
+    entry = _find_effect_entry(sfx_config, plan.text or "")
+    # Determine category prefix for defaults lookup
+    prefix_map = {
+        "MUSIC": "music",
+        "AMBIENCE": "ambience",
+        "SFX": "sfx",
+        "BEAT": "sfx",
+    }
+    prefix = prefix_map.get(plan.direction_type)
+    if prefix is None:
+        # Dialogue and other non-effect types — only per-effect volume applies
+        vol = entry.volume_percentage if entry and entry.volume_percentage is not None else None
+        return vol, None, None, None
     vol = (
         entry.volume_percentage
         if entry and entry.volume_percentage is not None
@@ -278,8 +313,8 @@ def collect_stem_plans(
 
         plan.play_duration = pd
         # Source-based stems are pre-trimmed by XILP002; don't trim again at mix time
-        if sfx_config and plan.text and plan.text in sfx_config.effects:
-            src_entry = sfx_config.effects[plan.text]
+        src_entry = _find_effect_entry(sfx_config, plan.text) if sfx_config else None
+        if src_entry is not None:
             if src_entry.source is not None and pd is not None:
                 plan.pre_trimmed = True
             if src_entry.loop is False:
@@ -379,6 +414,10 @@ def build_foreground(
             continue
 
         segment = AudioSegment.from_file(plan.filepath)
+
+        # Apply volume_percentage to SFX/BEAT stems in the foreground.
+        if plan.direction_type in ("SFX", "BEAT") and plan.volume_percentage is not None:
+            segment = segment + _volume_pct_to_db(plan.volume_percentage)
 
         # Apply per-speaker effects to dialogue stems.
         basename = os.path.splitext(os.path.basename(plan.filepath))[0]
@@ -491,6 +530,7 @@ def build_ambience_layer(
         labels.append((
             start_ms / 1000.0, end_ms / 1000.0, label_text,
             plan.ramp_in_seconds, plan.ramp_out_seconds,
+            None, None, plan.volume_percentage,
         ))
 
     return layer, labels
@@ -540,6 +580,7 @@ def build_music_layer(
         labels.append((
             start_ms / 1000.0, (start_ms + len(clip)) / 1000.0, label_text,
             plan.ramp_in_seconds, plan.ramp_out_seconds, plan.play_duration,
+            None, plan.volume_percentage,
         ))
     return layer, labels
 
@@ -723,6 +764,7 @@ def compute_ambience_labels(
         labels.append((
             start_ms / 1000.0, end_ms / 1000.0, label_text,
             plan.ramp_in_seconds, plan.ramp_out_seconds,
+            None, None, plan.volume_percentage,
         ))
 
     return labels
@@ -757,6 +799,7 @@ def compute_music_labels(
         labels.append((
             start_ms / 1000.0, (start_ms + duration) / 1000.0, label_text,
             plan.ramp_in_seconds, plan.ramp_out_seconds, plan.play_duration,
+            None, plan.volume_percentage,
         ))
     return labels
 
@@ -783,7 +826,10 @@ def compute_sfx_labels(
         start_ms = timeline.get(plan.seq, 0)
         duration = _mp3_duration_ms(plan.filepath)
         label_text = plan.text or plan.direction_type or "SFX"
-        labels.append((start_ms / 1000.0, (start_ms + duration) / 1000.0, label_text))
+        labels.append((
+            start_ms / 1000.0, (start_ms + duration) / 1000.0, label_text,
+            None, None, None, None, plan.volume_percentage,
+        ))
     return labels
 
 
@@ -815,7 +861,12 @@ def build_sfx_layer(
             continue
         start_ms = timeline.get(plan.seq, 0)
         segment = AudioSegment.from_file(plan.filepath)
+        if plan.volume_percentage is not None:
+            segment = segment + _volume_pct_to_db(plan.volume_percentage)
         layer = layer.overlay(segment, position=start_ms)
         label_text = plan.text or plan.direction_type or "SFX"
-        labels.append((start_ms / 1000.0, (start_ms + len(segment)) / 1000.0, label_text))
+        labels.append((
+            start_ms / 1000.0, (start_ms + len(segment)) / 1000.0, label_text,
+            None, None, None, None, plan.volume_percentage,
+        ))
     return layer, labels

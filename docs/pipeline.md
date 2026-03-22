@@ -1049,3 +1049,89 @@ flowchart TD
 > deduplication.  Running XILP008 after migration eliminates the `[W] Stale stem skipped`
 > warnings from XILP005.  XILP008 additionally catches stems whose seq is not present
 > in the parsed JSON at all (orphaned stems), which XILP005 does not warn about.
+
+## 15. XILP009 — Reverse Script Generator
+
+Reconstructs a readable markdown production script from a parsed JSON, using cast config
+for speaker display names.  Serves as a verification tool and produces a clean "revised"
+version reflecting any post-parse edits.
+
+```bash
+python XILP009_script_regenerator.py --episode S02E03
+python XILP009_script_regenerator.py --episode S02E03 --output scripts/revised_S02E03.md
+```
+
+### Flow
+
+```mermaid
+flowchart TD
+    PARSED["`📦 parsed/parsed_the413_S02E03.json
+    Entries with seq, type, speaker, text`"]
+    CAST["`📋 cast_the413_S02E03.json
+    Speaker key → display name`"]
+
+    LOAD["`Load parsed JSON + cast config
+    Build reverse mappings from XILP001`"]
+    FILTER["`Filter entries
+    Skip preamble (seq < 0)
+    Skip postamble`"]
+    EMIT["`Emit markdown
+    section_header → ## HEADER
+    scene_header → ## SCENE N: ...
+    direction → [TEXT]
+    dialogue → SPEAKER (dir) + text`"]
+    DIVIDER["`Insert === dividers
+    Before first entry after headers`"]
+
+    PARSED --> LOAD
+    CAST --> LOAD
+    LOAD --> FILTER --> EMIT
+    EMIT --> DIVIDER
+    DIVIDER --> OUTPUT["`📄 scripts/revised_the413_S02E03.md
+    Reconstructed production script`"]
+```
+
+> **Round-trip verification:** Parse the regenerated script with XILP001 and compare
+> entry counts against the original parsed JSON.  Dialogue and direction counts should
+> match exactly (excluding preamble/postamble entries injected by XILP002).
+>
+> **No API key required** — read-only transformation, no audio generated.
+
+## 16. XILP010 — Studio Export Importer
+
+Extracts dialogue stems from an ElevenLabs Studio export ZIP and renames them to the pipeline's stem naming convention (`{seq:03d}_{section}[-{scene}]_{speaker}.mp3`).
+
+This provides an alternative to XILP002 voice generation: instead of calling the ElevenLabs TTS API per-line, an entire episode can be generated via ElevenLabs Studio (onboarded by XILP004), exported as a ZIP, and imported back into the pipeline with correct filenames.
+
+```bash
+python XILP010_studio_import.py --episode S02E02 \
+    --zip "ElevenLabs_exports/ElevenLabs_Working_with_Gen_S02E02_What_We_Carry_!.zip" --dry-run
+python XILP010_studio_import.py --episode S02E02 \
+    --zip "ElevenLabs_exports/ElevenLabs_Working_with_Gen_S02E02_What_We_Carry_!.zip"
+```
+
+### Data flow
+
+```mermaid
+flowchart TD
+    ZIP["`📦 ElevenLabs Studio ZIP
+    NNN_Chapter N.mp3 per entry`"]
+    PARSED["`📄 parsed/parsed_the413_S02E02.json
+    seq → type, section, scene, speaker`"]
+    FILTER{"`Filter by type
+    dialogue → extract
+    direction → skip (or --all)
+    header → always skip`"}
+    RENAME["`Rename via make_stem_name()
+    NNN_Chapter N.mp3 →
+    {seq}_{section}[-{scene}]_{speaker}.mp3`"]
+    STEMS["`📂 stems/S02E02/
+    Pipeline-ready dialogue stems`"]
+
+    ZIP --> FILTER
+    PARSED --> FILTER
+    FILTER --> RENAME --> STEMS
+```
+
+> **No API key required** — extraction only, no API calls made.
+> After import, run XILU002 for SFX stems and XILP002 for preamble/postamble injection.

@@ -1,0 +1,182 @@
+"""XILP009 — Reverse Script Generator.
+
+Reconstructs a readable markdown production script from a parsed JSON,
+using cast config for speaker display names.  Produces a clean "revised"
+version that reflects any post-parse edits (speaker reassignments,
+section changes, direction_type reclassifications, etc.).
+"""
+
+import argparse
+import json
+import os
+import sys
+
+from XILP001_script_parser import SPEAKER_KEYS, SECTION_MAP
+from sfx_common import run_banner
+
+SCRIPT_NAME = os.path.basename(__file__)
+
+# Reverse mappings — prefer canonical display forms
+# For sections with multiple aliases (e.g. "ACT 1" and "ACT ONE"), prefer the
+# word form by picking the longest key for each slug.
+_SECTION_SLUG_TO_DISPLAY: dict[str, str] = {}
+for display, slug in sorted(SECTION_MAP.items(), key=lambda kv: len(kv[0])):
+    _SECTION_SLUG_TO_DISPLAY[slug] = display
+
+# For speakers, prefer the canonical short form (first entry per key value).
+_SPEAKER_KEY_TO_DISPLAY: dict[str, str] = {}
+for display, key in SPEAKER_KEYS.items():
+    if key not in _SPEAKER_KEY_TO_DISPLAY:
+        _SPEAKER_KEY_TO_DISPLAY[key] = display
+
+
+def section_display_name(slug: str) -> str:
+    """Convert a section slug back to its display header text."""
+    return _SECTION_SLUG_TO_DISPLAY.get(slug, slug.upper().replace("-", " "))
+
+
+def speaker_display_name(key: str) -> str:
+    """Convert a speaker key back to its display name."""
+    return _SPEAKER_KEY_TO_DISPLAY.get(key, key.upper())
+
+
+def regenerate_script(parsed: dict, cast: dict | None = None) -> str:
+    """Regenerate a markdown production script from parsed JSON.
+
+    Args:
+        parsed: The full parsed script dict (with metadata and entries).
+        cast: Optional cast config dict for full_name lookups.
+
+    Returns:
+        The reconstructed markdown script as a string.
+    """
+    show = parsed.get("show", "THE 413")
+    season = parsed.get("season")
+    episode = parsed.get("episode", 1)
+    title = parsed.get("title", "")
+    season_title = parsed.get("season_title", "")
+
+    lines: list[str] = []
+
+    # Header line
+    header = f"# {show}"
+    if season is not None:
+        header += f" Season {season}:"
+    header += f" Episode {episode}:"
+    if title:
+        header += f' "{title}"'
+    if season_title:
+        header += f' Arc: "{season_title}"'
+    lines.append(header)
+    lines.append("")
+
+    entries = parsed.get("entries", [])
+
+    # Filter out preamble/postamble (injected by XILP002, not in original script)
+    entries = [e for e in entries if e.get("seq", 0) >= 1
+               and e.get("section") != "postamble"]
+
+    prev_type = None
+    after_header = False
+
+    for entry in entries:
+        entry_type = entry.get("type")
+        text = entry.get("text", "")
+        speaker = entry.get("speaker")
+        direction = entry.get("direction")
+
+        if entry_type == "section_header":
+            lines.append("")
+            lines.append(f"## {text}")
+            lines.append("")
+            after_header = True
+            prev_type = entry_type
+            continue
+
+        if entry_type == "scene_header":
+            lines.append("")
+            lines.append(f"## {text}")
+            lines.append("")
+            after_header = True
+            prev_type = entry_type
+            continue
+
+        # Insert === divider before the first direction/dialogue after a header
+        if after_header and entry_type in ("direction", "dialogue"):
+            lines.append("===")
+            lines.append("")
+            after_header = False
+
+        if entry_type == "direction":
+            lines.append(f"[{text}]")
+            lines.append("")
+            prev_type = entry_type
+            continue
+
+        if entry_type == "dialogue":
+            display_name = speaker_display_name(speaker) if speaker else "UNKNOWN"
+
+            if direction:
+                lines.append(f"{display_name} ({direction})")
+            else:
+                lines.append(display_name)
+            lines.append(text)
+            lines.append("")
+            prev_type = entry_type
+            continue
+
+    # End marker
+    lines.append("END OF EPISODE")
+    lines.append("")
+
+    return "\n".join(lines)
+
+
+def main():
+    parser = argparse.ArgumentParser(
+        description="Regenerate a production script markdown from parsed JSON."
+    )
+    parser.add_argument("--episode", required=True,
+                        help="Episode tag (e.g. S02E03)")
+    parser.add_argument("--parsed", default=None,
+                        help="Override parsed JSON path")
+    parser.add_argument("--cast", default=None,
+                        help="Override cast config path")
+    parser.add_argument("--output", default=None,
+                        help="Output markdown path (default: scripts/revised_the413_{TAG}.md)")
+
+    args = parser.parse_args()
+    tag = args.episode
+
+    with run_banner(SCRIPT_NAME):
+        parsed_path = args.parsed or f"parsed/parsed_the413_{tag}.json"
+        cast_path = args.cast or f"cast_the413_{tag}.json"
+        output_path = args.output or f"scripts/revised_the413_{tag}.md"
+
+        if not os.path.exists(parsed_path):
+            print(f"ERROR: Parsed JSON not found: {parsed_path}")
+            sys.exit(1)
+
+        with open(parsed_path, encoding="utf-8") as f:
+            parsed = json.load(f)
+
+        cast = None
+        if os.path.exists(cast_path):
+            with open(cast_path, encoding="utf-8") as f:
+                cast = json.load(f)
+
+        script_text = regenerate_script(parsed, cast)
+
+        os.makedirs(os.path.dirname(output_path) or ".", exist_ok=True)
+        with open(output_path, "w", encoding="utf-8") as f:
+            f.write(script_text)
+
+        # Summary
+        entry_count = len(parsed.get("entries", []))
+        dialogue_count = parsed.get("stats", {}).get("dialogue_lines", 0)
+        print(f"  Regenerated script from {entry_count} entries ({dialogue_count} dialogue)")
+        print(f"  Written to: {output_path}")
+
+
+if __name__ == "__main__":
+    main()
