@@ -504,16 +504,17 @@ class TestBuildMusicLayerWithVolumeRamp:
 
         _, labels = build_music_layer([plan], timeline, 400, level_db=0)
 
-        assert len(labels[0]) == 8
+        assert len(labels[0]) == 9
         assert labels[0][3] == 0.5   # ramp_in_seconds
         assert labels[0][4] == 1.0   # ramp_out_seconds
         assert labels[0][5] == 75.0  # play_duration
         assert labels[0][7] is None  # volume_pct (not set)
+        assert labels[0][8] == 1     # seq
 
 
 class TestAmbienceLabelRampData:
     def test_ambience_labels_include_ramp_data(self, tmp_path):
-        """Ambience labels should be 8-tuples carrying ramp and volume data."""
+        """Ambience labels should be 9-tuples carrying ramp, volume, and seq data."""
         mp3_path = str(tmp_path / "amb.mp3")
         _write_mp3(mp3_path, duration_ms=200)
         plan = _make_plan(1, mp3_path, "AMBIENCE",
@@ -522,10 +523,11 @@ class TestAmbienceLabelRampData:
 
         _, labels = build_ambience_layer([plan], timeline, 400, level_db=0)
 
-        assert len(labels[0]) == 8
+        assert len(labels[0]) == 9
         assert labels[0][3] == 0.5   # ramp_in_seconds
         assert labels[0][4] == 1.5   # ramp_out_seconds
         assert labels[0][7] is None  # volume_pct (not set)
+        assert labels[0][8] == 1     # seq
 
     def test_ambience_labels_none_ramp_when_not_set(self, tmp_path):
         """Ambience labels carry None for ramp when plan has no ramp values."""
@@ -554,8 +556,9 @@ class TestComputeDialogueLabelsSnippet:
 
         assert len(labels) == 1
         tup = labels[0]
-        assert len(tup) == 7
+        assert len(tup) == 9
         assert tup[6] == "It's 7:14 AM on a"
+        assert tup[8] == 1  # seq
 
     def test_snippet_is_none_when_no_text(self, tmp_path):
         mp3_path = str(tmp_path / "001_cold-open_adam.mp3")

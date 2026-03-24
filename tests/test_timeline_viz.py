@@ -527,11 +527,12 @@ class TestComputeMusicLabelsPlayDuration:
         timeline = {5: 0}
 
         labels = compute_music_labels([plan], timeline, 10000)
-        assert len(labels[0]) == 8
+        assert len(labels[0]) == 9
         assert labels[0][3] == 0.5
         assert labels[0][4] == 1.0
         assert labels[0][5] == 60.0
         assert labels[0][7] is None  # volume_pct (not set)
+        assert labels[0][8] == 5     # seq
 
 
 class TestVolumePercentageInTimeline:

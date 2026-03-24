@@ -35,6 +35,7 @@ class LayerSpan:
         play_duration: Percentage of file to play, or ``None`` if not set.
         snippet: First 5 words of dialogue text for HTML tooltip, or ``None``.
         volume_pct: Volume percentage (100 = unity), or ``None`` if not set.
+        seq: Sequence number from the parsed script, or ``None``.
     """
 
     start_s: float
@@ -45,6 +46,7 @@ class LayerSpan:
     play_duration: float | None = None
     snippet: str | None = None
     volume_pct: float | None = None
+    seq: int | None = None
 
 
 @dataclass
@@ -97,7 +99,8 @@ def build_timeline_data(
             pd = tup[5] if len(tup) > 5 else None
             sn = tup[6] if len(tup) > 6 else None
             vp = tup[7] if len(tup) > 7 else None
-            spans.append(LayerSpan(s, e, t, ri, ro, pd, sn, vp))
+            sq = tup[8] if len(tup) > 8 else None
+            spans.append(LayerSpan(s, e, t, ri, ro, pd, sn, vp, sq))
         return spans
 
     return TimelineData(
@@ -348,7 +351,8 @@ function render() {{
       if (sp.volume_pct != null) {{ rampTip += '\U0001f50a vol: '+sp.volume_pct+'%  '; }}
       const tipExtra = rampTip ? '<br><span style="opacity:0.8">'+rampTip.trim()+'</span>' : '';
       const snippetLine = sp.snippet ? '<br><em style="opacity:0.75">'+sp.snippet.replace(/</g,'&lt;')+'\u2026</em>' : '';
-      tips[ti] = '<strong>'+sp.label.replace(/</g,'&lt;')+'</strong>'+snippetLine+'<br>'+fmtTime(sp.start_s)+' \u2192 '+fmtTime(sp.end_s)+' ('+dur+'s)'+tipExtra;
+      const seqPrefix = sp.seq != null ? '<span style="opacity:0.6">#'+String(sp.seq).padStart(3,'0')+'</span> ' : '';
+      tips[ti] = seqPrefix+'<strong>'+sp.label.replace(/</g,'&lt;')+'</strong>'+snippetLine+'<br>'+fmtTime(sp.start_s)+' \u2192 '+fmtTime(sp.end_s)+' ('+dur+'s)'+tipExtra;
       lhtml += '<div class="span '+COLORS[key]+'" style="left:'+left+'%;width:'+w+'%" data-ti="'+ti+'">'+rampBadges+'</div>';
       ti++;
     }}
@@ -427,6 +431,7 @@ def render_html_timeline(data: TimelineData, output_path: str) -> str:
                     "play_duration": sp.play_duration,
                     "snippet": sp.snippet,
                     "volume_pct": sp.volume_pct,
+                    "seq": sp.seq,
                 }
                 for sp in spans
             ]

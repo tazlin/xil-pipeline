@@ -530,7 +530,7 @@ def build_ambience_layer(
         labels.append((
             start_ms / 1000.0, end_ms / 1000.0, label_text,
             plan.ramp_in_seconds, plan.ramp_out_seconds,
-            None, None, plan.volume_percentage,
+            None, None, plan.volume_percentage, plan.seq,
         ))
 
     return layer, labels
@@ -580,7 +580,7 @@ def build_music_layer(
         labels.append((
             start_ms / 1000.0, (start_ms + len(clip)) / 1000.0, label_text,
             plan.ramp_in_seconds, plan.ramp_out_seconds, plan.play_duration,
-            None, plan.volume_percentage,
+            None, plan.volume_percentage, plan.seq,
         ))
     return layer, labels
 
@@ -625,7 +625,7 @@ def build_dialogue_layer(
                 segment = apply_effects_fn(segment)
             segment = segment.pan(cast_config[speaker].get("pan", 0.0))
         end_ms = start_ms + len(segment)
-        labels.append((start_ms / 1000.0, end_ms / 1000.0, speaker))
+        labels.append((start_ms / 1000.0, end_ms / 1000.0, speaker, None, None, None, None, None, plan.seq))
         layer = layer.overlay(segment, position=start_ms)
     return layer, labels
 
@@ -709,7 +709,7 @@ def compute_dialogue_labels(
         speaker = basename.rsplit("_", 1)[-1]
         words = (plan.text or "").split()
         snippet = " ".join(words[:5]) if words else None
-        labels.append((start_ms / 1000.0, end_ms / 1000.0, speaker, None, None, None, snippet))
+        labels.append((start_ms / 1000.0, end_ms / 1000.0, speaker, None, None, None, snippet, None, plan.seq))
     return labels
 
 
@@ -764,7 +764,7 @@ def compute_ambience_labels(
         labels.append((
             start_ms / 1000.0, end_ms / 1000.0, label_text,
             plan.ramp_in_seconds, plan.ramp_out_seconds,
-            None, None, plan.volume_percentage,
+            None, None, plan.volume_percentage, plan.seq,
         ))
 
     return labels
@@ -799,7 +799,7 @@ def compute_music_labels(
         labels.append((
             start_ms / 1000.0, (start_ms + duration) / 1000.0, label_text,
             plan.ramp_in_seconds, plan.ramp_out_seconds, plan.play_duration,
-            None, plan.volume_percentage,
+            None, plan.volume_percentage, plan.seq,
         ))
     return labels
 
@@ -828,7 +828,7 @@ def compute_sfx_labels(
         label_text = plan.text or plan.direction_type or "SFX"
         labels.append((
             start_ms / 1000.0, (start_ms + duration) / 1000.0, label_text,
-            None, None, None, None, plan.volume_percentage,
+            None, None, None, None, plan.volume_percentage, plan.seq,
         ))
     return labels
 
@@ -867,6 +867,6 @@ def build_sfx_layer(
         label_text = plan.text or plan.direction_type or "SFX"
         labels.append((
             start_ms / 1000.0, (start_ms + len(segment)) / 1000.0, label_text,
-            None, None, None, None, plan.volume_percentage,
+            None, None, None, None, plan.volume_percentage, plan.seq,
         ))
     return layer, labels
