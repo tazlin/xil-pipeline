@@ -167,8 +167,8 @@ def generate_audacity_macro(
     lines.append(f'SetProject: X-Genre="Podcast" X-Album="{show}" '
                  f'X-Artist="{artist}" X-Title="{title}" X-Year="{year}"')
 
-    from xil_pipeline.models import show_slug as _show_slug
     from xil_pipeline.models import DEFAULT_SLUG
+    from xil_pipeline.models import show_slug as _show_slug
     macro_slug = _show_slug(show).upper() if show else DEFAULT_SLUG.upper()
     macro_path = os.path.join(macros_dir, f"{macro_slug}_{tag}.txt")
     with open(macro_path, "w", encoding="utf-8") as f:
