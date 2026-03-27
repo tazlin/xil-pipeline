@@ -10,16 +10,16 @@ Documentation of the nine-stage automated podcast production pipeline, including
 flowchart TD
     S["`📄 scripts/*.md
     Production script markdown`"]
-    C["`📋 cast_the413_S01E01.json
+    C["`📋 cast_sample_S01E01.json
     Voice ID + pan + filter per character`"]
     P1["XILP001_script_parser.py"]
-    J["`📦 parsed/parsed_the413_S01E01.json
+    J["`📦 parsed/parsed_sample_S01E01.json
     127 dialogue entries + stats`"]
 
     CQ["`📋 cues/*.md
     Sound cues & music prompts`"]
     P6["XILP006_cues_ingester.py"]
-    SFXCFG["`📋 sfx_the413_S01E01.json
+    SFXCFG["`📋 sfx_sample_S01E01.json
     SFX config (prompts + durations)`"]
     SFXLIB["`🎵 SFX/*.mp3
     Shared SFX asset library`"]
@@ -36,7 +36,7 @@ flowchart TD
     No API calls`"]
     ST["`🎙️ stems/S01E01/*.mp3
     001_cold-open_adam.mp3 …`"]
-    OUT["🎧 the413_S01E01_master.mp3"]
+    OUT["🎧 sample_S01E01_master.mp3"]
     MIX["mix_common.py"]
 
     S --> P1 --> J
@@ -212,7 +212,7 @@ flowchart TD
     ENTRIES --> STATS["`Compute stats
     total_entries · dialogue_lines
     characters_for_tts · speakers`"]
-    STATS --> JSON["📦 parsed_the413_S01E01.json"]
+    STATS --> JSON["📦 parsed_sample_S01E01.json"]
 ```
 
 ### Speaker normalization
@@ -254,9 +254,9 @@ sequenceDiagram
     participant PJ as parsed JSON
 
     User->>M: python XILP002_producer.py --episode S02E03 [--gen-sfx / --gen-music / --gen-ambience]
-    M->>LP: load cast_the413_S02E03.json + parsed script
+    M->>LP: load cast_sample_S02E03.json + parsed script
     LP-->>M: config dict, dialogue_entries list
-    M->>SFX: load sfx_the413_S02E03.json (always, for preamble)
+    M->>SFX: load sfx_sample_S02E03.json (always, for preamble)
     SFX-->>M: SfxConfiguration model
 
     alt preamble block in cast config
@@ -311,9 +311,9 @@ sequenceDiagram
 
 ```mermaid
 flowchart TD
-    C2["`📋 cast_the413_S01E01.json
+    C2["`📋 cast_sample_S01E01.json
     pan + filter per character`"]
-    J2["`📦 parsed_the413_S01E01.json
+    J2["`📦 parsed_sample_S01E01.json
     direction_type per entry`"]
     ST2["`stems/S01E01/*.mp3
     sorted by seq prefix`"]
@@ -359,7 +359,7 @@ flowchart TD
     FG1 --> OVERLAY["foreground.overlay(background)"]
     BGMIX --> OVERLAY
 
-    OVERLAY --> EXPORT2["export the413_S01E01_master.mp3"]
+    OVERLAY --> EXPORT2["export sample_S01E01_master.mp3"]
     SEQ --> EXPORT2
     EXPORT2 --> PLAY2["os.system mpg123 — WSL playback"]
 
@@ -379,9 +379,9 @@ flowchart TD
 
 ```mermaid
 flowchart TD
-    PARSED["`📦 parsed_the413_S01E02.json
+    PARSED["`📦 parsed_sample_S01E02.json
     Dialogue + section + scene entries`"]
-    CAST["`📋 cast_the413_S01E02.json
+    CAST["`📋 cast_sample_S01E02.json
     voice_id per character`"]
 
     LOAD["`load_episode()
@@ -512,8 +512,8 @@ flowchart TD
 
 ```mermaid
 flowchart TD
-    C5["`📋 cast_the413_S01E01.json`"]
-    J5["`📦 parsed_the413_S01E01.json`"]
+    C5["`📋 cast_sample_S01E01.json`"]
+    J5["`📦 parsed_sample_S01E01.json`"]
     ST5["`stems/S01E01/*.mp3`"]
 
     C5 --> L5["`load cast config
@@ -1025,7 +1025,7 @@ XILP005.  This script finds and deletes them.
 
 ```mermaid
 flowchart TD
-    PARSED["`📦 parsed/parsed_the413_S02E03.json
+    PARSED["`📦 parsed/parsed_sample_S02E03.json
     Current parsed script`"]
     STEMS["`stems/S02E03/*.mp3
     All stems on disk`"]
@@ -1069,9 +1069,9 @@ python XILP009_script_regenerator.py --episode S02E03 --output scripts/revised_S
 
 ```mermaid
 flowchart TD
-    PARSED["`📦 parsed/parsed_the413_S02E03.json
+    PARSED["`📦 parsed/parsed_sample_S02E03.json
     Entries with seq, type, speaker, text`"]
-    CAST["`📋 cast_the413_S02E03.json
+    CAST["`📋 cast_sample_S02E03.json
     Speaker key → display name`"]
 
     LOAD["`Load parsed JSON + cast config
@@ -1091,7 +1091,7 @@ flowchart TD
     CAST --> LOAD
     LOAD --> FILTER --> EMIT
     EMIT --> DIVIDER
-    DIVIDER --> OUTPUT["`📄 scripts/revised_the413_S02E03.md
+    DIVIDER --> OUTPUT["`📄 scripts/revised_sample_S02E03.md
     Reconstructed production script`"]
 ```
 
@@ -1120,7 +1120,7 @@ python XILP010_studio_import.py --episode S02E02 \
 flowchart TD
     ZIP["`📦 ElevenLabs Studio ZIP
     NNN_Chapter N.mp3 per entry`"]
-    PARSED["`📄 parsed/parsed_the413_S02E02.json
+    PARSED["`📄 parsed/parsed_sample_S02E02.json
     seq → type, section, scene, speaker`"]
     FILTER{"`Filter by type
     dialogue → extract
@@ -1164,10 +1164,10 @@ flowchart TD
     S02E03_layer_sfx.wav`"]
     MIX["XILP011_master_export.py
     pydub overlay (unity gain)"]
-    CAST["`📋 cast_the413_S02E03.json
+    CAST["`📋 cast_sample_S02E03.json
     Show name, title, artist`"]
     MASTER["`🎧 masters/
-    S02E03_the413_2026-03-24.mp3
+    S02E03_sample_2026-03-24.mp3
     Stereo · 48 kHz · VBR ~145–185 kbps`"]
 
     DIALOGUE --> MIX
