@@ -40,6 +40,7 @@ scripts/*.pdf
 discover_voices.json
 *.log
 orig_*.json
+*_crosswalk.txt
 voice_samples/
 ElevenLabs_exports/
 masters/
