@@ -1,6 +1,6 @@
-# Xilp002 The413 Producer
+# XILP003 Audio Assembly
 
-::: XILP002_the413_producer
+::: xil_pipeline.XILP003_audio_assembly
     options:
       show_root_heading: true
       show_source: true

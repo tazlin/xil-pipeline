@@ -1,6 +1,6 @@
-# Xilp003 The413 Audio Assembly
+# XILP004 Studio Onboard
 
-::: XILP003_the413_audio_assembly
+::: xil_pipeline.XILP004_studio_onboard
     options:
       show_root_heading: true
       show_source: true

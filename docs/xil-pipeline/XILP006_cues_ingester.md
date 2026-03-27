@@ -1,6 +1,6 @@
-# Xilp006 The413 Cues Ingester
+# XILP006 Cues Ingester
 
-::: XILP006_the413_cues_ingester
+::: xil_pipeline.XILP006_cues_ingester
     options:
       show_root_heading: true
       show_source: true
