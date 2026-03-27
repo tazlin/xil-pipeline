@@ -134,9 +134,9 @@ class TestOutputFilename:
     def test_default_format(self):
         import datetime
         today = datetime.date.today().isoformat()
-        expected = f"masters/S02E03_the413_{today}.mp3"
         # Verify the pattern matches what main() would produce
         slug = "the413"
         tag = "S02E03"
         result = os.path.join("masters", f"{tag}_{slug}_{today}.mp3")
-        assert result == expected
+        # Normalize to forward slashes for cross-platform comparison
+        assert result.replace("\\", "/") == f"masters/S02E03_the413_{today}.mp3"
