@@ -14,8 +14,10 @@ pip install xil-pipeline[dev]       # development and testing
 
 ## Quick Start
 
+See [`samples/sample_S01E01.md`](samples/sample_S01E01.md) for an example of the markdown script format the pipeline expects. It demonstrates dialogue, acting directions, SFX/ambience/music cues, beats, sections, and scenes.
+
 ```bash
-# Scaffold a new project workspace
+# Scaffold a new project workspace (creates a copy of the sample script)
 xil-init my-show --show "My Podcast"
 cd my-show
 
