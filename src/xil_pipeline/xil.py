@@ -17,7 +17,6 @@ import sys
 from dataclasses import dataclass
 from typing import TextIO
 
-
 _PIPELINE = "pipeline"
 _UTILITY = "utility"
 
