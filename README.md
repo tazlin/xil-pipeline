@@ -80,6 +80,8 @@ xil-master --episode S01E01
 
 All scripts accept `--show` to override the show name. Resolution order: `--show` flag > `project.json` > default `"sample"`.
 
+See the [SFX Reuse Guide](docs/sfx-reuse-guide.md) for workflows that minimize ElevenLabs API credit usage by referencing existing assets in the `SFX/` library.
+
 ## Environment
 
 - Python 3.12+
