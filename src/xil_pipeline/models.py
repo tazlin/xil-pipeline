@@ -30,7 +30,7 @@ def show_slug(show_name: str) -> str:
         show_name: Human-readable show title (e.g., ``"nightowls"``).
 
     Returns:
-        Compact slug like ``"the413"`` or ``"nightowls"``.
+        Compact slug like ``"nightowls"`` or ``"mypodcast"``.
     """
     return re.sub(r"[^a-z0-9]", "", show_name.lower())
 
@@ -39,7 +39,7 @@ def derive_paths(slug: str, tag: str) -> dict[str, str]:
     """Derive all standard pipeline file paths from a show slug and episode tag.
 
     Args:
-        slug: Show slug (e.g., ``"the413"``).
+        slug: Show slug (e.g., ``"nightowls"``).
         tag: Episode tag (e.g., ``"S01E01"``).
 
     Returns:
@@ -244,7 +244,7 @@ class PreambleSegment(BaseModel):
     text: str = Field(..., description="Segment text (may use {season_title}, {episode}, {title})")
     shared_key: str | None = Field(
         default=None,
-        description="SFX cache key (e.g. 'preamble-the413-tina-intro'); None = episode-specific",
+        description="SFX cache key (e.g. 'preamble-myshow-host-intro'); None = episode-specific",
     )
 
 

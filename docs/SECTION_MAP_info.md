@@ -197,5 +197,5 @@ python XILP001_script_parser.py "scripts/<script>.md" --episode S01E01
 After parsing, you can also verify `stats["sections"]` contains all expected slugs:
 
 ```bash
-python -c "import json; d=json.load(open('parsed/parsed_the413_S01E01.json')); print(d['stats']['sections'])"
+python -c "import json; d=json.load(open('parsed/parsed_sample_S01E01.json')); print(d['stats']['sections'])"
 ```

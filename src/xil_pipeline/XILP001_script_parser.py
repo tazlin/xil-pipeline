@@ -31,7 +31,7 @@ from xil_pipeline.models import (
 )
 from xil_pipeline.sfx_common import run_banner
 
-# Built-in speaker definitions for THE 413 — used as fallback when no speakers.json exists
+# Built-in speaker definitions — used as fallback when no speakers.json exists
 _BUILTIN_KNOWN_SPEAKERS = [
     "FILM AUDIO (MARGARET'S VOICE)",
     "STRANGER (MALE VOICE, FLAT)",

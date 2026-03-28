@@ -16,7 +16,7 @@ TTS for the newly inserted entries.
 Usage::
 
     python XILU006_splice_parsed.py --episode S02E03 --insert-after 322 \\
-        --from-parsed parsed/parsed_the413_S02E02.json --from-seq-range 232-233 \\
+        --from-parsed parsed/parsed_<slug>_S02E02.json --from-seq-range 232-233 \\
         --section post-interview --dry-run
 
     python XILU006_splice_parsed.py --episode S02E03 --delete-seq-range 100-105

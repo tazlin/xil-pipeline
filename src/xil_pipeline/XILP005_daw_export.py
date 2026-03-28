@@ -505,8 +505,9 @@ def export_daw_layers(
     print(f"--- Done! {len(layer_files)} layer WAVs in {output_dir}/ ---")
     print(f"    Import into Audacity: python {output_dir}/{script_fname}")
     if macro:
+        from xil_pipeline.models import DEFAULT_SLUG
         from xil_pipeline.models import show_slug as _show_slug
-        macro_label = _show_slug(show).upper() if show else "THE413"
+        macro_label = _show_slug(show).upper() if show else DEFAULT_SLUG.upper()
         print(f"    Audacity macro:       Tools → Macros → {macro_label}_{tag} → Apply to Project")
     if save_aup3:
         print(f"    Will save project:    {output_dir}/{tag}.aup3")

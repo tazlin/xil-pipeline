@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-Automated podcast/audio production pipeline using ElevenLabs TTS API. The project evolved from a simple multi-voice ad proof-of-concept into a full podcast episode producer for "THE 413" fiction podcast.
+Automated, show-agnostic podcast/audio production pipeline using ElevenLabs TTS API. Turns a markdown production script into a podcast-ready MP3.
 
 ## Package Structure
 
@@ -78,7 +78,7 @@ Creates: `project.json`, `speakers.json`, `scripts/sample_S01E01.md`, and empty 
 ]
 ```
 
-Resolution order: `--speakers PATH` flag > `speakers.json` in CWD > built-in defaults (THE 413 cast). The list is auto-sorted longest-first for correct compound-name matching. Both `xil-scan` (XILP000) and `xil-parse` (XILP001) accept the `--speakers` flag.
+Resolution order: `--speakers PATH` flag > `speakers.json` in CWD > built-in defaults. The list is auto-sorted longest-first for correct compound-name matching. Both `xil-scan` (XILP000) and `xil-parse` (XILP001) accept the `--speakers` flag.
 
 ## Pre-Flight Script Scanner
 

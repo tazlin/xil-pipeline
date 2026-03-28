@@ -16,13 +16,13 @@ shared assets with sequence-numbered filenames.
 Usage::
 
     # Preview what will be generated and estimated cost
-    python XILU002_generate_SFX.py --sfx sfx_the413.json --dry-run
+    python XILU002_generate_SFX.py --episode S01E01 --dry-run
 
     # Generate only short effects (≤5s) to limit credit usage
-    python XILU002_generate_SFX.py --sfx sfx_the413.json --max-duration 5.0
+    python XILU002_generate_SFX.py --episode S01E01 --max-duration 5.0
 
     # Generate all SFX stems
-    python XILU002_generate_SFX.py --sfx sfx_the413.json
+    python XILU002_generate_SFX.py --episode S01E01
 
 Module Attributes:
     STEMS_DIR: Base directory for stem subdirectories.

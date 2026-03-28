@@ -10,7 +10,7 @@ stereo MP3 file suitable for podcast distribution.
 Output format:
     - Stereo, 48 kHz sample rate
     - VBR MP3, quality target 145–185 kbps (LAME VBR quality ~2)
-    - Filename: ``S01E01_the413_2026-03-24.mp3``
+    - Filename: ``S01E01_<slug>_YYYY-MM-DD.mp3``
 
 Usage::
 
