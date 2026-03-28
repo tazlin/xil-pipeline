@@ -1,5 +1,7 @@
 # xil-pipeline
 
+[![Documentation](https://readthedocs.org/projects/xil-pipeline/badge/?version=latest)](https://xil-pipeline.readthedocs.io/en/latest/)
+
 Show-agnostic audio production pipeline that turns a markdown script into a podcast-ready MP3 via the ElevenLabs API.
 
 A `project.json` file sets the show name; every script derives file paths from it via a shared slug. The pipeline parses scripts, generates TTS voices and SFX, assembles a rough master, exports isolated WAV layers for DAW mixing, and produces a final master MP3. Supporting utilities handle voice discovery, SFX generation, stem migration on script revisions, stale cleanup, and Studio import/export. All API-calling scripts support `--dry-run` to preview costs before spending quota.

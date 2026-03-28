@@ -29,6 +29,7 @@ dependencies = [
 ]
 
 [project.urls]
+Documentation = "https://xil-pipeline.readthedocs.io/en/latest/"
 Repository = "https://github.com/xilcmd/xil-pipeline"
 Issues = "https://github.com/xilcmd/xil-pipeline/issues"
 
