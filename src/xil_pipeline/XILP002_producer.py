@@ -417,9 +417,9 @@ def generate_voices(
         extra_kwargs = {}
         if cfg.get("language_code") and current_model != "eleven_v3":
             extra_kwargs["language_code"] = cfg["language_code"]
-        if prev_text:
+        if prev_text and current_model != "eleven_v3":
             extra_kwargs["previous_text"] = prev_text
-        if next_text:
+        if next_text and current_model != "eleven_v3":
             extra_kwargs["next_text"] = next_text
 
         logger.info(" > [%03d] %s with %s (%d chars)...", entry['seq'], speaker, current_model, len(text))
