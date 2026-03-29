@@ -185,12 +185,12 @@ class TestLinkMarkdownFiles:
 
 class TestCodeRootPath:
     def test_docs_script_file_exists(self):
-        script = Path(__file__).parent.parent / "docs" / "build_docs_xil_pipeline.py"
+        script = Path(__file__).parent.parent / "docs" / "build_docs.py"
         assert script.exists()
 
     def test_expected_code_root_exists(self):
         # The script's project_root (parent.parent of the script) should be the project dir
-        script = Path(__file__).parent.parent / "docs" / "build_docs_xil_pipeline.py"
+        script = Path(__file__).parent.parent / "docs" / "build_docs.py"
         expected_code_root = script.parent.parent  # gemini-project/
         assert expected_code_root.exists()
         # And it should contain our known source files (now in src/xil_pipeline/)
