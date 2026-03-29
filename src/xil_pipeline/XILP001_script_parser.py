@@ -21,6 +21,7 @@ import os
 import re
 import sys
 
+from xil_pipeline.log_config import configure_logging, get_logger
 from xil_pipeline.models import (
     ParsedScript,
     ScriptStats,
@@ -30,6 +31,8 @@ from xil_pipeline.models import (
     show_slug,
 )
 from xil_pipeline.sfx_common import run_banner
+
+logger = get_logger(__name__)
 
 # Built-in speaker definitions — used as fallback when no speakers.json exists
 _BUILTIN_KNOWN_SPEAKERS = [
@@ -773,22 +776,22 @@ def print_speaker_stats(parsed: dict) -> None:
     """
     rows = compute_speaker_stats(parsed)
     if not rows:
-        print("  No dialogue entries found.")
+        logger.info("  No dialogue entries found.")
         return
 
     total_lines = sum(r["lines"] for r in rows)
     total_words = sum(r["words"] for r in rows)
     total_chars = sum(r["chars"] for r in rows)
 
-    print(f"\n{'Speaker':<15} {'Lines':>6} {'%':>6} {'Words':>7} {'%':>6} {'Chars':>8} {'%':>6}")
-    print(f"{'-'*15} {'-'*6} {'-'*6} {'-'*7} {'-'*6} {'-'*8} {'-'*6}")
+    logger.info(f"\n{'Speaker':<15} {'Lines':>6} {'%':>6} {'Words':>7} {'%':>6} {'Chars':>8} {'%':>6}")
+    logger.info(f"{'-'*15} {'-'*6} {'-'*6} {'-'*7} {'-'*6} {'-'*8} {'-'*6}")
     for r in rows:
-        print(f"{r['speaker']:<15} {r['lines']:>6} {r['pct_lines']:>5.1f}%"
+        logger.info(f"{r['speaker']:<15} {r['lines']:>6} {r['pct_lines']:>5.1f}%"
               f" {r['words']:>7,} {r['pct_words']:>5.1f}%"
               f" {r['chars']:>8,} {r['pct_chars']:>5.1f}%")
-    print(f"{'-'*15} {'-'*6} {'-'*6} {'-'*7} {'-'*6} {'-'*8} {'-'*6}")
-    print(f"{'TOTAL':<15} {total_lines:>6}        {total_words:>7,}        {total_chars:>8,}")
-    print()
+    logger.info(f"{'-'*15} {'-'*6} {'-'*6} {'-'*7} {'-'*6} {'-'*8} {'-'*6}")
+    logger.info(f"{'TOTAL':<15} {total_lines:>6}        {total_words:>7,}        {total_chars:>8,}")
+    logger.info("")
 
 
 def print_summary(parsed: dict) -> None:
@@ -802,17 +805,17 @@ def print_summary(parsed: dict) -> None:
     """
     stats = parsed["stats"]
     tag = episode_tag(parsed.get("season"), parsed["episode"])
-    print(f"\n{'='*60}")
-    print(f"PARSED: {parsed['show']} {tag} — {parsed['title']}")
-    print(f"Source: {parsed['source_file']}")
-    print(f"{'='*60}")
-    print(f"  Total entries:      {stats['total_entries']}")
-    print(f"  Dialogue lines:     {stats['dialogue_lines']}")
-    print(f"  Stage directions:   {stats['direction_lines']}")
-    print(f"  TTS characters:     {stats['characters_for_tts']:,}")
-    print(f"  Speakers:           {', '.join(stats['speakers'])}")
-    print(f"  Sections:           {', '.join(stats['sections'])}")
-    print(f"{'='*60}")
+    logger.info(f"\n{'='*60}")
+    logger.info(f"PARSED: {parsed['show']} {tag} — {parsed['title']}")
+    logger.info(f"Source: {parsed['source_file']}")
+    logger.info(f"{'='*60}")
+    logger.info(f"  Total entries:      {stats['total_entries']}")
+    logger.info(f"  Dialogue lines:     {stats['dialogue_lines']}")
+    logger.info(f"  Stage directions:   {stats['direction_lines']}")
+    logger.info(f"  TTS characters:     {stats['characters_for_tts']:,}")
+    logger.info(f"  Speakers:           {', '.join(stats['speakers'])}")
+    logger.info(f"  Sections:           {', '.join(stats['sections'])}")
+    logger.info(f"{'='*60}")
 
     print_speaker_stats(parsed)
 
@@ -829,14 +832,14 @@ def print_dialogue_preview(parsed: dict, limit: int | None = None) -> None:
     if limit:
         dialogue_entries = dialogue_entries[:limit]
 
-    print(f"\n--- Dialogue Preview ({len(dialogue_entries)} lines) ---\n")
+    logger.info(f"\n--- Dialogue Preview ({len(dialogue_entries)} lines) ---\n")
     for e in dialogue_entries:
         scene_label = e["scene"] or e["section"] or "?"
         direction_label = f" ({e['direction']})" if e["direction"] else ""
         text_preview = e["text"][:80] + "..." if len(e["text"]) > 80 else e["text"]
-        print(f"  {e['seq']:03d} | {scene_label:<16} | {e['speaker']:<14}{direction_label}")
-        print(f"       {text_preview}")
-        print()
+        logger.info(f"  {e['seq']:03d} | {scene_label:<16} | {e['speaker']:<14}{direction_label}")
+        logger.info(f"       {text_preview}")
+        logger.info("")
 
 
 def generate_cast_config(parsed: dict, cast_path: str) -> None:
@@ -880,7 +883,7 @@ def generate_cast_config(parsed: dict, cast_path: str) -> None:
     with open(cast_path, "w", encoding="utf-8") as f:
         json.dump(config, f, indent=2, ensure_ascii=False)
 
-    print(f"Created {cast_path} with {len(speakers)} speakers "
+    logger.info(f"Created {cast_path} with {len(speakers)} speakers "
           f"(voice_id=TBD — run XILU001 to assign)")
 
 
@@ -954,13 +957,14 @@ def generate_sfx_config(parsed: dict, sfx_path: str) -> None:
         json.dump(config, f, indent=2, ensure_ascii=False)
 
     total = silence_count + sfx_count
-    print(f"Created {sfx_path} with {total} effects "
+    logger.info(f"Created {sfx_path} with {total} effects "
           f"({silence_count} silence, {sfx_count} sfx "
           f"— review prompts before generation)")
 
 
 def main() -> None:
     """CLI entry point for script parsing."""
+    configure_logging()
     with run_banner():
         parser = argparse.ArgumentParser(description="Parse production script markdown into structured JSON")
         parser.add_argument("script", help="Path to the production script markdown file")
@@ -996,7 +1000,7 @@ def main() -> None:
 
         # Validate --episode matches script header
         if args.episode is not None and args.episode != tag:
-            print(f"ERROR: Script header indicates {tag} but "
+            logger.error(f"Script header indicates {tag} but "
                   f"--episode {args.episode} was specified")
             sys.exit(1)
 
@@ -1020,9 +1024,9 @@ def main() -> None:
         if not args.quiet:
             print_summary(parsed)
             print_dialogue_preview(parsed, limit=args.preview)
-            print(f"JSON written to: {args.output}")
+            logger.info(f"JSON written to: {args.output}")
             if args.debug:
-                print(f"Debug CSV written to: {os.path.splitext(args.output)[0]}.csv")
+                logger.info(f"Debug CSV written to: {os.path.splitext(args.output)[0]}.csv")
 
         if args.stats and args.quiet:
             # --stats with --quiet: show only the speaker table

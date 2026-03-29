@@ -23,6 +23,7 @@ import json
 import os
 import sys
 
+from xil_pipeline.log_config import configure_logging, get_logger
 from xil_pipeline.sfx_common import run_banner
 from xil_pipeline.XILP001_script_parser import (
     SECTION_MAP,
@@ -36,6 +37,8 @@ from xil_pipeline.XILP001_script_parser import (
     strip_markdown_formatting,
     try_match_speaker,
 )
+
+logger = get_logger(__name__)
 
 # ---------------------------------------------------------------------------
 # Candidate heuristic
@@ -229,6 +232,7 @@ def format_report(scan: dict, header: dict) -> str:
 # ---------------------------------------------------------------------------
 
 def main():
+    configure_logging()
     with run_banner():
         parser = argparse.ArgumentParser(
             description="Pre-flight scanner: check a production script for unknown speakers/sections."
@@ -243,7 +247,7 @@ def main():
         args = parser.parse_args()
 
         if not os.path.exists(args.path):
-            print(f"[ERROR] File not found: {args.path}")
+            logger.error("File not found: %s", args.path)
             sys.exit(1)
 
         # Load speakers
@@ -266,7 +270,7 @@ def main():
         if args.json:
             print(json.dumps(scan, indent=2))
         else:
-            print(format_report(scan, header))
+            logger.info(format_report(scan, header))
 
         if scan["unrecognized"]:
             sys.exit(1)

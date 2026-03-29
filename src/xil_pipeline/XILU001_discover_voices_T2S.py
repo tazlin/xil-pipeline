@@ -35,6 +35,9 @@ import os
 from elevenlabs.client import ElevenLabs
 
 from xil_pipeline.sfx_common import run_banner
+from xil_pipeline.log_config import configure_logging, get_logger
+
+logger = get_logger(__name__)
 
 # Human-readable category labels matching the portal display
 CATEGORY_LABELS = {
@@ -115,30 +118,30 @@ def print_verbose(rec: dict) -> None:
     if rec["sharing_category"]:
         cat_label = f"{cat_label} / {rec['sharing_category']}"
 
-    print(f"  Name         : {rec['name']}")
+    logger.info(f"  Name         : {rec['name']}")
     if rec["library_name"] and rec["library_name"] != rec["name"]:
-        print(f"  Library name : {rec['library_name']}")
-    print(f"  Voice ID     : {rec['voice_id']}")
-    print(f"  Category     : {cat_label}")
+        logger.info(f"  Library name : {rec['library_name']}")
+    logger.info(f"  Voice ID     : {rec['voice_id']}")
+    logger.info(f"  Category     : {cat_label}")
     if rec["description"]:
-        print(f"  Description  : {rec['description']}")
-    print(f"  Gender       : {rec['gender'] or '—'}")
-    print(f"  Age          : {rec['age'] or '—'}")
-    print(f"  Accent       : {rec['accent'] or '—'}")
-    print(f"  Tone/style   : {rec['descriptive'] or '—'}")
-    print(f"  Use case     : {rec['use_case'] or '—'}")
-    print(f"  Language     : {rec['language'] or '—'}")
+        logger.info(f"  Description  : {rec['description']}")
+    logger.info(f"  Gender       : {rec['gender'] or '—'}")
+    logger.info(f"  Age          : {rec['age'] or '—'}")
+    logger.info(f"  Accent       : {rec['accent'] or '—'}")
+    logger.info(f"  Tone/style   : {rec['descriptive'] or '—'}")
+    logger.info(f"  Use case     : {rec['use_case'] or '—'}")
+    logger.info(f"  Language     : {rec['language'] or '—'}")
     if rec["verified_languages"]:
-        print(f"  Verified langs: {rec['verified_languages']} ({rec['verified_lang_count']} total)")
+        logger.info(f"  Verified langs: {rec['verified_languages']} ({rec['verified_lang_count']} total)")
     if rec["high_quality_models"]:
-        print(f"  HQ models    : {', '.join(rec['high_quality_models'])}")
-    print(f"  Owner        : {'Yes' if rec['is_owner'] else 'No (library copy)'}")
-    print(f"  Bookmarked   : {'Yes' if rec['is_bookmarked'] else 'No'}")
-    print(f"  Permission   : {rec['permission'] or 'none'}")
-    print(f"  Created      : {rec['created_at'] or '—'}")
+        logger.info(f"  HQ models    : {', '.join(rec['high_quality_models'])}")
+    logger.info(f"  Owner        : {'Yes' if rec['is_owner'] else 'No (library copy)'}")
+    logger.info(f"  Bookmarked   : {'Yes' if rec['is_bookmarked'] else 'No'}")
+    logger.info(f"  Permission   : {rec['permission'] or 'none'}")
+    logger.info(f"  Created      : {rec['created_at'] or '—'}")
     if rec["notice_days"]:
-        print(f"  Notice period: {rec['notice_days']} days")
-    print()
+        logger.info(f"  Notice period: {rec['notice_days']} days")
+    logger.info("")
 
 
 def print_compact(rec: dict) -> None:
@@ -150,7 +153,7 @@ def print_compact(rec: dict) -> None:
     tone = rec["descriptive"] or "?"
     langs = f" | langs: {rec['verified_languages']}" if rec["verified_languages"] else ""
     desc = f" | {rec['description'][:60]}" if rec["description"] else ""
-    print(
+    logger.info(
         f"  {rec['name']:<28} {rec['voice_id']}  [{cat}]"
         f"\n    {gender}, {age}, {accent}, {tone}{langs}{desc}"
     )
@@ -182,11 +185,11 @@ def update_cast(cast_path: str, records_by_id: dict, dry_run: bool = False) -> N
     for key, member in cast_data.get("cast", {}).items():
         vid = member.get("voice_id", "TBD")
         if vid == "TBD":
-            print(f"  {key}: voice_id is TBD — skipping")
+            logger.info(f"  {key}: voice_id is TBD — skipping")
             continue
         rec = records_by_id.get(vid)
         if rec is None:
-            print(f"  {key} ({vid}): not found in workspace voices — skipping")
+            logger.info(f"  {key} ({vid}): not found in workspace voices — skipping")
             continue
 
         # role: fill if still "TBD"
@@ -201,22 +204,23 @@ def update_cast(cast_path: str, records_by_id: dict, dry_run: bool = False) -> N
             changes.append(f"  {key}.language_code: null → {member['language_code']!r}")
 
     if not changes:
-        print("  No updates needed — cast file is already fully populated.")
+        logger.info("  No updates needed — cast file is already fully populated.")
         return
 
-    print(f"  {'(dry run) ' if dry_run else ''}Changes ({len(changes)}):")
+    logger.info(f"  {'(dry run) ' if dry_run else ''}Changes ({len(changes)}):")
     for c in changes:
-        print(c)
+        logger.info(c)
 
     if not dry_run:
         with open(cast_path, "w", encoding="utf-8") as f:
             _json.dump(cast_data, f, indent=2, ensure_ascii=False)
             f.write("\n")
-        print(f"  Written: {cast_path}")
+        logger.info(f"  Written: {cast_path}")
 
 
 def main() -> None:
     """CLI entry point for voice discovery."""
+    configure_logging()
     with run_banner():
         parser = argparse.ArgumentParser(
             description="List ElevenLabs voices with enriched metadata"
@@ -264,7 +268,7 @@ def main() -> None:
 
         # --update-cast: enrich a cast JSON from API metadata, then exit
         if args.update_cast:
-            print(f"\n--- Updating cast file: {args.update_cast} ---")
+            logger.info(f"\n--- Updating cast file: {args.update_cast} ---")
             update_cast(args.update_cast, records_by_id, dry_run=args.dry_run)
             return
 
@@ -272,7 +276,7 @@ def main() -> None:
         if args.id:
             matches = [r for r in records if r["voice_id"] == args.id]
             if not matches:
-                print(f"Voice ID {args.id!r} not found in your workspace.")
+                logger.info(f"Voice ID {args.id!r} not found in your workspace.")
                 return
             print_verbose(matches[0])
             return
@@ -304,10 +308,10 @@ def main() -> None:
         for r in records:
             cat_counts[r["category"] or "unknown"] = cat_counts.get(r["category"] or "unknown", 0) + 1
 
-        print(f"\n--- ElevenLabs Voices ({len(records)} shown) ---")
+        logger.info(f"\n--- ElevenLabs Voices ({len(records)} shown) ---")
         for cat, count in sorted(cat_counts.items()):
-            print(f"  {CATEGORY_LABELS.get(cat, cat)}: {count}")
-        print()
+            logger.info(f"  {CATEGORY_LABELS.get(cat, cat)}: {count}")
+        logger.info("")
 
         if args.verbose:
             for rec in records:
@@ -315,9 +319,9 @@ def main() -> None:
         else:
             for rec in records:
                 print_compact(rec)
-            print()
-            print("  Use --verbose for full details, --json for machine-readable output,")
-            print("  --id <VOICE_ID> for a single voice, --category / --search to filter.")
+            logger.info("")
+            logger.info("  Use --verbose for full details, --json for machine-readable output,")
+            logger.info("  --id <VOICE_ID> for a single voice, --category / --search to filter.")
 
 
 if __name__ == "__main__":

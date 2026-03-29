@@ -32,8 +32,11 @@ import copy
 import json
 import os
 
+from xil_pipeline.log_config import configure_logging, get_logger
 from xil_pipeline.models import derive_paths, resolve_slug
 from xil_pipeline.sfx_common import run_banner
+
+logger = get_logger(__name__)
 
 # ── Core functions (importable, no file I/O) ─────────────────────────────────
 
@@ -192,19 +195,19 @@ def run_splice(
         deleted = [e for e in entries if start <= e["seq"] <= end]
         entries = delete_entries(entries, delete_range)
         if not quiet:
-            print(f"\n  DELETE seq {start}–{end}: {len(deleted)} entries removed")
+            logger.info(f"\n  DELETE seq {start}–{end}: {len(deleted)} entries removed")
             for e in deleted:
-                print(f"    - seq {e['seq']} [{e['type']}] {e.get('speaker', '')} — {e['text'][:60]}")
+                logger.info(f"    - seq {e['seq']} [{e['type']}] {e.get('speaker', '')} — {e['text'][:60]}")
 
     # Insert phase
     if insert_after_seq is not None and new_entries:
         if not quiet:
             anchor = next((e for e in entries if e["seq"] == insert_after_seq), None)
-            print(f"\n  INSERT {len(new_entries)} entries after seq {insert_after_seq}"
+            logger.info(f"\n  INSERT {len(new_entries)} entries after seq {insert_after_seq}"
                   f" ({anchor['text'][:40]}...)" if anchor else "")
             for e in new_entries:
                 label = section_override or "(inherit)"
-                print(f"    + [{e['type']}] {e.get('speaker', '')} — {e['text'][:60]}  [section={label}]")
+                logger.info(f"    + [{e['type']}] {e.get('speaker', '')} — {e['text'][:60]}  [section={label}]")
         entries = splice_entries(
             entries, insert_after_seq, new_entries,
             section_override=section_override, scene_override=scene_override,
@@ -214,10 +217,10 @@ def run_splice(
     update_stats(data)
 
     new_count = len([e for e in entries if e["seq"] > 0])
-    print(f"\n  Summary: {original_count} → {new_count} entries (body)")
+    logger.info(f"\n  Summary: {original_count} → {new_count} entries (body)")
 
     if dry_run:
-        print("  [DRY RUN] No files written.")
+        logger.info("  [DRY RUN] No files written.")
         return data
 
     # Write backup
@@ -226,13 +229,13 @@ def run_splice(
             original_content = f.read()
         with open(backup_path, "w", encoding="utf-8") as f:
             f.write(original_content)
-        print(f"  Backup written: {backup_path}")
+        logger.info(f"  Backup written: {backup_path}")
 
     # Write updated file
     with open(target_path, "w", encoding="utf-8") as f:
         json.dump(data, f, indent=2, ensure_ascii=False)
         f.write("\n")
-    print(f"  Updated: {target_path}")
+    logger.info(f"  Updated: {target_path}")
 
     return data
 
@@ -250,6 +253,7 @@ def _parse_range(s: str) -> tuple[int, int]:
 
 def main() -> None:
     """Splice entries into or delete entries from a parsed episode JSON."""
+    configure_logging()
     with run_banner():
         parser = argparse.ArgumentParser(
             description="Splice Parsed JSON — insert/delete entries with automatic renumbering",
@@ -295,10 +299,10 @@ def main() -> None:
         target_path = args.parsed or paths["parsed"]
 
         if not os.path.exists(target_path):
-            print(f"ERROR: Target parsed JSON not found: {target_path}")
+            logger.error(f"Target parsed JSON not found: {target_path}")
             return
 
-        print(f"  Target: {target_path}")
+        logger.info(f"  Target: {target_path}")
 
         # Resolve new entries for insertion
         new_entries = None
@@ -309,15 +313,15 @@ def main() -> None:
                     source_data = json.load(f)
                 new_entries = extract_seq_range(source_data["entries"], start, end)
                 if not new_entries:
-                    print(f"  WARNING: No entries found in seq range {start}–{end} of {args.from_parsed}")
+                    logger.warning(f"No entries found in seq range {start}–{end} of {args.from_parsed}")
                     return
-                print(f"  Source: {args.from_parsed} seq {start}–{end} ({len(new_entries)} entries)")
+                logger.info(f"  Source: {args.from_parsed} seq {start}–{end} ({len(new_entries)} entries)")
             elif args.from_json:
                 with open(args.from_json, encoding="utf-8") as f:
                     new_entries = json.load(f)
-                print(f"  Source: {args.from_json} ({len(new_entries)} entries)")
+                logger.info(f"  Source: {args.from_json} ({len(new_entries)} entries)")
             else:
-                print("ERROR: --insert-after requires --from-parsed + --from-seq-range or --from-json")
+                logger.error("--insert-after requires --from-parsed + --from-seq-range or --from-json")
                 return
 
         # Resolve delete range
@@ -326,7 +330,7 @@ def main() -> None:
             delete_range = _parse_range(args.delete_seq_range)
 
         if new_entries is None and delete_range is None:
-            print("ERROR: Nothing to do — specify --insert-after or --delete-seq-range")
+            logger.error("Nothing to do — specify --insert-after or --delete-seq-range")
             return
 
         # Resolve backup path
@@ -352,9 +356,9 @@ def main() -> None:
         # Next steps
         if not args.dry_run:
             orig_prefix = "pre_splice_"
-            print("\n  Next steps:")
-            print(f"    1. python XILP007_stem_migrator.py --episode {args.episode} --orig-prefix {orig_prefix}")
-            print(f"    2. python XILP002_producer.py --episode {args.episode}")
+            logger.info("\n  Next steps:")
+            logger.info(f"    1. python XILP007_stem_migrator.py --episode {args.episode} --orig-prefix {orig_prefix}")
+            logger.info(f"    2. python XILP002_producer.py --episode {args.episode}")
 
 
 if __name__ == "__main__":

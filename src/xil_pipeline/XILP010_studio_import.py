@@ -32,6 +32,9 @@ import zipfile
 from xil_pipeline.models import derive_paths, resolve_slug
 from xil_pipeline.sfx_common import run_banner
 from xil_pipeline.XILP007_stem_migrator import make_stem_name
+from xil_pipeline.log_config import configure_logging, get_logger
+
+logger = get_logger(__name__)
 
 SCRIPT_NAME = "XILP010 · Studio Import"
 
@@ -109,7 +112,7 @@ def extract_stems(
             entry = entries_by_seq.get(seq)
             if entry is None:
                 stats["missing_seq"] += 1
-                print(f"  [MISSING]  {member}  → seq {seq} not in parsed JSON")
+                logger.info(f"  [MISSING]  {member}  → seq {seq} not in parsed JSON")
                 continue
 
             entry_type = entry["type"]
@@ -119,14 +122,14 @@ def extract_stems(
             # Always skip headers — no audio value
             if entry_type in ("section_header", "scene_header"):
                 stats["skipped_header"] += 1
-                print(f"  [HEADER]   {member}  — {entry_type}: {text_preview}")
+                logger.info(f"  [HEADER]   {member}  — {entry_type}: {text_preview}")
                 continue
 
             # Skip directions whose direction_type is not in include_dtypes
             if entry_type == "direction" and direction_type not in include_dtypes:
                 stats["skipped_type"] += 1
                 label = f"{direction_type}: " if direction_type else ""
-                print(f"  [SKIP]     {member}  — {label}{text_preview}")
+                logger.info(f"  [SKIP]     {member}  — {label}{text_preview}")
                 continue
 
             stem_name = make_stem_name(entry)
@@ -134,12 +137,12 @@ def extract_stems(
 
             if os.path.exists(dest) and not force:
                 stats["skipped_exists"] += 1
-                print(f"  [EXISTS]   {member}  → {stem_name}")
+                logger.info(f"  [EXISTS]   {member}  → {stem_name}")
                 continue
 
             marker = "EXTRACT" if not dry_run else "DRY-RUN"
             speaker = entry.get("speaker") or "sfx"
-            print(
+            logger.info(
                 f"  [{marker}]  {member}  → {stem_name}"
                 f"  ({speaker}: {text_preview})"
             )
@@ -162,19 +165,20 @@ def print_summary(stats: dict, dry_run: bool = False) -> None:
         dry_run: Whether the run was a dry run.
     """
     mode = "DRY-RUN" if dry_run else "COMPLETE"
-    print(f"\n{'─'*50}")
-    print(f"  SUMMARY ({mode})")
-    print(f"{'─'*50}")
-    print(f"  Extracted:       {stats['extracted']:>4}")
-    print(f"  Skipped (exist): {stats['skipped_exists']:>4}")
-    print(f"  Skipped (type):  {stats['skipped_type']:>4}")
-    print(f"  Skipped (header):{stats['skipped_header']:>4}")
+    logger.info(f"\n{'─'*50}")
+    logger.info(f"  SUMMARY ({mode})")
+    logger.info(f"{'─'*50}")
+    logger.info(f"  Extracted:       {stats['extracted']:>4}")
+    logger.info(f"  Skipped (exist): {stats['skipped_exists']:>4}")
+    logger.info(f"  Skipped (type):  {stats['skipped_type']:>4}")
+    logger.info(f"  Skipped (header):{stats['skipped_header']:>4}")
     if stats["missing_seq"]:
-        print(f"  Missing seq:     {stats['missing_seq']:>4}  ⚠")
-    print()
+        logger.info(f"  Missing seq:     {stats['missing_seq']:>4}  ⚠")
+    logger.info("")
 
 
 def main():
+    configure_logging()
     parser = argparse.ArgumentParser(
         description="Import ElevenLabs Studio export ZIP into pipeline stems.",
     )
@@ -251,10 +255,10 @@ def main():
     with run_banner(SCRIPT_NAME):
         # Validate inputs
         if not os.path.isfile(args.zip_path):
-            print(f"ERROR: ZIP file not found: {args.zip_path}")
+            logger.error(f"ZIP file not found: {args.zip_path}")
             return
         if not os.path.isfile(parsed_path):
-            print(f"ERROR: Parsed JSON not found: {parsed_path}")
+            logger.error(f"Parsed JSON not found: {parsed_path}")
             return
 
         with open(parsed_path) as f:
@@ -265,11 +269,11 @@ def main():
         direction = sum(1 for e in parsed["entries"] if e["type"] == "direction")
         headers = total - dialogue - direction
 
-        print(f"  Episode:    {tag}")
-        print(f"  ZIP:        {args.zip_path}")
-        print(f"  Parsed:     {parsed_path}  ({total} entries)")
-        print(f"  Stems dir:  {stems_dir}")
-        print(f"  Entries:    {dialogue} dialogue, {direction} directions, {headers} headers")
+        logger.info(f"  Episode:    {tag}")
+        logger.info(f"  ZIP:        {args.zip_path}")
+        logger.info(f"  Parsed:     {parsed_path}  ({total} entries)")
+        logger.info(f"  Stems dir:  {stems_dir}")
+        logger.info(f"  Entries:    {dialogue} dialogue, {direction} directions, {headers} headers")
         mode_parts = []
         if args.dry_run:
             mode_parts.append("dry-run")
@@ -278,8 +282,8 @@ def main():
         if include_dtypes:
             mode_parts.append(f"include: {', '.join(sorted(include_dtypes))}")
         if mode_parts:
-            print(f"  Mode:       {', '.join(mode_parts)}")
-        print()
+            logger.info(f"  Mode:       {', '.join(mode_parts)}")
+        logger.info("")
 
         stats = extract_stems(
             args.zip_path,

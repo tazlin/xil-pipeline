@@ -160,15 +160,14 @@ class TestMakeAudacityScript:
 # ─── Tests: dry_run_daw ───
 
 class TestDryRunDaw:
-    def test_prints_summary(self, stems_dir, parsed_file, config, capsys):
+    def test_prints_summary(self, stems_dir, parsed_file, config, caplog):
         from xil_pipeline.mix_common import load_entries_index, collect_stem_plans
         idx = load_entries_index(parsed_file)
         plans = collect_stem_plans(stems_dir, idx)
         daw.dry_run_daw("S01E01", plans, idx, "daw/S01E01")
-        out = capsys.readouterr().out
-        assert "S01E01" in out
-        assert "dialogue" in out.lower()
-        assert "ambience" in out.lower()
+        assert "S01E01" in caplog.text
+        assert "dialogue" in caplog.text.lower()
+        assert "ambience" in caplog.text.lower()
 
 
 # ─── Tests: export_daw_layers ───
@@ -204,12 +203,12 @@ class TestExportDawLayers:
         )
         assert seg.channels == 2
 
-    def test_no_stems_prints_warning(self, config, parsed_file, tmp_path, capsys):
+    def test_no_stems_prints_warning(self, config, parsed_file, tmp_path, caplog):
         empty_stems = str(tmp_path / "empty_stems")
         os.makedirs(empty_stems)
         output_dir = str(tmp_path / "daw")
         daw.export_daw_layers(config, empty_stems, parsed_file, output_dir, "S01E01")
-        assert "No stems found" in capsys.readouterr().out
+        assert "No stems found" in caplog.text
 
     def test_dialogue_layer_not_all_silence(self, config, stems_dir, parsed_file, tmp_path):
         output_dir = str(tmp_path / "daw" / "S01E01")
@@ -223,7 +222,7 @@ class TestExportDawLayers:
 # ─── Tests: XILP005 main() ───
 
 class TestDawExportMain:
-    def test_main_dry_run(self, cast_file, parsed_file, stems_dir, tmp_path, capsys):
+    def test_main_dry_run(self, cast_file, parsed_file, stems_dir, tmp_path, caplog):
         cast_path = cast_file
         parsed_path = parsed_file
         (tmp_path / "project.json").write_text(json.dumps({"show": "THE 413"}))
@@ -240,10 +239,9 @@ class TestDawExportMain:
                 daw.main()
         finally:
             os.chdir(original_cwd)
-        out = capsys.readouterr().out
-        assert "Dry Run" in out or "dry" in out.lower()
+        assert "Dry Run" in caplog.text or "dry" in caplog.text.lower()
 
-    def test_main_exits_gracefully_no_parsed(self, cast_file, tmp_path, capsys):
+    def test_main_exits_gracefully_no_parsed(self, cast_file, tmp_path, caplog):
         (tmp_path / "project.json").write_text(json.dumps({"show": "THE 413"}))
         original_cwd = os.getcwd()
         os.chdir(str(tmp_path))
@@ -256,8 +254,7 @@ class TestDawExportMain:
                 daw.main()
         finally:
             os.chdir(original_cwd)
-        out = capsys.readouterr().out
-        assert "not found" in out or "Run XILP001" in out
+        assert "not found" in caplog.text or "Run XILP001" in caplog.text
 
 
 # ─── Tests: _make_audacity_script save_aup3 ───

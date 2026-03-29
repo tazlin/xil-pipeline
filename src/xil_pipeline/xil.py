@@ -17,6 +17,10 @@ import sys
 from dataclasses import dataclass
 from typing import TextIO
 
+from xil_pipeline.log_config import configure_logging, get_logger
+
+logger = get_logger(__name__)
+
 _PIPELINE = "pipeline"
 _UTILITY = "utility"
 
@@ -104,7 +108,7 @@ def _normalize_exit_code(code: object) -> int:
         return 0
     if isinstance(code, int):
         return code
-    print(code, file=sys.stderr)
+    logger.error("%s", code)
     return 1
 
 
@@ -113,7 +117,7 @@ def run_subcommand(command: str, args: list[str]) -> int:
     module = importlib.import_module(spec.module)
     main_fn = getattr(module, "main", None)
     if main_fn is None:
-        print(f"Command module has no main(): {spec.module}", file=sys.stderr)
+        logger.error("Command module has no main(): %s", spec.module)
         return 1
 
     original_argv = sys.argv[:]
@@ -129,6 +133,7 @@ def run_subcommand(command: str, args: list[str]) -> int:
 
 
 def main(argv: list[str] | None = None) -> int:
+    configure_logging()
     argv = list(sys.argv[1:] if argv is None else argv)
 
     if not argv or argv[0] in {"-h", "--help", "help"}:
@@ -143,7 +148,7 @@ def main(argv: list[str] | None = None) -> int:
 
     command = argv[0]
     if command not in XIL_SCRIPT_COMMANDS:
-        print(f"Unknown command: {command}", file=sys.stderr)
+        logger.error("Unknown command: %s", command)
         _print_help(sys.stderr)
         return 2
 

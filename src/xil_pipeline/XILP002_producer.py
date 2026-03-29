@@ -12,11 +12,16 @@ Module Attributes:
 """
 
 import argparse
+import contextlib
 import json
 import os
+import re
+import sys
+import tempfile
 
 from elevenlabs import VoiceSettings
 from elevenlabs.client import ElevenLabs
+from elevenlabs.core.api_error import ApiError
 from pydub import AudioSegment
 
 from xil_pipeline.models import (
@@ -29,6 +34,7 @@ from xil_pipeline.models import (
 )
 from xil_pipeline.sfx_common import (
     dry_run_sfx,
+    file_nonempty,
     load_sfx_entries,
     run_banner,
     tag_mp3,
@@ -36,6 +42,9 @@ from xil_pipeline.sfx_common import (
 from xil_pipeline.sfx_common import (
     generate_sfx as generate_sfx_stems,
 )
+from xil_pipeline.log_config import configure_logging, get_logger
+
+logger = get_logger(__name__)
 
 # Setup ElevenLabs Client
 client = ElevenLabs(api_key=os.environ.get("ELEVENLABS_API_KEY"))
@@ -57,17 +66,17 @@ def check_elevenlabs_quota() -> int | None:
         limit = sub.character_limit
         remaining = limit - used
 
-        print("\n" + "="*40)
-        print("ELEVENLABS API STATUS:")
-        print(f"  Tier:      {sub.tier.upper()}")
-        print(f"  Usage:     {used:,} / {limit:,} characters")
-        print(f"  Remaining: {remaining:,}")
-        print("="*40 + "\n")
+        logger.info("\n" + "="*40)
+        logger.info("ELEVENLABS API STATUS:")
+        logger.info("  Tier:      %s", sub.tier.upper())
+        logger.info("  Usage:     %s / %s characters", f"{used:,}", f"{limit:,}")
+        logger.info("  Remaining: %s", f"{remaining:,}")
+        logger.info("="*40 + "\n")
 
         return remaining
-    except Exception as e:
-        print("\n[!] API Error: Unable to fetch user subscription data.")
-        print(f"    Details: {e}")
+    except ApiError as e:
+        logger.warning("API Error: Unable to fetch user subscription data.")
+        logger.warning("    Details: %s", e)
         return None
 
 
@@ -87,13 +96,13 @@ def has_enough_characters(text_to_generate: str) -> bool:
 
         required = len(text_to_generate)
         if remaining >= required:
-            print(f" [Guard] Quota OK: {required} required, {remaining:,} left.")
+            logger.info(" [Guard] Quota OK: %d required, %s left.", required, f"{remaining:,}")
             return True
         else:
-            print(f" [Guard] STOP: Line requires {required} chars, but only {remaining:,} remain.")
+            logger.info(" [Guard] STOP: Line requires %d chars, but only %s remain.", required, f"{remaining:,}")
             return False
-    except Exception:
-        print(" [Guard] Warning: Permission 'user_read' missing. Skipping quota check.")
+    except ApiError:
+        logger.warning(" [Guard] Permission 'user_read' missing. Skipping quota check.")
         return True
 
 
@@ -112,24 +121,29 @@ def get_best_model_for_budget() -> str:
         remaining = user_info.subscription.character_limit - user_info.subscription.character_count
 
         if remaining > SAFE_THRESHOLD:
-            print(f" [Budget] Healthy Balance: {remaining:,} left. Using 'eleven_v3'.")
+            logger.info(" [Budget] Healthy Balance: %s left. Using 'eleven_v3'.", f"{remaining:,}")
             return "eleven_v3"
         else:
-            print(f" [Budget] LOW BALANCE: {remaining:,} left. Switching to 'eleven_flash_v2_5' (50% cheaper).")
+            logger.info(" [Budget] LOW BALANCE: %s left. Switching to 'eleven_flash_v2_5' (50%% cheaper).", f"{remaining:,}")
             return "eleven_flash_v2_5"
 
-    except Exception:
-        print(" [Budget] API Check Failed. Defaulting to 'eleven_v3'.")
+    except ApiError:
+        logger.info(" [Budget] API Check Failed. Defaulting to 'eleven_v3'.")
         return "eleven_v3"
+
+
+_SSML_TAG_RE = re.compile(r"<(?:break|emphasis|prosody|say-as|phoneme|sub|speak|p|s)\b", re.IGNORECASE)
 
 
 def _select_model(text: str) -> str:
     """Select a TTS model, falling back to ``eleven_multilingual_v2`` for SSML text.
 
     ``eleven_v3`` does not support SSML tags such as ``<break time="1s"/>``.
-    When the text contains ``<``, this function overrides the budget-based
-    selection and returns ``"eleven_multilingual_v2"`` so that SSML-bearing
-    preamble/postamble segments continue to work without cast config changes.
+    When the text contains a recognised SSML tag, this function overrides the
+    budget-based selection and returns ``"eleven_multilingual_v2"`` so that
+    SSML-bearing preamble/postamble segments continue to work without cast
+    config changes.  A bare ``<`` that is not part of an SSML tag (e.g. a
+    less-than sign in dialogue) does not trigger the fallback.
 
     Args:
         text: The TTS input text, possibly containing SSML markup.
@@ -138,7 +152,7 @@ def _select_model(text: str) -> str:
         A model ID string safe to pass to ``client.text_to_speech.convert()``.
     """
     model = get_best_model_for_budget()
-    if "<" in text and model == "eleven_v3":
+    if _SSML_TAG_RE.search(text) and model == "eleven_v3":
         return "eleven_multilingual_v2"
     return model
 
@@ -183,9 +197,19 @@ def load_production(
     Raises:
         FileNotFoundError: If either JSON file does not exist.
     """
+    if not os.path.exists(cast_json_path):
+        raise FileNotFoundError(
+            f"Cast config not found: {cast_json_path}\n"
+            "Run XILP001 first or check your --episode flag."
+        )
     with open(cast_json_path, encoding="utf-8") as f:
         cast_data = json.load(f)
 
+    if not os.path.exists(script_json_path):
+        raise FileNotFoundError(
+            f"Parsed script not found: {script_json_path}\n"
+            "Run XILP001 first or check your --script flag."
+        )
     with open(script_json_path, encoding="utf-8") as f:
         script_data = json.load(f)
 
@@ -247,11 +271,11 @@ def dry_run(
         sfx_config: Optional raw SFX config dict.
         stems_dir: Episode stems directory (for SFX shared-library status).
     """
-    print(f"\n{'='*70}")
-    print(f"DRY RUN — {len(dialogue_entries)} dialogue lines")
-    print(f"{'='*70}")
-    print(f" [.] {'seq':<3} | {'speaker':<14} | {'chars':>10} | voice check [lang]")
-    print(f" {'-'*67}")
+    logger.info("\n%s", "="*70)
+    logger.info("DRY RUN — %d dialogue lines", len(dialogue_entries))
+    logger.info("%s", "="*70)
+    logger.info(" [.] %-3s | %-14s | %10s | voice check [lang]", "seq", "speaker", "chars")
+    logger.info(" %s", "-"*67)
 
     total_chars = 0
     lines_to_generate = 0
@@ -282,10 +306,10 @@ def dry_run(
             vs_parts.append(f"lang={cfg['language_code']}")
         vs_note = f" [{', '.join(vs_parts)}]" if vs_parts else ""
 
-        print(f" [{marker}] {entry['seq']:03d} | {entry['speaker']:<14} | {char_count:>4} chars | voice: {voice_status}{vs_note}{direction_label}")
-        print(f"          {text_preview}")
-        print(f"          stem: {entry['stem_name']}.mp3")
-        print()
+        logger.info(" [%s] %03d | %-14s | %4d chars | voice: %s%s%s", marker, entry['seq'], entry['speaker'], char_count, voice_status, vs_note, direction_label)
+        logger.info("          %s", text_preview)
+        logger.info("          stem: %s.mp3", entry['stem_name'])
+        logger.info("")
 
     # SFX entries — delegate to sfx_common.dry_run_sfx
     if sfx_entries and sfx_config:
@@ -298,8 +322,8 @@ def dry_run(
     )
     tbd_voices = [sp for sp, cfg in config.items() if cfg["id"] == "TBD"]
 
-    print(f"{'='*70}")
-    print(f"TOTAL:  {len(dialogue_entries)} lines, {total_chars:,} TTS characters")
+    logger.info("%s", "="*70)
+    logger.info("TOTAL:  %d lines, %s TTS characters", len(dialogue_entries), f"{total_chars:,}")
     if start_from > 1 or stop_at is not None:
         if stop_at is not None and start_from > 1:
             range_label = f"FROM {start_from}–{stop_at}"
@@ -307,11 +331,11 @@ def dry_run(
             range_label = f"THRU {stop_at}"
         else:
             range_label = f"FROM {start_from}"
-        print(f"{range_label}: {lines_to_generate} lines, {chars_in_range:,} TTS characters")
+        logger.info("%s: %d lines, %s TTS characters", range_label, lines_to_generate, f"{chars_in_range:,}")
     if tbd_voices:
-        print(f"\n  WARNING: {len(tbd_voices)} voices still need voice_id assignment: {', '.join(tbd_voices)}")
-        print("  Use XILU001_discover_voices_T2S.py to browse voices, then update the cast config")
-    print(f"{'='*70}\n")
+        logger.warning("\n  %d voices still need voice_id assignment: %s", len(tbd_voices), ', '.join(tbd_voices))
+        logger.info("  Use XILU001_discover_voices_T2S.py to browse voices, then update the cast config")
+    logger.info("%s\n", "="*70)
 
 
 def generate_voices(
@@ -351,7 +375,7 @@ def generate_voices(
         range_note = f" (seq {start_from}–{stop_at})"
     elif start_from > 1:
         range_note = f" (from seq {start_from})"
-    print(f"--- Phase 1: Generating {len(entries_to_process)} voice stems{range_note} ---")
+    logger.info("--- Phase 1: Generating %d voice stems%s ---", len(entries_to_process), range_note)
     current_model = get_best_model_for_budget()
     generated_count = 0
 
@@ -363,17 +387,17 @@ def generate_voices(
         # Skip if stem already exists
         stem_file = os.path.join(stems_dir, f"{stem_name}.mp3")
         if os.path.exists(stem_file):
-            print(f"   Exists: {stem_file} — skipping")
+            logger.info("   Exists: %s — skipping", stem_file)
             continue
 
         # Check voice_id is assigned
         if config.get(speaker, {}).get("id") == "TBD":
-            print(f" [!] No voice_id for {speaker} — skipping {stem_name}")
+            logger.warning("No voice_id for %s — skipping %s", speaker, stem_name)
             continue
 
         # Check quota
         if not has_enough_characters(text):
-            print(f" !!! Production halted at seq {entry['seq']} to save credits.")
+            logger.info(" !!! Production halted at seq %d to save credits.", entry['seq'])
             break
 
         # Build VoiceSettings from per-speaker cast config (None fields are omitted)
@@ -398,7 +422,7 @@ def generate_voices(
         if next_text:
             extra_kwargs["next_text"] = next_text
 
-        print(f" > [{entry['seq']:03d}] {speaker} with {current_model} ({len(text)} chars)...")
+        logger.info(" > [%03d] %s with %s (%d chars)...", entry['seq'], speaker, current_model, len(text))
         audio_stream = client.text_to_speech.convert(
             text=text,
             voice_id=config[speaker]["id"],
@@ -422,19 +446,20 @@ def generate_voices(
             artist=full_name,
             lyrics=text,
         )
-        print(f"   Saved: {stem_file}")
+        logger.info("   Saved: %s", stem_file)
         generated_count += 1
 
     stem_count = len([f for f in os.listdir(stems_dir) if f.endswith(".mp3")])
-    print(f"--- Phase 1 Complete: {generated_count} new, {stem_count} total stems in {stems_dir}/ ---")
+    logger.info("--- Phase 1 Complete: %d new, %d total stems in %s/ ---", generated_count, stem_count, stems_dir)
 
 
 
 def inject_preamble_entries(parsed_path: str, preamble_text: str, speaker: str) -> None:
     """Prepend seq -2 (voice) and -1 (INTRO MUSIC) entries into the parsed JSON.
 
-    Idempotent: strips any existing seq <= 0 entries before prepending so
-    re-running XILP002 replaces rather than duplicates preamble entries.
+    Idempotent: strips any existing ``section="preamble"`` entries before
+    prepending so re-running XILP002 replaces rather than duplicates preamble
+    entries.
 
     Args:
         parsed_path: Path to the parsed script JSON file (modified in place).
@@ -443,8 +468,8 @@ def inject_preamble_entries(parsed_path: str, preamble_text: str, speaker: str) 
     """
     with open(parsed_path, encoding="utf-8") as f:
         data = json.load(f)
-    # Strip any existing preamble entries (seq <= 0)
-    data["entries"] = [e for e in data["entries"] if e["seq"] > 0]
+    # Strip any existing preamble entries
+    data["entries"] = [e for e in data["entries"] if e.get("section") != "preamble"]
     # Prepend seq -2 (voice) and seq -1 (INTRO MUSIC direction)
     preamble_entries = [
         {
@@ -471,7 +496,7 @@ def inject_preamble_entries(parsed_path: str, preamble_text: str, speaker: str) 
     data["entries"] = preamble_entries + data["entries"]
     with open(parsed_path, "w", encoding="utf-8") as f:
         json.dump(data, f, indent=2, ensure_ascii=False)
-    print(f"   Injected preamble entries (seq -2, -1) into {parsed_path}")
+    logger.info("   Injected preamble entries (seq -2, -1) into %s", parsed_path)
 
 
 def inject_postamble_entries(parsed_path: str, postamble_text: str, speaker: str) -> tuple[int, int]:
@@ -522,7 +547,7 @@ def inject_postamble_entries(parsed_path: str, postamble_text: str, speaker: str
     ]
     with open(parsed_path, "w", encoding="utf-8") as f:
         json.dump(data, f, indent=2, ensure_ascii=False)
-    print(f"   Injected postamble entries (seq {music_seq} OUTRO MUSIC, {voice_seq} voice) into {parsed_path}")
+    logger.info("   Injected postamble entries (seq %d OUTRO MUSIC, %d voice) into %s", music_seq, voice_seq, parsed_path)
     return music_seq, voice_seq
 
 
@@ -560,57 +585,64 @@ def _resolve_postamble_text(cast_cfg) -> str:
 def _tts_segment(text: str, out_path: str, voice_id: str, speed: float | None) -> None:
     """Call ElevenLabs TTS and write the result to *out_path*.
 
-    Uses a ``.tmp`` staging file so a partial write is never mistaken for a
-    complete asset.
+    Uses a unique ``.tmp`` staging file so a partial write is never mistaken
+    for a complete asset and concurrent runs cannot collide on the same path.
     """
-    tmp = out_path + ".tmp"
-    current_model = _select_model(text)
-    print(f"   > TTS ({len(text)} chars) → {os.path.basename(out_path)} [{current_model}]")
-    voice_settings = VoiceSettings(speed=speed) if speed is not None else None
-    audio_stream = client.text_to_speech.convert(
-        text=text,
-        voice_id=voice_id,
-        model_id=current_model,
-        output_format="mp3_44100_128",
-        voice_settings=voice_settings,
+    tmp_fd, tmp_path = tempfile.mkstemp(
+        dir=os.path.dirname(out_path) or ".", suffix=".tmp"
     )
-    with open(tmp, "wb") as f:
-        for chunk in audio_stream:
-            if chunk:
-                f.write(chunk)
-    os.replace(tmp, out_path)
+    os.close(tmp_fd)
+    try:
+        current_model = _select_model(text)
+        logger.info("   > TTS (%d chars) → %s [%s]", len(text), os.path.basename(out_path), current_model)
+        voice_settings = VoiceSettings(speed=speed) if speed is not None else None
+        audio_stream = client.text_to_speech.convert(
+            text=text,
+            voice_id=voice_id,
+            model_id=current_model,
+            output_format="mp3_44100_128",
+            voice_settings=voice_settings,
+        )
+        with open(tmp_path, "wb") as f:
+            for chunk in audio_stream:
+                if chunk:
+                    f.write(chunk)
+        os.replace(tmp_path, out_path)
+        tmp_path = None
+    finally:
+        if tmp_path is not None:
+            with contextlib.suppress(FileNotFoundError):
+                os.unlink(tmp_path)
 
 
 def _dry_run_voice_block(block, cast_cfg, stem_path: str, label: str) -> None:
     """Print dry-run summary for a preamble or postamble voice stem."""
     spk = block.speaker
-    stem_exists = os.path.exists(stem_path) and os.path.getsize(stem_path) > 0
+    stem_exists = file_nonempty(stem_path)
     if stem_exists:
-        print(f" [{label}] {spk} — stem exists, will skip\n")
+        logger.info(" [%s] %s — stem exists, will skip\n", label, spk)
         return
 
     kwargs = _episode_kwargs(cast_cfg)
     if block.segments:
-        print(f" [{label}] {spk} | {len(block.segments)} segments")
+        logger.info(" [%s] %s | %d segments", label, spk, len(block.segments))
         total_new = 0
         for seg in block.segments:
             resolved = seg.text.format(**kwargs)
             if seg.shared_key:
                 cached_path = os.path.join("SFX", f"{seg.shared_key}.mp3")
-                status = "CACHED" if (
-                    os.path.exists(cached_path) and os.path.getsize(cached_path) > 0
-                ) else "NEW   "
-                print(f"   {status}  SFX/{seg.shared_key}.mp3  ({len(resolved)} chars)")
+                status = "CACHED" if file_nonempty(cached_path) else "NEW   "
+                logger.info("   %s  SFX/%s.mp3  (%d chars)", status, seg.shared_key, len(resolved))
                 if status.strip() == "NEW":
                     total_new += len(resolved)
             else:
-                print(f"   NEW     [episode variable]  ({len(resolved)} chars)")
+                logger.info("   NEW     [episode variable]  (%d chars)", len(resolved))
                 total_new += len(resolved)
-        print(f"   Total NEW chars for TTS: {total_new}\n")
+        logger.info("   Total NEW chars for TTS: %d\n", total_new)
     else:
         resolved = block.text.format(**kwargs)
-        print(f" [{label}] {spk} | {len(resolved)} chars")
-        print(f"   stem: {os.path.basename(stem_path)}\n")
+        logger.info(" [%s] %s | %d chars", label, spk, len(resolved))
+        logger.info("   stem: %s\n", os.path.basename(stem_path))
 
 
 def _dry_run_preamble(cast_cfg, preamble_voice_stem: str) -> None:
@@ -630,14 +662,14 @@ def _generate_voice_block(block, cast_cfg, config: dict, voice_stem: str,
     generated to a temp file and cleaned up after concatenation.  The legacy
     single-text form generates the stem directly.
     """
-    if os.path.exists(voice_stem) and os.path.getsize(voice_stem) > 0:
-        print(f"   Exists: {voice_stem} — skipping")
+    if file_nonempty(voice_stem):
+        logger.info("   Exists: %s — skipping", voice_stem)
         return
 
     spk = block.speaker
     voice_id = config.get(spk, {}).get("id", "TBD")
     if voice_id == "TBD":
-        print(f" [!] No voice_id for {spk} — skipping {os.path.basename(voice_stem)}")
+        logger.warning("No voice_id for %s — skipping %s", spk, os.path.basename(voice_stem))
         return
 
     kwargs = _episode_kwargs(cast_cfg)
@@ -648,27 +680,31 @@ def _generate_voice_block(block, cast_cfg, config: dict, voice_stem: str,
         for i, seg in enumerate(block.segments):
             resolved = seg.text.format(**kwargs)
             if not has_enough_characters(resolved):
-                print(f" [!] Insufficient quota for {label.lower()} segment {i} — aborting")
+                logger.warning("Insufficient quota for %s segment %d — aborting", label.lower(), i)
                 for f in tmp_files:
                     if os.path.exists(f):
                         os.remove(f)
                 return
             if seg.shared_key:
                 cached = os.path.join(sfx_dir, f"{seg.shared_key}.mp3")
-                if os.path.exists(cached) and os.path.getsize(cached) > 0:
-                    print(f"   CACHED  SFX/{seg.shared_key}.mp3")
+                if file_nonempty(cached):
+                    logger.info("   CACHED  SFX/%s.mp3", seg.shared_key)
                 else:
                     os.makedirs(sfx_dir, exist_ok=True)
                     _tts_segment(resolved, cached, voice_id, block.speed)
-                    print(f"   Saved:  SFX/{seg.shared_key}.mp3")
+                    logger.info("   Saved:  SFX/%s.mp3", seg.shared_key)
                 segment_paths.append(cached)
             else:
-                tmp = voice_stem + f".seg{i}.tmp.mp3"
+                tmp_fd, tmp = tempfile.mkstemp(
+                    dir=os.path.dirname(voice_stem) or ".",
+                    suffix=f".seg{i}.tmp.mp3",
+                )
+                os.close(tmp_fd)
                 _tts_segment(resolved, tmp, voice_id, block.speed)
                 segment_paths.append(tmp)
                 tmp_files.append(tmp)
 
-        print(f"   Concatenating {len(segment_paths)} segment(s) → {os.path.basename(voice_stem)}")
+        logger.info("   Concatenating %d segment(s) → %s", len(segment_paths), os.path.basename(voice_stem))
         combined = AudioSegment.empty()
         for p in segment_paths:
             combined += AudioSegment.from_file(p)
@@ -676,15 +712,15 @@ def _generate_voice_block(block, cast_cfg, config: dict, voice_stem: str,
         for f in tmp_files:
             if os.path.exists(f):
                 os.remove(f)
-        print(f"   Saved: {voice_stem}")
+        logger.info("   Saved: %s", voice_stem)
     else:
         resolved = block.text.format(**kwargs)
         if not has_enough_characters(resolved):
-            print(f" [!] Insufficient quota for {label.lower()} — skipping")
+            logger.warning("Insufficient quota for %s — skipping", label.lower())
             return
-        print(f" > [{label}] {spk} ({len(resolved)} chars)...")
+        logger.info(" > [%s] %s (%d chars)...", label, spk, len(resolved))
         _tts_segment(resolved, voice_stem, voice_id, block.speed)
-        print(f"   Saved: {voice_stem}")
+        logger.info("   Saved: %s", voice_stem)
 
 
 def _generate_preamble_voice(cast_cfg, config: dict, preamble_voice_stem: str,
@@ -707,6 +743,7 @@ def main() -> None:
     costs before committing API quota. For audio assembly, run
     ``XILP003_audio_assembly.py`` separately.
     """
+    configure_logging()
     with run_banner():
         parser = argparse.ArgumentParser(
             description="Voice Generation — generate voice stems via ElevenLabs"
@@ -735,6 +772,9 @@ def main() -> None:
                             help="(deprecated) shorthand for --gen-sfx --gen-music --gen-ambience")
         args = parser.parse_args()
 
+        if not args.dry_run and not os.environ.get("ELEVENLABS_API_KEY"):
+            sys.exit("Error: ELEVENLABS_API_KEY environment variable is not set.")
+
         # Derive config paths from --episode
         slug = resolve_slug(args.show)
         paths = derive_paths(slug, args.episode)
@@ -742,6 +782,8 @@ def main() -> None:
         sfx_path = paths["sfx"]
 
         # Always load cast_cfg for metadata (preamble, season_title, tag)
+        if not os.path.exists(cast_path):
+            sys.exit(f"Error: Cast config not found: {cast_path}\nRun XILP001 first or check your --episode flag.")
         with open(cast_path, encoding="utf-8") as f:
             cast_data = json.load(f)
         cast_cfg = CastConfiguration(**cast_data)
@@ -834,13 +876,13 @@ def main() -> None:
                             if intro_entry.play_duration is not None:
                                 trim_ms = int(len(clip) * intro_entry.play_duration / 100.0)
                                 clip = clip[:trim_ms]
-                                print(f"   Trimmed intro music to {trim_ms/1000:.1f}s ({intro_entry.play_duration}%)")
+                                logger.info("   Trimmed intro music to %.1fs (%s%%)", trim_ms/1000, intro_entry.play_duration)
                             clip.export(preamble_music_stem, format="mp3")
-                            print(f"   Saved: {preamble_music_stem}")
+                            logger.info("   Saved: %s", preamble_music_stem)
                         else:
-                            print(" [!] INTRO MUSIC entry has no 'source' — skipping music stem")
+                            logger.warning("INTRO MUSIC entry has no 'source' — skipping music stem")
                     else:
-                        print(" [!] No 'INTRO MUSIC' entry in sfx config — skipping music stem")
+                        logger.warning("No 'INTRO MUSIC' entry in sfx config — skipping music stem")
             generate_voices(config, dialogue_entries, stems_dir,
                             start_from=args.start_from, stop_at=args.stop_at,
                             show=cast_cfg.show)
@@ -868,11 +910,11 @@ def main() -> None:
                             if outro_entry.play_duration is not None:
                                 trim_ms = int(len(clip) * outro_entry.play_duration / 100.0)
                                 clip = clip[:trim_ms]
-                                print(f"   Trimmed outro music to {trim_ms/1000:.1f}s ({outro_entry.play_duration}%)")
+                                logger.info("   Trimmed outro music to %.1fs (%s%%)", trim_ms/1000, outro_entry.play_duration)
                             clip.export(postamble_music_stem, format="mp3")
-                            print(f"   Saved: {postamble_music_stem}")
+                            logger.info("   Saved: %s", postamble_music_stem)
                         else:
-                            print(" [!] OUTRO MUSIC entry has no 'source' — skipping outro music stem")
+                            logger.warning("OUTRO MUSIC entry has no 'source' — skipping outro music stem")
                 _generate_postamble_voice(cast_cfg, config, postamble_voice_stem)
 
 

@@ -10,6 +10,7 @@ import tempfile
 import unittest.mock
 
 import pytest
+from elevenlabs.core.api_error import ApiError
 
 # Patch out ElevenLabs client before loading module (no API key needed for these tests)
 with unittest.mock.patch.dict(os.environ, {"ELEVENLABS_API_KEY": "test_key"}):
@@ -113,69 +114,61 @@ class TestLoadProduction:
 # ─── Tests: dry_run ───
 
 class TestDryRun:
-    def test_prints_all_lines(self, sample_script, sample_cast, capsys):
+    def test_prints_all_lines(self, sample_script, sample_cast, caplog):
         config, entries, _tag = producer.load_production(sample_script, sample_cast)
         producer.dry_run(config, entries)
-        output = capsys.readouterr().out
-        assert "4 dialogue lines" in output
-        assert "Hello listeners." in output
-        assert "Something happened." in output
+        assert "4 dialogue lines" in caplog.text
+        assert "Hello listeners." in caplog.text
+        assert "Something happened." in caplog.text
 
-    def test_shows_tbd_warning(self, sample_script, sample_cast, capsys):
+    def test_shows_tbd_warning(self, sample_script, sample_cast, caplog):
         config, entries, _tag = producer.load_production(sample_script, sample_cast)
         producer.dry_run(config, entries)
-        output = capsys.readouterr().out
-        assert "TBD" in output
-        assert "frank" in output
+        assert "TBD" in caplog.text
+        assert "frank" in caplog.text
 
-    def test_start_from_filters_count(self, sample_script, sample_cast, capsys):
+    def test_start_from_filters_count(self, sample_script, sample_cast, caplog):
         config, entries, _tag = producer.load_production(sample_script, sample_cast)
         producer.dry_run(config, entries, start_from=6)
-        output = capsys.readouterr().out
-        assert "FROM 6:" in output
+        assert "FROM 6:" in caplog.text
         # Only seq 6 and 7 are >= 6
-        assert "2 lines" in output
+        assert "2 lines" in caplog.text
 
-    def test_stop_at_filters_count(self, sample_script, sample_cast, capsys):
+    def test_stop_at_filters_count(self, sample_script, sample_cast, caplog):
         config, entries, _tag = producer.load_production(sample_script, sample_cast)
         # entries at seq 3, 4, 6, 7 — stop_at=4 keeps seq 3 and 4 only
         producer.dry_run(config, entries, stop_at=4)
-        output = capsys.readouterr().out
-        assert "THRU 4:" in output
-        assert "2 lines" in output
+        assert "THRU 4:" in caplog.text
+        assert "2 lines" in caplog.text
 
-    def test_stop_at_and_start_from_combined(self, sample_script, sample_cast, capsys):
+    def test_stop_at_and_start_from_combined(self, sample_script, sample_cast, caplog):
         config, entries, _tag = producer.load_production(sample_script, sample_cast)
         # entries at seq 3, 4, 6, 7 — start_from=4, stop_at=6 keeps seq 4 and 6 only
         producer.dry_run(config, entries, start_from=4, stop_at=6)
-        output = capsys.readouterr().out
-        assert "FROM 4" in output
-        assert "6" in output
-        assert "2 lines" in output
+        assert "FROM 4" in caplog.text
+        assert "6" in caplog.text
+        assert "2 lines" in caplog.text
 
-    def test_stop_at_marks_out_of_range_skipped(self, sample_script, sample_cast, capsys):
+    def test_stop_at_marks_out_of_range_skipped(self, sample_script, sample_cast, caplog):
         config, entries, _tag = producer.load_production(sample_script, sample_cast)
         # stop_at=4: seq 6 and 7 should be marked [x]
         producer.dry_run(config, entries, stop_at=4)
-        output = capsys.readouterr().out
-        lines = output.splitlines()
+        lines = caplog.text.splitlines()
         # Find lines with [x] markers for seq 006 and 007
         skipped = [l for l in lines if "[x]" in l and ("006" in l or "007" in l)]
         assert len(skipped) == 2
 
-    def test_shows_stem_names(self, sample_script, sample_cast, capsys):
+    def test_shows_stem_names(self, sample_script, sample_cast, caplog):
         config, entries, _tag = producer.load_production(sample_script, sample_cast)
         producer.dry_run(config, entries)
-        output = capsys.readouterr().out
-        assert "003_cold-open_adam.mp3" in output
-        assert "006_act1-scene-1_dez.mp3" in output
+        assert "003_cold-open_adam.mp3" in caplog.text
+        assert "006_act1-scene-1_dez.mp3" in caplog.text
 
-    def test_shows_char_counts(self, sample_script, sample_cast, capsys):
+    def test_shows_char_counts(self, sample_script, sample_cast, caplog):
         config, entries, _tag = producer.load_production(sample_script, sample_cast)
         producer.dry_run(config, entries)
-        output = capsys.readouterr().out
         # "Hello listeners." = 16 chars
-        assert "16 chars" in output
+        assert "16 chars" in caplog.text
 
 
 # ─── Integration: load from actual project files ───
@@ -216,7 +209,7 @@ class TestCheckElevenLabsQuota:
         sub.tier = tier
         return sub
 
-    def test_returns_remaining(self, capsys):
+    def test_returns_remaining(self, caplog):
         sub = self._make_sub(1000, 10000, "free")
         user_info = unittest.mock.MagicMock()
         user_info.subscription = sub
@@ -225,19 +218,18 @@ class TestCheckElevenLabsQuota:
         result = producer.check_elevenlabs_quota()
         assert result == 9000
 
-    def test_prints_status(self, capsys):
+    def test_prints_status(self, caplog):
         sub = self._make_sub(500, 5000, "starter")
         user_info = unittest.mock.MagicMock()
         user_info.subscription = sub
         producer.client.user.get.return_value = user_info
 
         producer.check_elevenlabs_quota()
-        out = capsys.readouterr().out
-        assert "ELEVENLABS API STATUS" in out
-        assert "STARTER" in out
+        assert "ELEVENLABS API STATUS" in caplog.text
+        assert "STARTER" in caplog.text
 
-    def test_returns_none_on_exception(self, capsys):
-        producer.client.user.get.side_effect = Exception("API error")
+    def test_returns_none_on_exception(self, caplog):
+        producer.client.user.get.side_effect = ApiError(status_code=500, body="API error")
         result = producer.check_elevenlabs_quota()
         assert result is None
         producer.client.user.get.side_effect = None
@@ -258,12 +250,12 @@ class TestHasEnoughCharacters:
         self._set_quota(1000)
         assert producer.has_enough_characters("short text") is True
 
-    def test_returns_false_when_insufficient(self, capsys):
+    def test_returns_false_when_insufficient(self, caplog):
         self._set_quota(5)
         assert producer.has_enough_characters("this is a much longer text than 5 chars") is False
 
     def test_returns_true_on_api_exception(self):
-        producer.client.user.get.side_effect = Exception("no user_read")
+        producer.client.user.get.side_effect = ApiError(status_code=403, body="no user_read")
         assert producer.has_enough_characters("any text") is True
         producer.client.user.get.side_effect = None
 
@@ -290,7 +282,7 @@ class TestGetBestModelForBudget:
         assert model == "eleven_flash_v2_5"
 
     def test_returns_fallback_on_exception(self):
-        producer.client.user.get.side_effect = Exception("fail")
+        producer.client.user.get.side_effect = ApiError(status_code=500, body="fail")
         model = producer.get_best_model_for_budget()
         assert model == "eleven_v3"
         producer.client.user.get.side_effect = None
@@ -322,6 +314,11 @@ class TestSelectModel:
         model = producer._select_model('Hello <break time="1s"/> world.')
         assert model == "eleven_flash_v2_5"
 
+    def test_bare_less_than_does_not_trigger_ssml_fallback(self):
+        self._set_quota(50000)
+        model = producer._select_model("Score was 3 < 5, no SSML here.")
+        assert model == "eleven_v3"
+
 
 # ─── Tests: generate_voices ───
 
@@ -350,27 +347,25 @@ class TestGenerateVoices:
         producer.client.user.get.return_value = user_info
         producer.client.text_to_speech.convert.return_value = [fake_audio]
 
-    def test_skips_tbd_voice(self, config, entries, tmp_path, capsys):
+    def test_skips_tbd_voice(self, config, entries, tmp_path, caplog):
         self._setup_api()
         stems_dir = str(tmp_path)
         producer.generate_voices(config, entries, stems_dir)
 
-        out = capsys.readouterr().out
-        assert "No voice_id for dez" in out
+        assert "No voice_id for dez" in caplog.text
         # dez stem should NOT exist
         assert not (tmp_path / "006_act1_dez.mp3").exists()
 
-    def test_skips_existing_stem(self, config, entries, tmp_path, capsys):
+    def test_skips_existing_stem(self, config, entries, tmp_path, caplog):
         self._setup_api()
         # Pre-create the adam stem
         (tmp_path / "003_cold-open_adam.mp3").write_bytes(b"existing")
         stems_dir = str(tmp_path)
         producer.generate_voices(config, entries, stems_dir)
 
-        out = capsys.readouterr().out
-        assert "skipping" in out
+        assert "skipping" in caplog.text
 
-    def test_halts_when_quota_exhausted(self, config, entries, tmp_path, capsys):
+    def test_halts_when_quota_exhausted(self, config, entries, tmp_path, caplog):
         sub = unittest.mock.MagicMock()
         sub.character_limit = 1  # only 1 char left
         sub.character_count = 0
@@ -381,38 +376,34 @@ class TestGenerateVoices:
         stems_dir = str(tmp_path)
         producer.generate_voices(config, entries, stems_dir)
 
-        out = capsys.readouterr().out
-        assert "halted" in out
+        assert "halted" in caplog.text
 
-    def test_start_from_skips_earlier_entries(self, config, entries, tmp_path, capsys):
+    def test_start_from_skips_earlier_entries(self, config, entries, tmp_path, caplog):
         self._setup_api()
         stems_dir = str(tmp_path)
         producer.generate_voices(config, entries, stems_dir, start_from=6)
 
-        out = capsys.readouterr().out
         # adam (seq=3) should not appear in generation output
-        assert "003" not in out
+        assert "003" not in caplog.text
 
-    def test_stop_at_skips_later_entries(self, config, entries, tmp_path, capsys):
+    def test_stop_at_skips_later_entries(self, config, entries, tmp_path, caplog):
         self._setup_api()
         stems_dir = str(tmp_path)
         # entries: seq 3 (adam, valid), seq 6 (dez, TBD) — stop at 4 excludes seq 6
         producer.generate_voices(config, entries, stems_dir, stop_at=4)
 
-        out = capsys.readouterr().out
         # seq 6 (dez) should not appear in output at all
-        assert "006" not in out
+        assert "006" not in caplog.text
         # adam (seq=3) should have been processed
         assert (tmp_path / "003_cold-open_adam.mp3").exists()
 
-    def test_stop_at_combined_with_start_from(self, config, entries, tmp_path, capsys):
+    def test_stop_at_combined_with_start_from(self, config, entries, tmp_path, caplog):
         self._setup_api()
         stems_dir = str(tmp_path)
         # start_from=6 AND stop_at=4 → empty range, nothing to process
         producer.generate_voices(config, entries, stems_dir, start_from=6, stop_at=4)
 
-        out = capsys.readouterr().out
-        assert "Generating 0 voice stems" in out
+        assert "Generating 0 voice stems" in caplog.text
 
     def test_tags_dialogue_stem(self, sample_script, sample_cast, tmp_path):
         """Generated stems carry ID3 tags: title (song), artist, and lyrics."""
@@ -480,29 +471,29 @@ class TestTruncateToWords:
 # ─── Tests: --terse mode ───
 
 class TestTerseMode:
-    def test_dry_run_shows_truncated_text(self, sample_script, sample_cast, capsys):
+    def test_dry_run_shows_truncated_text(self, sample_script, sample_cast, caplog):
         config, entries, _tag = producer.load_production(sample_script, sample_cast)
         terse_entries = [
             {**e, "text": producer.truncate_to_words(e["text"])} for e in entries
         ]
         producer.dry_run(config, terse_entries)
-        output = capsys.readouterr().out
         # "Hello listeners." → "Hello listeners." (only 2 words, unchanged)
         # "Welcome to the" instead of "Welcome to the show."
-        assert "Welcome to the" in output
-        assert "Welcome to the show." not in output
+        assert "Welcome to the" in caplog.text
+        assert "Welcome to the show." not in caplog.text
 
-    def test_dry_run_char_count_reduced(self, sample_script, sample_cast, capsys):
+    def test_dry_run_char_count_reduced(self, sample_script, sample_cast, caplog):
         config, entries, _tag = producer.load_production(sample_script, sample_cast)
         # Full run char count
         producer.dry_run(config, entries)
-        full_out = capsys.readouterr().out
+        full_out = caplog.text
+        offset = len(caplog.text)
         # Terse run char count
         terse_entries = [
             {**e, "text": producer.truncate_to_words(e["text"])} for e in entries
         ]
         producer.dry_run(config, terse_entries)
-        terse_out = capsys.readouterr().out
+        terse_out = caplog.text[offset:]
         # Extract total chars from each output
         import re
         full_total = int(re.search(r"(\d+) TTS characters", full_out).group(1).replace(",", ""))
@@ -703,7 +694,7 @@ class TestGenerateSfxStems:
         mock_client.text_to_sound_effects.convert.assert_called_once()
         assert (tmp_path / "stems" / "005_cold-open_sfx.mp3").exists()
 
-    def test_skips_existing_sfx_stem(self, tmp_path, capsys):
+    def test_skips_existing_sfx_stem(self, tmp_path, caplog):
         entries = [self._make_sfx_entries()[1]]  # BEAT
         config = self._make_sfx_config_dict()
         stems_dir = str(tmp_path / "stems")
@@ -712,8 +703,7 @@ class TestGenerateSfxStems:
         (tmp_path / "stems" / "004_cold-open_sfx.mp3").write_bytes(b"existing")
         producer.generate_sfx_stems(entries, config, stems_dir,
                                     client=None, sfx_dir=sfx_dir)
-        out = capsys.readouterr().out
-        assert "skipping" in out.lower() or "Exists" in out
+        assert "skipping" in caplog.text.lower() or "Exists" in caplog.text
 
     def test_start_from_filters_entries(self, tmp_path):
         entries = self._make_sfx_entries()
@@ -733,7 +723,7 @@ class TestGenerateSfxStems:
 # ─── Tests: dry_run with SFX ───
 
 class TestDryRunWithSfx:
-    def test_dry_run_includes_sfx_entries(self, tmp_path, capsys):
+    def test_dry_run_includes_sfx_entries(self, tmp_path, caplog):
         config = {"adam": {"id": "voice_123", "pan": 0.0, "filter": False}}
         dialogue = [
             {"seq": 3, "speaker": "adam", "text": "Hello.", "stem_name": "003_cold-open_adam", "direction": None},
@@ -756,12 +746,11 @@ class TestDryRunWithSfx:
         }
         producer.dry_run(config, dialogue, sfx_entries=sfx, sfx_config=sfx_config,
                          stems_dir=str(tmp_path))
-        out = capsys.readouterr().out
-        assert "AMBIENCE: RADIO STATION" in out
-        assert "BEAT" in out
-        assert "silence" in out.lower()
+        assert "AMBIENCE: RADIO STATION" in caplog.text
+        assert "BEAT" in caplog.text
+        assert "silence" in caplog.text.lower()
 
-    def test_dry_run_shows_sfx_cost_estimate(self, tmp_path, capsys):
+    def test_dry_run_shows_sfx_cost_estimate(self, tmp_path, caplog):
         config = {}
         dialogue = []
         sfx = [
@@ -778,9 +767,8 @@ class TestDryRunWithSfx:
         }
         producer.dry_run(config, dialogue, sfx_entries=sfx, sfx_config=sfx_config,
                          stems_dir=str(tmp_path))
-        out = capsys.readouterr().out
         # Should show duration or credit cost info
-        assert "2.0" in out or "credits" in out.lower()
+        assert "2.0" in caplog.text or "credits" in caplog.text.lower()
 
 
 # ─── Tests: Preamble dry-run ───
@@ -818,7 +806,7 @@ class TestPreambleDryRun:
         f.write_text(json.dumps(script), encoding="utf-8")
         return str(f)
 
-    def test_preamble_line_printed_before_main_dry_run(self, tmp_path, capsys):
+    def test_preamble_line_printed_before_main_dry_run(self, tmp_path, caplog):
         cast_file = self._make_cast_file(tmp_path)
         script_file = self._make_script_file(tmp_path)
         (tmp_path / "project.json").write_text(json.dumps({"show": "THE 413"}))
@@ -832,11 +820,10 @@ class TestPreambleDryRun:
                 producer.main()
         finally:
             os.chdir(original_cwd)
-        out = capsys.readouterr().out
-        assert "[PREAMBLE]" in out
-        assert "tina" in out
+        assert "[PREAMBLE]" in caplog.text
+        assert "tina" in caplog.text
 
-    def test_preamble_shows_char_count(self, tmp_path, capsys):
+    def test_preamble_shows_char_count(self, tmp_path, caplog):
         cast_file = self._make_cast_file(tmp_path)
         script_file = self._make_script_file(tmp_path)
         (tmp_path / "project.json").write_text(json.dumps({"show": "THE 413"}))
@@ -850,11 +837,10 @@ class TestPreambleDryRun:
                 producer.main()
         finally:
             os.chdir(original_cwd)
-        out = capsys.readouterr().out
         # Preamble text has template vars replaced; should show char count
-        assert "chars" in out
+        assert "chars" in caplog.text
 
-    def test_no_preamble_no_preamble_line(self, tmp_path, capsys):
+    def test_no_preamble_no_preamble_line(self, tmp_path, caplog):
         cast_file = self._make_cast_file(tmp_path, with_preamble=False)
         script_file = self._make_script_file(tmp_path)
         (tmp_path / "project.json").write_text(json.dumps({"show": "THE 413"}))
@@ -868,8 +854,7 @@ class TestPreambleDryRun:
                 producer.main()
         finally:
             os.chdir(original_cwd)
-        out = capsys.readouterr().out
-        assert "[PREAMBLE]" not in out
+        assert "[PREAMBLE]" not in caplog.text
 
 
 class TestPreambleSegments:
@@ -919,7 +904,7 @@ class TestPreambleSegments:
     # _dry_run_preamble — segments path
     # ------------------------------------------------------------------
 
-    def test_dry_run_segments_shows_segment_count(self, tmp_path, capsys):
+    def test_dry_run_segments_shows_segment_count(self, tmp_path, caplog):
         cfg = self._make_cast_cfg({
             "speaker": "tina",
             "segments": [
@@ -930,11 +915,10 @@ class TestPreambleSegments:
         })
         stem = str(tmp_path / "n002_preamble_tina.mp3")
         producer._dry_run_preamble(cfg, stem)
-        out = capsys.readouterr().out
-        assert "3 segments" in out
-        assert "tina" in out
+        assert "3 segments" in caplog.text
+        assert "tina" in caplog.text
 
-    def test_dry_run_segments_cached_vs_new(self, tmp_path, capsys):
+    def test_dry_run_segments_cached_vs_new(self, tmp_path, caplog):
         # Create the intro cache file; outro is absent
         sfx_dir = tmp_path / "SFX"
         sfx_dir.mkdir()
@@ -956,11 +940,10 @@ class TestPreambleSegments:
             producer._dry_run_preamble(cfg, stem)
         finally:
             os.chdir(original_cwd)
-        out = capsys.readouterr().out
-        assert "CACHED" in out
-        assert "NEW" in out
+        assert "CACHED" in caplog.text
+        assert "NEW" in caplog.text
 
-    def test_dry_run_stem_exists_skips(self, tmp_path, capsys):
+    def test_dry_run_stem_exists_skips(self, tmp_path, caplog):
         stem = tmp_path / "n002_preamble_tina.mp3"
         stem.write_bytes(b"\xff\xfb" + b"\x00" * 100)
         cfg = self._make_cast_cfg({
@@ -971,14 +954,13 @@ class TestPreambleSegments:
             ],
         })
         producer._dry_run_preamble(cfg, str(stem))
-        out = capsys.readouterr().out
-        assert "skip" in out.lower()
+        assert "skip" in caplog.text.lower()
 
     # ------------------------------------------------------------------
     # _generate_preamble_voice — cache-hit path (no API call)
     # ------------------------------------------------------------------
 
-    def test_generate_skips_existing_stem(self, tmp_path, capsys):
+    def test_generate_skips_existing_stem(self, tmp_path, caplog):
         stem = tmp_path / "n002_preamble_tina.mp3"
         stem.write_bytes(b"\xff\xfb" + b"\x00" * 100)
         cfg = self._make_cast_cfg({
@@ -990,12 +972,11 @@ class TestPreambleSegments:
         })
         config = {"tina": {"id": "voice_tina"}}
         producer._generate_preamble_voice(cfg, config, str(stem))
-        out = capsys.readouterr().out
-        assert "skipping" in out.lower()
+        assert "skipping" in caplog.text.lower()
         # stem must be unchanged
         assert stem.read_bytes()[:2] == b"\xff\xfb"
 
-    def test_generate_missing_voice_id_skips(self, tmp_path, capsys):
+    def test_generate_missing_voice_id_skips(self, tmp_path, caplog):
         cfg = self._make_cast_cfg({
             "speaker": "tina",
             "segments": [{"text": "Hello.", "shared_key": None}],
@@ -1003,8 +984,7 @@ class TestPreambleSegments:
         config = {"tina": {"id": "TBD"}}
         stem = str(tmp_path / "n002_preamble_tina.mp3")
         producer._generate_preamble_voice(cfg, config, stem)
-        out = capsys.readouterr().out
-        assert "No voice_id" in out
+        assert "No voice_id" in caplog.text
         assert not os.path.exists(stem)
 
 
@@ -1141,7 +1121,7 @@ class TestPostambleHelpers:
     # _dry_run_postamble
     # ------------------------------------------------------------------
 
-    def test_dry_run_postamble_shows_label(self, tmp_path, capsys):
+    def test_dry_run_postamble_shows_label(self, tmp_path, caplog):
         cfg = self._make_cast_cfg({
             "speaker": "tina",
             "segments": [
@@ -1151,41 +1131,78 @@ class TestPostambleHelpers:
         })
         stem = str(tmp_path / "305_postamble_tina.mp3")
         producer._dry_run_postamble(cfg, stem)
-        out = capsys.readouterr().out
-        assert "POSTAMBLE" in out
-        assert "tina" in out
+        assert "POSTAMBLE" in caplog.text
+        assert "tina" in caplog.text
 
-    def test_dry_run_postamble_stem_exists_skips(self, tmp_path, capsys):
+    def test_dry_run_postamble_stem_exists_skips(self, tmp_path, caplog):
         stem = tmp_path / "305_postamble_tina.mp3"
         stem.write_bytes(b"\xff\xfb" + b"\x00" * 100)
         cfg = self._make_cast_cfg({"speaker": "tina", "text": "Bye."})
         producer._dry_run_postamble(cfg, str(stem))
-        out = capsys.readouterr().out
-        assert "skip" in out.lower()
+        assert "skip" in caplog.text.lower()
 
     # ------------------------------------------------------------------
     # _generate_postamble_voice — guard paths (no API call)
     # ------------------------------------------------------------------
 
-    def test_generate_postamble_skips_existing_stem(self, tmp_path, capsys):
+    def test_generate_postamble_skips_existing_stem(self, tmp_path, caplog):
         stem = tmp_path / "305_postamble_tina.mp3"
         stem.write_bytes(b"\xff\xfb" + b"\x00" * 100)
         cfg = self._make_cast_cfg({"speaker": "tina", "text": "Bye."})
         config = {"tina": {"id": "voice_tina"}}
         producer._generate_postamble_voice(cfg, config, str(stem))
-        out = capsys.readouterr().out
-        assert "skipping" in out.lower()
+        assert "skipping" in caplog.text.lower()
 
-    def test_generate_postamble_missing_voice_id_skips(self, tmp_path, capsys):
+    def test_generate_postamble_missing_voice_id_skips(self, tmp_path, caplog):
         cfg = self._make_cast_cfg({"speaker": "tina", "text": "Bye."})
         config = {"tina": {"id": "TBD"}}
         stem = str(tmp_path / "305_postamble_tina.mp3")
         producer._generate_postamble_voice(cfg, config, stem)
-        out = capsys.readouterr().out
-        assert "No voice_id" in out
+        assert "No voice_id" in caplog.text
         assert not os.path.exists(stem)
 
     # ------------------------------------------------------------------
+    # ------------------------------------------------------------------
+    # inject_preamble_entries
+    # ------------------------------------------------------------------
+
+    def test_inject_preamble_prepends_entries(self, tmp_path):
+        parsed = self._make_parsed(tmp_path, n_entries=3)
+        producer.inject_preamble_entries(parsed, "Welcome to the show.", "tina")
+        with open(parsed) as f:
+            data = json.load(f)
+        seqs = [e["seq"] for e in data["entries"]]
+        assert seqs[0] == -2
+        assert seqs[1] == -1
+        assert seqs[2] == 1  # episode entries untouched
+
+    def test_inject_preamble_entry_fields(self, tmp_path):
+        parsed = self._make_parsed(tmp_path, n_entries=2)
+        producer.inject_preamble_entries(parsed, "Hello there.", "tina")
+        with open(parsed) as f:
+            data = json.load(f)
+        voice = next(e for e in data["entries"] if e["seq"] == -2)
+        assert voice["type"] == "dialogue"
+        assert voice["section"] == "preamble"
+        assert voice["speaker"] == "tina"
+        assert voice["text"] == "Hello there."
+        music = next(e for e in data["entries"] if e["seq"] == -1)
+        assert music["type"] == "direction"
+        assert music["section"] == "preamble"
+        assert music["text"] == "INTRO MUSIC"
+        assert music["direction_type"] == "MUSIC"
+
+    def test_inject_preamble_idempotent(self, tmp_path):
+        parsed = self._make_parsed(tmp_path, n_entries=2)
+        producer.inject_preamble_entries(parsed, "Take 1.", "tina")
+        producer.inject_preamble_entries(parsed, "Take 2.", "tina")
+        with open(parsed) as f:
+            data = json.load(f)
+        preamble = [e for e in data["entries"] if e.get("section") == "preamble"]
+        assert len(preamble) == 2
+        voice = next(e for e in preamble if e["type"] == "dialogue")
+        assert voice["text"] == "Take 2."
+
     # mix_common foreground_override uses section field
     # ------------------------------------------------------------------
 

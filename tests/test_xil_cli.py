@@ -9,20 +9,19 @@ from xil_pipeline import xil
 
 def test_main_prints_help_when_no_args(capsys):
     code = xil.main([])
-    out = capsys.readouterr().out
 
     assert code == 0
+    out = capsys.readouterr().out
     assert "Usage: xil <command> [args...]" in out
     assert "scan" in out
     assert "parse" in out
 
 
-def test_main_unknown_command_returns_2(capsys):
+def test_main_unknown_command_returns_2(caplog):
     code = xil.main(["does-not-exist"])
-    captured = capsys.readouterr()
 
     assert code == 2
-    assert "Unknown command: does-not-exist" in captured.err
+    assert "Unknown command: does-not-exist" in caplog.text
 
 
 def test_main_delegates_to_run_subcommand(monkeypatch):

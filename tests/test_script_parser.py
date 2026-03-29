@@ -497,29 +497,25 @@ class TestPrintSummary:
         script_file.write_text(MINIMAL_SCRIPT, encoding="utf-8")
         return parser.parse_script(str(script_file))
 
-    def test_prints_show_title(self, parsed, capsys):
+    def test_prints_show_title(self, parsed, caplog):
         parser.print_summary(parsed)
-        out = capsys.readouterr().out
-        assert "THE 413" in out
-        assert "Test" in out  # title from MINIMAL_SCRIPT header
+        assert "THE 413" in caplog.text
+        assert "Test" in caplog.text  # title from MINIMAL_SCRIPT header
 
-    def test_prints_dialogue_line_count(self, parsed, capsys):
+    def test_prints_dialogue_line_count(self, parsed, caplog):
         parser.print_summary(parsed)
-        out = capsys.readouterr().out
-        assert "Dialogue lines" in out
-        assert "5" in out
+        assert "Dialogue lines" in caplog.text
+        assert "5" in caplog.text
 
-    def test_prints_per_speaker_stats(self, parsed, capsys):
+    def test_prints_per_speaker_stats(self, parsed, caplog):
         parser.print_summary(parsed)
-        out = capsys.readouterr().out
-        assert "adam" in out
-        assert "dez" in out
-        assert "mr_patterson" in out
+        assert "adam" in caplog.text
+        assert "dez" in caplog.text
+        assert "mr_patterson" in caplog.text
 
-    def test_prints_tts_character_count(self, parsed, capsys):
+    def test_prints_tts_character_count(self, parsed, caplog):
         parser.print_summary(parsed)
-        out = capsys.readouterr().out
-        assert "TTS characters" in out
+        assert "TTS characters" in caplog.text
 
 
 class TestPrintDialoguePreview:
@@ -529,28 +525,24 @@ class TestPrintDialoguePreview:
         script_file.write_text(MINIMAL_SCRIPT, encoding="utf-8")
         return parser.parse_script(str(script_file))
 
-    def test_prints_all_lines_by_default(self, parsed, capsys):
+    def test_prints_all_lines_by_default(self, parsed, caplog):
         parser.print_dialogue_preview(parsed)
-        out = capsys.readouterr().out
-        assert "It's 2:47 AM." in out
-        assert "That's because she had." in out
+        assert "It's 2:47 AM." in caplog.text
+        assert "That's because she had." in caplog.text
 
-    def test_limit_restricts_output(self, parsed, capsys):
+    def test_limit_restricts_output(self, parsed, caplog):
         parser.print_dialogue_preview(parsed, limit=1)
-        out = capsys.readouterr().out
-        assert "It's 2:47 AM." in out
-        assert "That's because she had." not in out
+        assert "It's 2:47 AM." in caplog.text
+        assert "That's because she had." not in caplog.text
 
-    def test_shows_speaker_name(self, parsed, capsys):
+    def test_shows_speaker_name(self, parsed, caplog):
         parser.print_dialogue_preview(parsed)
-        out = capsys.readouterr().out
-        assert "adam" in out
-        assert "dez" in out
+        assert "adam" in caplog.text
+        assert "dez" in caplog.text
 
-    def test_shows_direction(self, parsed, capsys):
+    def test_shows_direction(self, parsed, caplog):
         parser.print_dialogue_preview(parsed)
-        out = capsys.readouterr().out
-        assert "on-air voice" in out
+        assert "on-air voice" in caplog.text
 
 
 # ─── Tests: metadata section path (lines 173-174, 178) ───
@@ -821,7 +813,7 @@ class TestGenerateCastConfig:
         assert member["filter"] is False
         assert member["role"] == "TBD"
 
-    def test_skips_when_cast_exists(self, parsed, tmp_path, capsys):
+    def test_skips_when_cast_exists(self, parsed, tmp_path, caplog):
         """main() should not overwrite existing cast config."""
         script_file = tmp_path / "test_script.md"
         script_file.write_text(MINIMAL_SCRIPT, encoding="utf-8")
@@ -898,7 +890,7 @@ class TestGenerateSfxConfig:
         assert config["episode"] == 1
         assert config["defaults"]["prompt_influence"] == 0.3
 
-    def test_skips_when_sfx_exists(self, parsed, tmp_path, capsys):
+    def test_skips_when_sfx_exists(self, parsed, tmp_path, caplog):
         """main() should not overwrite existing sfx config."""
         script_file = tmp_path / "test_script.md"
         script_file.write_text(MINIMAL_SCRIPT, encoding="utf-8")
@@ -1495,21 +1487,18 @@ class TestPrintSpeakerStats:
         script_file.write_text(MINIMAL_SCRIPT, encoding="utf-8")
         return parser.parse_script(str(script_file))
 
-    def test_prints_header_and_speakers(self, parsed, capsys):
+    def test_prints_header_and_speakers(self, parsed, caplog):
         parser.print_speaker_stats(parsed)
-        out = capsys.readouterr().out
-        assert "Speaker" in out
-        assert "Lines" in out
-        assert "Words" in out
-        assert "Chars" in out
-        assert "adam" in out
+        assert "Speaker" in caplog.text
+        assert "Lines" in caplog.text
+        assert "Words" in caplog.text
+        assert "Chars" in caplog.text
+        assert "adam" in caplog.text
 
-    def test_prints_total_row(self, parsed, capsys):
+    def test_prints_total_row(self, parsed, caplog):
         parser.print_speaker_stats(parsed)
-        out = capsys.readouterr().out
-        assert "TOTAL" in out
+        assert "TOTAL" in caplog.text
 
-    def test_prints_percentages(self, parsed, capsys):
+    def test_prints_percentages(self, parsed, caplog):
         parser.print_speaker_stats(parsed)
-        out = capsys.readouterr().out
-        assert "%" in out
+        assert "%" in caplog.text

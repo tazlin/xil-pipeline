@@ -21,13 +21,19 @@ import os
 import re
 import shutil
 import sys
+import tempfile
 import time
 
-from mutagen.id3 import ID3, TALB, TCON, TDRC, TIT2, TPE1, USLT
+import httpx
+from mutagen.id3 import ID3, ID3NoHeaderError, TALB, TCON, TDRC, TIT2, TPE1, USLT
 from mutagen.wave import WAVE
+from elevenlabs.core.api_error import ApiError
 from pydub import AudioSegment
 
 from xil_pipeline.models import SfxConfiguration, SfxEntry
+from xil_pipeline.log_config import get_logger
+
+logger = get_logger(__name__)
 
 SFX_DIR = "SFX"
 
@@ -89,6 +95,24 @@ def slugify_effect_key(text: str) -> str:
     return slug
 
 
+def file_nonempty(path: str) -> bool:
+    """Return True if *path* exists and has a non-zero size.
+
+    Uses a single ``os.stat()`` call to avoid a TOCTOU race between
+    an existence check and a separate size check.
+
+    Args:
+        path: Filesystem path to test.
+
+    Returns:
+        ``True`` if the file exists and ``st_size > 0``, ``False`` otherwise.
+    """
+    try:
+        return os.stat(path).st_size > 0
+    except OSError:
+        return False
+
+
 def shared_sfx_path(sfx_dir: str, effect_key: str) -> str:
     """Return the shared library file path for an effect key.
 
@@ -125,7 +149,7 @@ def tag_mp3(
     """
     try:
         tags = ID3(path)
-    except Exception:
+    except ID3NoHeaderError:
         tags = ID3()
 
     tags.add(TALB(encoding=3, text=show))
@@ -201,7 +225,7 @@ def ensure_shared_sfx(
             generation.
     """
     path = shared_sfx_path(sfx_dir, effect_key)
-    if os.path.exists(path) and os.path.getsize(path) > 0:
+    if file_nonempty(path):
         return path
 
     os.makedirs(sfx_dir, exist_ok=True)
@@ -221,34 +245,52 @@ def ensure_shared_sfx(
         if prompt_influence is None:
             prompt_influence = defaults.get("prompt_influence", 0.3)
 
-        tmp_path = path + ".tmp"
-        max_retries, delay = 5, 10
-        for attempt in range(1, max_retries + 1):
-            try:
-                audio_stream = client.text_to_sound_effects.convert(
-                    text=effect.prompt,
-                    duration_seconds=effect.duration_seconds,
-                    prompt_influence=prompt_influence,
-                )
-                with open(tmp_path, "wb") as f:
-                    for chunk in audio_stream:
-                        if chunk:
-                            f.write(chunk)
-                os.rename(tmp_path, path)
-                break
-            except Exception as exc:
-                is_rate_limit = (
-                    hasattr(exc, "status_code") and exc.status_code == 429
-                )
-                if is_rate_limit and attempt < max_retries:
-                    wait = delay * attempt
-                    print(f"   [429] Rate limited — retrying in {wait}s "
-                          f"(attempt {attempt}/{max_retries})")
-                    time.sleep(wait)
-                else:
-                    if os.path.exists(tmp_path):
-                        os.remove(tmp_path)
-                    raise
+        tmp_fd, tmp_path = tempfile.mkstemp(
+            dir=os.path.dirname(path) or ".", suffix=".tmp"
+        )
+        os.close(tmp_fd)
+        try:
+            max_retries, delay = 5, 10
+            for attempt in range(1, max_retries + 1):
+                try:
+                    audio_stream = client.text_to_sound_effects.convert(
+                        text=effect.prompt,
+                        duration_seconds=effect.duration_seconds,
+                        prompt_influence=prompt_influence,
+                    )
+                    with open(tmp_path, "wb") as f:
+                        for chunk in audio_stream:
+                            if chunk:
+                                f.write(chunk)
+                    os.rename(tmp_path, path)
+                    tmp_path = None
+                    break
+                except (ApiError, httpx.TransportError) as exc:
+                    is_rate_limit = isinstance(exc, ApiError) and exc.status_code == 429
+                    is_server_error = (
+                        isinstance(exc, ApiError)
+                        and exc.status_code is not None
+                        and exc.status_code >= 500
+                    )
+                    is_network_error = isinstance(exc, httpx.TransportError)
+                    is_retryable = is_rate_limit or is_server_error or is_network_error
+                    if is_retryable and attempt < max_retries:
+                        wait = delay * attempt
+                        if is_rate_limit:
+                            reason = "429 rate limited"
+                        elif is_server_error:
+                            reason = f"{exc.status_code} server error"
+                        else:
+                            reason = f"network error ({type(exc).__name__})"
+                        logger.warning("[%s] — retrying in %ds (attempt %d/%d)",
+                                       reason, wait, attempt, max_retries)
+                        time.sleep(wait)
+                    else:
+                        raise
+        finally:
+            if tmp_path is not None:
+                with contextlib.suppress(FileNotFoundError):
+                    os.unlink(tmp_path)
 
     tag_mp3(path, show=show, title=effect_key)
 
@@ -266,7 +308,7 @@ def place_episode_stem(shared_path: str, stem_path: str) -> bool:
         ``True`` if the file was copied, ``False`` if the stem already
         existed on disk.
     """
-    if os.path.exists(stem_path) and os.path.getsize(stem_path) > 0:
+    if file_nonempty(stem_path):
         return False
     os.makedirs(os.path.dirname(stem_path), exist_ok=True)
     shutil.copy2(shared_path, stem_path)
@@ -370,7 +412,7 @@ def generate_sfx(
     defaults = sfx_cfg.defaults
 
     entries_to_process = [e for e in sfx_entries if e["seq"] >= start_from]
-    print(f"--- SFX: Processing {len(entries_to_process)} entries ---")
+    logger.info("--- SFX: Processing %d entries ---", len(entries_to_process))
 
     # Phase 1: ensure shared assets for unique effect keys
     unique_keys = dict.fromkeys(e["text"] for e in entries_to_process)
@@ -380,7 +422,7 @@ def generate_sfx(
         path = ensure_shared_sfx(key, effect, sfx_dir, defaults, client,
                                 show=sfx_cfg.show)
         shared_paths[key] = path
-        print(f"   Shared: {path}")
+        logger.info("   Shared: %s", path)
 
     # Phase 2: place episode stems
     copied_count = 0
@@ -389,15 +431,15 @@ def generate_sfx(
         stem_file = os.path.join(stems_dir, f"{entry['stem_name']}.mp3")
         shared_path = shared_paths[entry["text"]]
         if place_episode_stem(shared_path, stem_file):
-            print(f"   Placed: {stem_file}")
+            logger.info("   Placed: %s", stem_file)
             copied_count += 1
         else:
-            print(f"   Exists: {stem_file} — skipping")
+            logger.info("   Exists: %s — skipping", stem_file)
             skipped_count += 1
 
-    print(
-        f"--- SFX Complete: {len(unique_keys)} shared assets, "
-        f"{copied_count} placed, {skipped_count} skipped ---"
+    logger.info(
+        "--- SFX Complete: %d shared assets, %d placed, %d skipped ---",
+        len(unique_keys), copied_count, skipped_count,
     )
 
 
@@ -422,11 +464,11 @@ def dry_run_sfx(
     """
     sfx_cfg = SfxConfiguration(**sfx_config)
 
-    print(f"\n{'='*70}")
-    print(f"SFX DRY RUN — {len(sfx_entries)} entries")
-    print(f"  stems dir: {stems_dir}")
-    print(f"  shared dir: {sfx_dir}")
-    print(f"{'='*70}\n")
+    logger.info("\n%s", "=" * 70)
+    logger.info("SFX DRY RUN — %d entries", len(sfx_entries))
+    logger.info("  stems dir: %s", stems_dir)
+    logger.info("  shared dir: %s", sfx_dir)
+    logger.info("%s\n", "=" * 70)
 
     # Per-category accumulators: keys are direction_type buckets + "silence"
     buckets: dict[str, dict] = {
@@ -460,20 +502,19 @@ def dry_run_sfx(
 
         seq_label = f"n{abs(entry['seq']):03d}" if entry["seq"] < 0 else f"{entry['seq']:03d}"
         if effect.type == "silence":
-            print(
-                f" [{status}] {seq_label} | silence "
-                f"| {effect.duration_seconds:>5.1f}s | {entry['text']}"
+            logger.info(
+                " [%s] %s | silence | %5.1fs | %s",
+                status, seq_label, effect.duration_seconds, entry["text"],
             )
             if status == "   NEW":
                 buckets["silence"]["new"] += 1
                 buckets["silence"]["dur"] += effect.duration_seconds
         elif is_source:
-            print(
-                f" [{status}] {seq_label} | copy    "
-                f"|         | ~    0 credits "
-                f"| {entry['text']}"
+            logger.info(
+                " [%s] %s | copy    |         | ~    0 credits | %s",
+                status, seq_label, entry["text"],
             )
-            print(f"            source: {shared_file}")
+            logger.info("            source: %s", shared_file)
         else:
             credits = int(effect.duration_seconds * 40)
             bucket_key = entry.get("direction_type") or "SFX"
@@ -482,24 +523,23 @@ def dry_run_sfx(
             if status == "   NEW":
                 buckets[bucket_key]["new"] += 1
                 buckets[bucket_key]["dur"] += effect.duration_seconds
-            print(
-                f" [{status}] {seq_label} | sfx     "
-                f"| {effect.duration_seconds:>5.1f}s | ~{credits:>5} credits "
-                f"| {entry['text']}"
+            logger.info(
+                " [%s] %s | sfx     | %5.1fs | ~%5d credits | %s",
+                status, seq_label, effect.duration_seconds, credits, entry["text"],
             )
-            print(f"            prompt: {effect.prompt}")
+            logger.info("            prompt: %s", effect.prompt)
 
-        print(f"            stem: {entry['stem_name']}.mp3")
+        logger.info("            stem: %s.mp3", entry["stem_name"])
         if not is_source:
-            print(f"            shared: {os.path.basename(shared_file)}")
-        print()
+            logger.info("            shared: %s", os.path.basename(shared_file))
+        logger.info("")
 
     total_new_dur = sum(b["dur"] for b in buckets.values())
     total_credits = int(total_new_dur * 40)
-    print(f"{'='*70}")
-    print(
-        f"SUMMARY: {len(sfx_entries)} total — "
-        f"{new_count} new, {cached_count} cached, {exists_count} on disk"
+    logger.info("%s", "=" * 70)
+    logger.info(
+        "SUMMARY: %d total — %d new, %d cached, %d on disk",
+        len(sfx_entries), new_count, cached_count, exists_count,
     )
     for cat in ("MUSIC", "AMBIENCE", "SFX"):
         b = buckets[cat]
@@ -508,11 +548,11 @@ def dry_run_sfx(
             for entry in sfx_entries
         ):
             cred = int(b["dur"] * 40)
-            print(f"  {cat:<9}: {b['new']:>3} new, {b['dur']:>6.1f}s, ~{cred:>6} credits")
+            logger.info("  %-9s: %3d new, %6.1fs, ~%6d credits", cat, b["new"], b["dur"], cred)
     if buckets["silence"]["new"]:
-        print(f"  {'silence':<9}: {buckets['silence']['new']:>3} new  (free)")
-    print(
-        f"  {'TOTAL NEW':<9}: {new_count:>3},  {total_new_dur:.1f}s, "
-        f"~{total_credits} credits  (silence & cached are free)"
+        logger.info("  %-9s: %3d new  (free)", "silence", buckets["silence"]["new"])
+    logger.info(
+        "  %-9s: %3d,  %.1fs, ~%d credits  (silence & cached are free)",
+        "TOTAL NEW", new_count, total_new_dur, total_credits,
     )
-    print(f"{'='*70}\n")
+    logger.info("%s\n", "=" * 70)

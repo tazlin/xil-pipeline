@@ -20,9 +20,12 @@ import json
 import os
 import sys
 
+from xil_pipeline.log_config import configure_logging, get_logger
 from xil_pipeline.models import derive_paths as _derive_paths
 from xil_pipeline.models import resolve_slug
 from xil_pipeline.sfx_common import run_banner, slugify_effect_key
+
+logger = get_logger(__name__)
 
 # ---------------------------------------------------------------------------
 # Column definitions
@@ -195,6 +198,7 @@ def annotate_csv(
 # ---------------------------------------------------------------------------
 
 def main() -> None:
+    configure_logging()
     with run_banner():
         parser = argparse.ArgumentParser(
             description="Annotate a parsed episode CSV with SFX and cast config data."
@@ -217,10 +221,7 @@ def main() -> None:
         out_path = args.out_path or out_def
 
         if os.path.abspath(out_path) == os.path.abspath(csv_path):
-            print(
-                f"ERROR: output path '{out_path}' is the same as input '{csv_path}'",
-                file=sys.stderr,
-            )
+            logger.error(f"output path '{out_path}' is the same as input '{csv_path}'")
             sys.exit(1)
 
         for path, label in [
@@ -229,17 +230,17 @@ def main() -> None:
             (cast_path, "Cast JSON"),
         ]:
             if not os.path.exists(path):
-                print(f"ERROR: {label} file not found: {path}", file=sys.stderr)
+                logger.error(f"{label} file not found: {path}")
                 sys.exit(1)
 
         total, n_dir, sfx_hit, n_dlg, cast_hit = annotate_csv(
             csv_path, sfx_path, cast_path, out_path
         )
 
-        print(f"Rows written: {total}")
-        print(f"  SFX matched:  {sfx_hit} / {n_dir} direction rows")
-        print(f"  Cast matched: {cast_hit} / {n_dlg} dialogue rows")
-        print(f"Output: {out_path}")
+        logger.info(f"Rows written: {total}")
+        logger.info(f"  SFX matched:  {sfx_hit} / {n_dir} direction rows")
+        logger.info(f"  Cast matched: {cast_hit} / {n_dlg} dialogue rows")
+        logger.info(f"Output: {out_path}")
 
 
 if __name__ == "__main__":

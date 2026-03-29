@@ -24,6 +24,9 @@ import os
 from xil_pipeline.mix_common import extract_seq, load_entries_index
 from xil_pipeline.models import derive_paths, resolve_slug
 from xil_pipeline.sfx_common import run_banner
+from xil_pipeline.log_config import configure_logging, get_logger
+
+logger = get_logger(__name__)
 
 
 def _expected_stem_basename(entry: dict) -> str:
@@ -126,6 +129,7 @@ def find_stale_stems(
 
 def main() -> None:
     """CLI entry point for stale stem cleanup."""
+    configure_logging()
     with run_banner():
         parser = argparse.ArgumentParser(
             description=(
@@ -177,23 +181,23 @@ def main() -> None:
         stale = find_stale_stems(stems_dir, entries_index)
 
         if not stale:
-            print("No stale stems found — stems directory is clean.")
+            logger.info("No stale stems found — stems directory is clean.")
             return
 
         label = "[DRY RUN] " if args.dry_run else ""
-        print(f"\n{label}Stale stems ({len(stale)}):\n")
+        logger.info(f"\n{label}Stale stems ({len(stale)}):\n")
 
         for filepath, seq, reason in stale:
-            print(f"  {os.path.basename(filepath):40s}  ({reason})")
+            logger.info(f"  {os.path.basename(filepath):40s}  ({reason})")
 
-        print()
+        logger.info("")
         if args.dry_run:
-            print(f"  {len(stale)} stale stems would be deleted.")
-            print("  Re-run without --dry-run to delete them.")
+            logger.info(f"  {len(stale)} stale stems would be deleted.")
+            logger.info("  Re-run without --dry-run to delete them.")
         else:
             for filepath, _seq, _reason in stale:
                 os.remove(filepath)
-            print(f"  Deleted {len(stale)} stale stems.")
+            logger.info(f"  Deleted {len(stale)} stale stems.")
 
 
 if __name__ == "__main__":

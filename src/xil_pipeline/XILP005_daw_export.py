@@ -38,6 +38,10 @@ import os
 import subprocess
 import textwrap
 
+from xil_pipeline.log_config import configure_logging, get_logger
+
+logger = get_logger(__name__)
+
 from xil_pipeline.mix_common import (
     apply_phone_filter,
     build_ambience_layer,
@@ -98,7 +102,7 @@ def _find_audacity_macros_dir() -> str | None:
         ).decode().strip()
         macros_dir = os.path.join(linux_appdata, "audacity", "Macros")
         return macros_dir if os.path.isdir(macros_dir) else None
-    except Exception:
+    except (subprocess.CalledProcessError, FileNotFoundError, OSError):
         return None
 
 
@@ -112,7 +116,7 @@ def _to_windows_path(linux_path: str) -> str:
         return subprocess.check_output(
             ["wslpath", "-w", linux_path], stderr=subprocess.DEVNULL
         ).decode().strip()
-    except Exception:
+    except (subprocess.CalledProcessError, FileNotFoundError, OSError):
         return linux_path
 
 
@@ -228,7 +232,7 @@ def _make_audacity_script(
                     ).decode().strip()
                     result = subprocess.run(["python.exe", win_script])
                     return result.returncode == 0
-                except Exception as exc:
+                except (subprocess.CalledProcessError, FileNotFoundError, OSError) as exc:
                     print(f"[!] WSL re-invoke failed: {{exc}}")
                     return False
             if platform.system() == "Windows":
@@ -267,7 +271,7 @@ def _make_audacity_script(
                     pipe_to.close()
                     pipe_from.close()
                 return True
-            except Exception as exc:
+            except OSError as exc:
                 print(f"[!] Pipe import failed: {{exc}}")
                 return False
 
@@ -337,22 +341,22 @@ def dry_run_daw(tag: str, stem_plans, entries_index: dict, output_dir: str) -> N
     sfx = [p for p in stem_plans if p.direction_type in ("SFX", "BEAT")]
     dialogue = [p for p in stem_plans if p.entry_type == "dialogue"]
 
-    print(f"\n--- DAW Export Dry Run: {tag} ---")
-    print(f"   Stems directory : stems/{tag}/")
-    print(f"   Output directory: {output_dir}/")
-    print()
-    print("   Layer             Stems")
-    print("   ─────────────────────────────")
-    print(f"   dialogue          {len(dialogue):3d} stems")
-    print(f"   ambience          {len(ambience):3d} stems  (looped to scene boundaries)")
-    print(f"   music             {len(music):3d} stems  (one-shot at cue points)")
-    print(f"   sfx               {len(sfx):3d} stems")
-    print()
-    print("   Output files (all same duration as foreground track):")
+    logger.info(f"\n--- DAW Export Dry Run: {tag} ---")
+    logger.info(f"   Stems directory : stems/{tag}/")
+    logger.info(f"   Output directory: {output_dir}/")
+    logger.info("")
+    logger.info("   Layer             Stems")
+    logger.info("   ─────────────────────────────")
+    logger.info(f"   dialogue          {len(dialogue):3d} stems")
+    logger.info(f"   ambience          {len(ambience):3d} stems  (looped to scene boundaries)")
+    logger.info(f"   music             {len(music):3d} stems  (one-shot at cue points)")
+    logger.info(f"   sfx               {len(sfx):3d} stems")
+    logger.info("")
+    logger.info("   Output files (all same duration as foreground track):")
     for _, suffix, desc in LAYERS:
-        print(f"     {output_dir}/{tag}_{suffix}.wav  — {desc}")
-    print(f"     {output_dir}/{tag}_open_in_audacity.py")
-    print()
+        logger.info(f"     {output_dir}/{tag}_{suffix}.wav  — {desc}")
+    logger.info(f"     {output_dir}/{tag}_open_in_audacity.py")
+    logger.info("")
 
 
 def export_daw_layers(
@@ -392,27 +396,27 @@ def export_daw_layers(
     stem_plans = collect_stem_plans(stems_dir, entries_index, sfx_config=sfx_config)
 
     if not stem_plans:
-        print(f" [!] No stems found in {stems_dir}/. Run XILP002 first.")
+        logger.warning(f"No stems found in {stems_dir}/. Run XILP002 first.")
         return
 
-    print(f"--- Building foreground timeline from {len(stem_plans)} stems ---")
+    logger.info(f"--- Building foreground timeline from {len(stem_plans)} stems ---")
     foreground, timeline = build_foreground(
         stem_plans, config, apply_phone_filter, gap_ms=gap_ms
     )
 
     if len(foreground) == 0:
-        print(" [!] No foreground stems — cannot determine episode duration.")
+        logger.warning("No foreground stems — cannot determine episode duration.")
         return
 
     total_ms = len(foreground)
-    print(f"    Episode duration: {total_ms / 1000:.1f}s")
+    logger.info(f"    Episode duration: {total_ms / 1000:.1f}s")
 
     os.makedirs(output_dir, exist_ok=True)
 
     layer_files: list[tuple[str, str]] = []
 
     # --- Dialogue layer ---
-    print("--- Building dialogue layer ---")
+    logger.info("--- Building dialogue layer ---")
     dlg, labels = build_dialogue_layer(
         stem_plans, timeline, total_ms, config, apply_phone_filter
     )
@@ -421,51 +425,51 @@ def export_daw_layers(
     dlg.export(wav_path, format="wav")
     tag_wav(wav_path, show=show, title=f"{tag} Dialogue", artist=artist)
     layer_files.append(("Dialogue", fname))
-    print(f"    Written: {output_dir}/{fname}")
+    logger.info(f"    Written: {output_dir}/{fname}")
 
     # --- Dialogue label track ---
     _write_labels(output_dir, f"{tag}_labels_dialogue.txt", labels)
     layer_files.append(("Labels (Dialogue)", f"{tag}_labels_dialogue.txt"))
-    print(f"    Written: {output_dir}/{tag}_labels_dialogue.txt")
+    logger.info(f"    Written: {output_dir}/{tag}_labels_dialogue.txt")
 
     # --- Ambience layer ---
-    print("--- Building ambience layer ---")
+    logger.info("--- Building ambience layer ---")
     amb, amb_labels = build_ambience_layer(stem_plans, timeline, total_ms, level_db=0)
     fname = f"{tag}_layer_ambience.wav"
     wav_path = os.path.join(output_dir, fname)
     amb.export(wav_path, format="wav")
     tag_wav(wav_path, show=show, title=f"{tag} Ambience", artist=artist)
     layer_files.append(("Ambience", fname))
-    print(f"    Written: {output_dir}/{fname}")
+    logger.info(f"    Written: {output_dir}/{fname}")
     _write_labels(output_dir, f"{tag}_labels_ambience.txt", amb_labels)
     layer_files.append(("Labels (Ambience)", f"{tag}_labels_ambience.txt"))
-    print(f"    Written: {output_dir}/{tag}_labels_ambience.txt")
+    logger.info(f"    Written: {output_dir}/{tag}_labels_ambience.txt")
 
     # --- Music layer ---
-    print("--- Building music layer ---")
+    logger.info("--- Building music layer ---")
     mus, mus_labels = build_music_layer(stem_plans, timeline, total_ms, level_db=0)
     fname = f"{tag}_layer_music.wav"
     wav_path = os.path.join(output_dir, fname)
     mus.export(wav_path, format="wav")
     tag_wav(wav_path, show=show, title=f"{tag} Music", artist=artist)
     layer_files.append(("Music", fname))
-    print(f"    Written: {output_dir}/{fname}")
+    logger.info(f"    Written: {output_dir}/{fname}")
     _write_labels(output_dir, f"{tag}_labels_music.txt", mus_labels)
     layer_files.append(("Labels (Music)", f"{tag}_labels_music.txt"))
-    print(f"    Written: {output_dir}/{tag}_labels_music.txt")
+    logger.info(f"    Written: {output_dir}/{tag}_labels_music.txt")
 
     # --- SFX layer ---
-    print("--- Building SFX layer ---")
+    logger.info("--- Building SFX layer ---")
     sfx, sfx_labels = build_sfx_layer(stem_plans, timeline, total_ms)
     fname = f"{tag}_layer_sfx.wav"
     wav_path = os.path.join(output_dir, fname)
     sfx.export(wav_path, format="wav")
     tag_wav(wav_path, show=show, title=f"{tag} SFX", artist=artist)
     layer_files.append(("SFX", fname))
-    print(f"    Written: {output_dir}/{fname}")
+    logger.info(f"    Written: {output_dir}/{fname}")
     _write_labels(output_dir, f"{tag}_labels_sfx.txt", sfx_labels)
     layer_files.append(("Labels (SFX)", f"{tag}_labels_sfx.txt"))
-    print(f"    Written: {output_dir}/{tag}_labels_sfx.txt")
+    logger.info(f"    Written: {output_dir}/{tag}_labels_sfx.txt")
 
     # --- Audacity helper script ---
     script_fname = f"{tag}_open_in_audacity.py"
@@ -473,7 +477,7 @@ def export_daw_layers(
     with open(script_path, "w", encoding="utf-8") as f:
         f.write(_make_audacity_script(tag, layer_files, save_aup3=save_aup3, show=show))
     os.chmod(script_path, 0o755)
-    print(f"    Written: {output_dir}/{script_fname}")
+    logger.info(f"    Written: {output_dir}/{script_fname}")
 
     # --- Audacity macro (optional) ---
     if macro:
@@ -483,9 +487,9 @@ def export_daw_layers(
             artist=artist,
         )
         if macro_path:
-            print(f"    Written: {macro_path}")
+            logger.info(f"    Written: {macro_path}")
         else:
-            print(" [!] Audacity Macros directory not found — macro not written.")
+            logger.warning("Audacity Macros directory not found — macro not written.")
 
     # --- Timeline visualization (optional) ---
     if timeline or timeline_html:
@@ -499,18 +503,18 @@ def export_daw_layers(
         if timeline_html:
             html_path = os.path.join(output_dir, f"{tag}_timeline.html")
             render_html_timeline(td, html_path)
-            print(f"    Written: {html_path}")
+            logger.info(f"    Written: {html_path}")
 
-    print()
-    print(f"--- Done! {len(layer_files)} layer WAVs in {output_dir}/ ---")
-    print(f"    Import into Audacity: python {output_dir}/{script_fname}")
+    logger.info("")
+    logger.info(f"--- Done! {len(layer_files)} layer WAVs in {output_dir}/ ---")
+    logger.info(f"    Import into Audacity: python {output_dir}/{script_fname}")
     if macro:
         from xil_pipeline.models import DEFAULT_SLUG
         from xil_pipeline.models import show_slug as _show_slug
         macro_label = _show_slug(show).upper() if show else DEFAULT_SLUG.upper()
-        print(f"    Audacity macro:       Tools → Macros → {macro_label}_{tag} → Apply to Project")
+        logger.info(f"    Audacity macro:       Tools → Macros → {macro_label}_{tag} → Apply to Project")
     if save_aup3:
-        print(f"    Will save project:    {output_dir}/{tag}.aup3")
+        logger.info(f"    Will save project:    {output_dir}/{tag}.aup3")
 
 
 def main() -> None:
@@ -520,6 +524,7 @@ def main() -> None:
     episode tag, builds four per-layer WAV files and an Audacity helper
     script.  No ElevenLabs API key required.
     """
+    configure_logging()
     with run_banner():
         parser = argparse.ArgumentParser(
             description="DAW Export — export episode as layered WAV files for Audacity"
@@ -569,6 +574,10 @@ def main() -> None:
         slug = resolve_slug(args.show)
         p = derive_paths(slug, args.episode)
         cast_path = p["cast"]
+        if not os.path.exists(cast_path):
+            logger.error(f"Cast config not found: {cast_path}")
+            logger.info("Run XILP001 first or check your --episode flag.")
+            return
         with open(cast_path, encoding="utf-8") as f:
             cast_data = json.load(f)
 
@@ -584,7 +593,7 @@ def main() -> None:
         output_dir = args.output_dir or os.path.join(DAW_DIR, tag)
 
         if not os.path.exists(parsed_path):
-            print(f" [!] Parsed JSON not found: {parsed_path!r}. Run XILP001 first.")
+            logger.warning(f"Parsed JSON not found: {parsed_path!r}. Run XILP001 first.")
             return
 
         sfx_path = p["sfx"]
@@ -615,7 +624,7 @@ def main() -> None:
                 if args.timeline_html:
                     html_path = os.path.join(output_dir, f"{tag}_timeline.html")
                     render_html_timeline(td, html_path)
-                    print(f"    Written: {html_path}")
+                    logger.info(f"    Written: {html_path}")
             return
 
         export_daw_layers(

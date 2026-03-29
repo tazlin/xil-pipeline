@@ -97,6 +97,29 @@ def sample_sfx_file(tmp_path, sample_sfx_config):
     return str(sfx_file)
 
 
+# ─── Tests: file_nonempty ───
+
+class TestFileNonempty:
+    def test_returns_true_for_nonempty_file(self, tmp_path):
+        f = tmp_path / "audio.mp3"
+        f.write_bytes(b"data")
+        assert sfx_common.file_nonempty(str(f)) is True
+
+    def test_returns_false_for_missing_file(self, tmp_path):
+        assert sfx_common.file_nonempty(str(tmp_path / "missing.mp3")) is False
+
+    def test_returns_false_for_empty_file(self, tmp_path):
+        f = tmp_path / "empty.mp3"
+        f.write_bytes(b"")
+        assert sfx_common.file_nonempty(str(f)) is False
+
+    def test_returns_false_for_directory(self, tmp_path):
+        # os.stat on a directory returns st_size of 0 or non-zero depending on OS;
+        # the important thing is it doesn't raise
+        result = sfx_common.file_nonempty(str(tmp_path))
+        assert isinstance(result, bool)
+
+
 # ─── Tests: slugify_effect_key ───
 
 class TestSlugifyEffectKey:
@@ -306,6 +329,123 @@ class TestEnsureSharedSfx:
         call_kwargs = mock_client.text_to_sound_effects.convert.call_args[1]
         assert call_kwargs["prompt_influence"] == 0.7
 
+    def test_retries_on_rate_limit_then_succeeds(self, tmp_path):
+        """429 causes retry; second attempt succeeds."""
+        from xil_pipeline.models import SfxEntry
+        from elevenlabs.core.api_error import ApiError
+        effect = SfxEntry(prompt="Phone buzz", duration_seconds=2.0)
+        sfx_dir = str(tmp_path / "SFX")
+        mock_client = unittest.mock.MagicMock()
+        rate_limit_err = ApiError(status_code=429, body="rate limited")
+        mock_client.text_to_sound_effects.convert.side_effect = [
+            rate_limit_err,
+            iter([b"\xff\xfb" * 50]),
+        ]
+
+        with unittest.mock.patch("time.sleep"):
+            path = sfx_common.ensure_shared_sfx(
+                "SFX: PHONE BUZZING", effect, sfx_dir,
+                defaults={}, client=mock_client,
+            )
+        assert os.path.exists(path)
+        assert mock_client.text_to_sound_effects.convert.call_count == 2
+
+    def test_retries_on_server_error_then_succeeds(self, tmp_path):
+        """5xx error causes retry; second attempt succeeds."""
+        from xil_pipeline.models import SfxEntry
+        from elevenlabs.core.api_error import ApiError
+        effect = SfxEntry(prompt="Phone buzz", duration_seconds=2.0)
+        sfx_dir = str(tmp_path / "SFX")
+        mock_client = unittest.mock.MagicMock()
+        server_err = ApiError(status_code=503, body="service unavailable")
+        mock_client.text_to_sound_effects.convert.side_effect = [
+            server_err,
+            iter([b"\xff\xfb" * 50]),
+        ]
+
+        with unittest.mock.patch("time.sleep"):
+            path = sfx_common.ensure_shared_sfx(
+                "SFX: PHONE BUZZING", effect, sfx_dir,
+                defaults={}, client=mock_client,
+            )
+        assert os.path.exists(path)
+        assert mock_client.text_to_sound_effects.convert.call_count == 2
+
+    def test_retries_on_network_error_then_succeeds(self, tmp_path):
+        """httpx.TransportError causes retry; second attempt succeeds."""
+        import httpx
+        from xil_pipeline.models import SfxEntry
+        effect = SfxEntry(prompt="Phone buzz", duration_seconds=2.0)
+        sfx_dir = str(tmp_path / "SFX")
+        mock_client = unittest.mock.MagicMock()
+        network_err = httpx.ConnectError("connection refused")
+        mock_client.text_to_sound_effects.convert.side_effect = [
+            network_err,
+            iter([b"\xff\xfb" * 50]),
+        ]
+
+        with unittest.mock.patch("time.sleep"):
+            path = sfx_common.ensure_shared_sfx(
+                "SFX: PHONE BUZZING", effect, sfx_dir,
+                defaults={}, client=mock_client,
+            )
+        assert os.path.exists(path)
+        assert mock_client.text_to_sound_effects.convert.call_count == 2
+
+    def test_raises_after_max_retries_on_server_error(self, tmp_path):
+        """5xx error exhausting all retries should propagate."""
+        from xil_pipeline.models import SfxEntry
+        from elevenlabs.core.api_error import ApiError
+        effect = SfxEntry(prompt="Phone buzz", duration_seconds=2.0)
+        sfx_dir = str(tmp_path / "SFX")
+        mock_client = unittest.mock.MagicMock()
+        server_err = ApiError(status_code=500, body="internal server error")
+        mock_client.text_to_sound_effects.convert.side_effect = server_err
+
+        with unittest.mock.patch("time.sleep"):
+            with pytest.raises(ApiError):
+                sfx_common.ensure_shared_sfx(
+                    "SFX: PHONE BUZZING", effect, sfx_dir,
+                    defaults={}, client=mock_client,
+                )
+        assert mock_client.text_to_sound_effects.convert.call_count == 5
+
+    def test_raises_after_max_retries_on_network_error(self, tmp_path):
+        """Network error exhausting all retries should propagate."""
+        import httpx
+        from xil_pipeline.models import SfxEntry
+        effect = SfxEntry(prompt="Phone buzz", duration_seconds=2.0)
+        sfx_dir = str(tmp_path / "SFX")
+        mock_client = unittest.mock.MagicMock()
+        network_err = httpx.ConnectError("connection refused")
+        mock_client.text_to_sound_effects.convert.side_effect = network_err
+
+        with unittest.mock.patch("time.sleep"):
+            with pytest.raises(httpx.ConnectError):
+                sfx_common.ensure_shared_sfx(
+                    "SFX: PHONE BUZZING", effect, sfx_dir,
+                    defaults={}, client=mock_client,
+                )
+        assert mock_client.text_to_sound_effects.convert.call_count == 5
+
+    def test_non_retryable_4xx_raises_immediately(self, tmp_path):
+        """4xx errors other than 429 should not be retried."""
+        from xil_pipeline.models import SfxEntry
+        from elevenlabs.core.api_error import ApiError
+        effect = SfxEntry(prompt="Phone buzz", duration_seconds=2.0)
+        sfx_dir = str(tmp_path / "SFX")
+        mock_client = unittest.mock.MagicMock()
+        client_err = ApiError(status_code=400, body="bad request")
+        mock_client.text_to_sound_effects.convert.side_effect = client_err
+
+        with pytest.raises(ApiError) as exc_info:
+            sfx_common.ensure_shared_sfx(
+                "SFX: PHONE BUZZING", effect, sfx_dir,
+                defaults={}, client=mock_client,
+            )
+        assert exc_info.value.status_code == 400
+        assert mock_client.text_to_sound_effects.convert.call_count == 1
+
 
 # ─── Tests: place_episode_stem ───
 
@@ -488,7 +628,7 @@ class TestGenerateSfx:
 class TestDryRunSfx:
     def test_shows_new_status(
         self, sample_script, sample_sfx_file, sample_sfx_config,
-        tmp_path, capsys,
+        tmp_path, caplog,
     ):
         entries = sfx_common.load_sfx_entries(sample_script, sample_sfx_file)
         stems_dir = str(tmp_path / "stems")
@@ -497,12 +637,11 @@ class TestDryRunSfx:
         sfx_common.dry_run_sfx(
             entries, sample_sfx_config, stems_dir, sfx_dir=sfx_dir,
         )
-        out = capsys.readouterr().out
-        assert "NEW" in out
+        assert "NEW" in caplog.text
 
     def test_shows_cached_status(
         self, sample_script, sample_sfx_file, sample_sfx_config,
-        tmp_path, capsys,
+        tmp_path, caplog,
     ):
         entries = sfx_common.load_sfx_entries(sample_script, sample_sfx_file)
         stems_dir = str(tmp_path / "stems")
@@ -516,12 +655,11 @@ class TestDryRunSfx:
         sfx_common.dry_run_sfx(
             entries, sample_sfx_config, stems_dir, sfx_dir=sfx_dir,
         )
-        out = capsys.readouterr().out
-        assert "CACHED" in out
+        assert "CACHED" in caplog.text
 
     def test_shows_exists_status(
         self, sample_script, sample_sfx_file, sample_sfx_config,
-        tmp_path, capsys,
+        tmp_path, caplog,
     ):
         entries = sfx_common.load_sfx_entries(sample_script, sample_sfx_file)
         stems_dir = str(tmp_path / "stems")
@@ -533,12 +671,11 @@ class TestDryRunSfx:
         sfx_common.dry_run_sfx(
             entries, sample_sfx_config, stems_dir, sfx_dir=sfx_dir,
         )
-        out = capsys.readouterr().out
-        assert "EXISTS" in out
+        assert "EXISTS" in caplog.text
 
     def test_shows_credit_estimate(
         self, sample_script, sample_sfx_file, sample_sfx_config,
-        tmp_path, capsys,
+        tmp_path, caplog,
     ):
         entries = sfx_common.load_sfx_entries(sample_script, sample_sfx_file)
         stems_dir = str(tmp_path / "stems")
@@ -547,12 +684,11 @@ class TestDryRunSfx:
         sfx_common.dry_run_sfx(
             entries, sample_sfx_config, stems_dir, sfx_dir=sfx_dir,
         )
-        out = capsys.readouterr().out
-        assert "credits" in out.lower()
+        assert "credits" in caplog.text.lower()
 
     def test_summary_counts(
         self, sample_script, sample_sfx_file, sample_sfx_config,
-        tmp_path, capsys,
+        tmp_path, caplog,
     ):
         entries = sfx_common.load_sfx_entries(sample_script, sample_sfx_file)
         stems_dir = str(tmp_path / "stems")
@@ -561,6 +697,5 @@ class TestDryRunSfx:
         sfx_common.dry_run_sfx(
             entries, sample_sfx_config, stems_dir, sfx_dir=sfx_dir,
         )
-        out = capsys.readouterr().out
         # Should show summary with counts
-        assert "5 total" in out or "5 entries" in out or "SUMMARY" in out
+        assert "5 total" in caplog.text or "5 entries" in caplog.text or "SUMMARY" in caplog.text

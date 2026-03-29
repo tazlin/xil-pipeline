@@ -27,11 +27,16 @@ import re
 from dataclasses import dataclass
 
 from pydub import AudioSegment
+from pydub.exceptions import CouldntDecodeError
 
 try:
     from mutagen.mp3 import MP3 as _MutagenMP3
 except ImportError:  # pragma: no cover
     _MutagenMP3 = None
+
+from xil_pipeline.log_config import get_logger
+
+logger = get_logger(__name__)
 
 # Background direction types — excluded from the foreground timeline,
 # overlaid at their cue positions in a separate background pass.
@@ -278,23 +283,23 @@ def collect_stem_plans(
 
         # Header entries (section_header, scene_header) never have stems
         if entry_type not in ("dialogue", "direction", None):
-            print(f" [W] Stale stem skipped: {os.path.basename(filepath)} "
-                  f"(seq {seq} is now a {entry_type} entry)")
+            logger.warning("Stale stem skipped: %s (seq %d is now a %s entry)",
+                           os.path.basename(filepath), seq, entry_type)
             continue
         if is_sfx_stem and entry_type == "dialogue":
-            print(f" [W] Stale stem skipped: {os.path.basename(filepath)} "
-                  f"(seq {seq} is now a dialogue entry)")
+            logger.warning("Stale stem skipped: %s (seq %d is now a dialogue entry)",
+                           os.path.basename(filepath), seq)
             continue
         if not is_sfx_stem and entry_type == "direction":
-            print(f" [W] Stale stem skipped: {os.path.basename(filepath)} "
-                  f"(seq {seq} is now a direction entry)")
+            logger.warning("Stale stem skipped: %s (seq %d is now a direction entry)",
+                           os.path.basename(filepath), seq)
             continue
         # Check speaker suffix matches parsed speaker for dialogue stems
         if entry_type == "dialogue" and entry.get("speaker"):
             expected_suffix = f"_{entry['speaker']}"
             if not basename.endswith(expected_suffix):
-                print(f" [W] Stale stem skipped: {os.path.basename(filepath)} "
-                      f"(seq {seq} speaker is now {entry['speaker']})")
+                logger.warning("Stale stem skipped: %s (seq %d speaker is now %s)",
+                               os.path.basename(filepath), seq, entry["speaker"])
                 continue
 
         plan = StemPlan(
@@ -331,8 +336,8 @@ def collect_stem_plans(
     seen_plan_seqs: set[int] = set()
     for plan in plans:
         if plan.seq in seen_plan_seqs:
-            print(f" [W] Duplicate stem skipped: {os.path.basename(plan.filepath)} "
-                  f"(seq {plan.seq} already loaded)")
+            logger.warning("Duplicate stem skipped: %s (seq %d already loaded)",
+                           os.path.basename(plan.filepath), plan.seq)
             continue
         seen_plan_seqs.add(plan.seq)
         deduped.append(plan)
@@ -520,8 +525,8 @@ def build_ambience_layer(
 
         try:
             clip = AudioSegment.from_file(plan.filepath)
-        except Exception as exc:
-            print(f" [W] Skipping corrupt ambience stem: {plan.filepath} ({exc})")
+        except (CouldntDecodeError, OSError) as exc:
+            logger.warning("Skipping corrupt ambience stem: %s (%s)", plan.filepath, exc)
             continue
         ramp_in_ms = int((plan.ramp_in_seconds or 0) * 1000)
         ramp_out_ms = int((plan.ramp_out_seconds or 0) * 1000)

@@ -304,6 +304,40 @@ class TestGenerationDuration:
         asset = {}
         assert cues_ingester.generation_duration(asset) == cues_ingester.DEFAULT_SFX_DURATION
 
+    def test_zero_uses_default(self):
+        asset = {"duration_seconds": 0.0}
+        assert cues_ingester.generation_duration(asset) == cues_ingester.DEFAULT_SFX_DURATION
+
+    def test_negative_uses_default(self):
+        asset = {"duration_seconds": -5.0}
+        assert cues_ingester.generation_duration(asset) == cues_ingester.DEFAULT_SFX_DURATION
+
+
+# ── Tests: credits_for_duration ───────────────────────────────────────────────
+
+
+class TestCreditsForDuration:
+    def test_whole_seconds(self):
+        assert cues_ingester.credits_for_duration(5.0) == 200
+
+    def test_exact_result_no_rounding_needed(self):
+        assert cues_ingester.credits_for_duration(1.5) == 60
+
+    def test_fractional_rounds_up(self):
+        # 0.025 * 40 = 1.0 exactly, but floating point may produce 0.999…
+        # ceil must return 1, not 0
+        assert cues_ingester.credits_for_duration(0.025) >= 1
+
+    def test_sub_second_rounds_up_to_one(self):
+        assert cues_ingester.credits_for_duration(0.001) == 1
+
+    def test_default_duration_credits(self):
+        expected = cues_ingester.credits_for_duration(cues_ingester.DEFAULT_SFX_DURATION)
+        assert expected == 200  # 5.0 * 40
+
+    def test_max_duration_credits(self):
+        assert cues_ingester.credits_for_duration(cues_ingester.API_MAX_DURATION) == 1200  # 30 * 40
+
 
 # ── Tests: asset_status ───────────────────────────────────────────────────────
 
@@ -384,7 +418,7 @@ class TestEnrichSfxConfig:
             }
         ]
 
-    def test_dry_run_does_not_write(self, sfx_config_file, capsys):
+    def test_dry_run_does_not_write(self, sfx_config_file, caplog):
         assets = self._make_assets()
         cues_ingester.enrich_sfx_config(assets, sfx_config_file, dry_run=True)
         with open(sfx_config_file) as f:
@@ -394,11 +428,10 @@ class TestEnrichSfxConfig:
             "duration_seconds"
         ] == 3.0
 
-    def test_dry_run_prints_diff(self, sfx_config_file, capsys):
+    def test_dry_run_prints_diff(self, sfx_config_file, caplog):
         assets = self._make_assets()
         cues_ingester.enrich_sfx_config(assets, sfx_config_file, dry_run=True)
-        out = capsys.readouterr().out
-        assert "WOULD UPDATE" in out
+        assert "WOULD UPDATE" in caplog.text
 
     def test_updates_duration(self, sfx_config_file):
         assets = self._make_assets()
@@ -425,7 +458,7 @@ class TestEnrichSfxConfig:
         # BEAT and AMBIENCE: DINER have no matching asset
         assert config["effects"]["BEAT"]["duration_seconds"] == 1.0
 
-    def test_no_match_reports_nothing_updated(self, sfx_config_file, capsys):
+    def test_no_match_reports_nothing_updated(self, sfx_config_file, caplog):
         assets = [
             {
                 "asset_id": "MUS-UNKNOWN-99",
@@ -438,8 +471,7 @@ class TestEnrichSfxConfig:
             }
         ]
         cues_ingester.enrich_sfx_config(assets, sfx_config_file, dry_run=False)
-        out = capsys.readouterr().out
-        assert "nothing to update" in out.lower()
+        assert "nothing to update" in caplog.text.lower()
 
 
 # ── Tests: write_manifest ─────────────────────────────────────────────────────
@@ -515,7 +547,7 @@ class TestFindCuesFile:
 
 
 class TestMainCli:
-    def test_dry_run_produces_report(self, tmp_path, cues_file, capsys):
+    def test_dry_run_produces_report(self, tmp_path, cues_file, caplog):
         original_sfx = cues_ingester.SFX_DIR
         original_cues = cues_ingester.CUES_DIR
         cues_ingester.SFX_DIR = str(tmp_path / "SFX")
@@ -529,11 +561,10 @@ class TestMainCli:
         finally:
             cues_ingester.SFX_DIR = original_sfx
             cues_ingester.CUES_DIR = original_cues
-        out = capsys.readouterr().out
-        assert "AUDIT" in out
-        assert "assets" in out.lower()
+        assert "AUDIT" in caplog.text
+        assert "assets" in caplog.text.lower()
 
-    def test_manifest_written_without_flags(self, tmp_path, cues_file, capsys):
+    def test_manifest_written_without_flags(self, tmp_path, cues_file, caplog):
         original_sfx = cues_ingester.SFX_DIR
         original_cues = cues_ingester.CUES_DIR
         cues_ingester.SFX_DIR = str(tmp_path / "SFX")
@@ -550,7 +581,7 @@ class TestMainCli:
         manifest = tmp_path / "cues" / "cues_manifest_S02E03.json"
         assert manifest.exists()
 
-    def test_generate_dry_run_skips_api(self, tmp_path, cues_file, capsys):
+    def test_generate_dry_run_skips_api(self, tmp_path, cues_file, caplog):
         original_sfx = cues_ingester.SFX_DIR
         original_cues = cues_ingester.CUES_DIR
         cues_ingester.SFX_DIR = str(tmp_path / "SFX")
@@ -567,11 +598,10 @@ class TestMainCli:
         finally:
             cues_ingester.SFX_DIR = original_sfx
             cues_ingester.CUES_DIR = original_cues
-        out = capsys.readouterr().out
-        assert "dry-run active" in out.lower()
+        assert "dry-run active" in caplog.text.lower()
 
     def test_enrich_sfx_config_dry_run(
-        self, tmp_path, cues_file, sfx_config_file, capsys
+        self, tmp_path, cues_file, sfx_config_file, caplog
     ):
         original_sfx = cues_ingester.SFX_DIR
         original_cues = cues_ingester.CUES_DIR
@@ -595,5 +625,4 @@ class TestMainCli:
             cues_ingester.SFX_DIR = original_sfx
             cues_ingester.CUES_DIR = original_cues
             os.chdir(original_cwd)
-        out = capsys.readouterr().out
-        assert "WOULD UPDATE" in out or "nothing to update" in out.lower()
+        assert "WOULD UPDATE" in caplog.text or "nothing to update" in caplog.text.lower()

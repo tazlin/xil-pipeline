@@ -25,8 +25,11 @@ import re
 import shutil
 from dataclasses import dataclass
 
+from xil_pipeline.log_config import configure_logging, get_logger
 from xil_pipeline.models import derive_paths, resolve_slug
 from xil_pipeline.sfx_common import run_banner
+
+logger = get_logger(__name__)
 
 # ── Status codes ──────────────────────────────────────────────────────────────
 COPY = "COPY"       # unchanged — will be copied to new filename
@@ -247,45 +250,46 @@ def print_report(actions: list[MigrationAction], dry_run: bool) -> None:
     """Print per-stem migration details."""
     label = "[DRY RUN] " if dry_run else ""
     stem_actions = [a for a in actions if a.status != SKIP]
-    print(f"\n{label}Migration plan ({len(stem_actions)} stem entries):\n")
+    logger.info(f"\n{label}Migration plan ({len(stem_actions)} stem entries):\n")
 
     for action in stem_actions:
         if action.status == COPY:
             if action.old_stem == action.new_stem:
-                print(f"  COPY     {action.new_stem}  (seq unchanged)")
+                logger.info(f"  COPY     {action.new_stem}  (seq unchanged)")
             else:
-                print(f"  COPY     {action.new_stem}  ← {action.old_stem}")
+                logger.info(f"  COPY     {action.new_stem}  ← {action.old_stem}")
         elif action.status == SPEAKER:
-            print(f"  SPEAKER  {action.new_stem}  ({action.reason})")
+            logger.info(f"  SPEAKER  {action.new_stem}  ({action.reason})")
         elif action.status == MISSING:
-            print(f"  MISSING  {action.new_stem}  (matched seq {action.old_seq} but file absent)")
+            logger.info(f"  MISSING  {action.new_stem}  (matched seq {action.old_seq} but file absent)")
         elif action.status == NEW:
-            print(f"  NEW      {action.new_stem}  ({action.reason})")
+            logger.info(f"  NEW      {action.new_stem}  ({action.reason})")
 
 
 def print_summary(counts: dict[str, int], dry_run: bool) -> None:
     """Print a one-page summary."""
     need_gen = counts.get(SPEAKER, 0) + counts.get(NEW, 0) + counts.get(MISSING, 0)
     label = "[DRY RUN] " if dry_run else ""
-    print(f"\n{label}─── Summary ───")
-    print(f"  COPY    : {counts.get(COPY, 0):4d}  (unchanged — reused, no TTS call)")
-    print(f"  SPEAKER : {counts.get(SPEAKER, 0):4d}  (speaker changed → must regenerate)")
-    print(f"  NEW     : {counts.get(NEW, 0):4d}  (no old match → must generate)")
-    print(f"  MISSING : {counts.get(MISSING, 0):4d}  (old match but file absent → generate)")
-    print(f"  SKIP    : {counts.get(SKIP, 0):4d}  (non-stem entries, no action)")
-    print("  ─────────────────────────────────────")
-    print(f"  Need generation : {need_gen}")
-    print()
+    logger.info(f"\n{label}─── Summary ───")
+    logger.info(f"  COPY    : {counts.get(COPY, 0):4d}  (unchanged — reused, no TTS call)")
+    logger.info(f"  SPEAKER : {counts.get(SPEAKER, 0):4d}  (speaker changed → must regenerate)")
+    logger.info(f"  NEW     : {counts.get(NEW, 0):4d}  (no old match → must generate)")
+    logger.info(f"  MISSING : {counts.get(MISSING, 0):4d}  (old match but file absent → generate)")
+    logger.info(f"  SKIP    : {counts.get(SKIP, 0):4d}  (non-stem entries, no action)")
+    logger.info("  ─────────────────────────────────────")
+    logger.info(f"  Need generation : {need_gen}")
+    logger.info("")
     if dry_run:
-        print("  Re-run without --dry-run to copy the COPY stems.")
+        logger.info("  Re-run without --dry-run to copy the COPY stems.")
     else:
-        print(f"  {counts.get(COPY, 0)} stems copied.")
-    print("  Then run:  python XILP002_producer.py --episode <TAG>")
-    print("  XILP002 skips stems already on disk — only gaps get generated.")
+        logger.info(f"  {counts.get(COPY, 0)} stems copied.")
+    logger.info("  Then run:  python XILP002_producer.py --episode <TAG>")
+    logger.info("  XILP002 skips stems already on disk — only gaps get generated.")
 
 
 def main() -> None:
     """CLI entry point for stem migration."""
+    configure_logging()
     with run_banner("XILP007 stem migrator"):
         parser = argparse.ArgumentParser(
             description=(
@@ -342,11 +346,11 @@ def main() -> None:
             if not os.path.isfile(p):
                 parser.error(f"{label} file not found: {p}")
 
-        print(f"  Old parsed : {old_path}")
-        print(f"  New parsed : {new_path}")
-        print(f"  Stems dir  : {stems_dir}")
-        print(f"  Match mode : {'strict' if args.strict else 'fuzzy (ignores em-dash / ellipsis variants)'}")
-        print(f"  Dry run    : {args.dry_run}")
+        logger.info(f"  Old parsed : {old_path}")
+        logger.info(f"  New parsed : {new_path}")
+        logger.info(f"  Stems dir  : {stems_dir}")
+        logger.info(f"  Match mode : {'strict' if args.strict else 'fuzzy (ignores em-dash / ellipsis variants)'}")
+        logger.info(f"  Dry run    : {args.dry_run}")
 
         with open(old_path) as f:
             old_data = json.load(f)

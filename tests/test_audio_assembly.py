@@ -358,11 +358,11 @@ class TestAssembleAudio:
             assembly.assemble_audio(config, str(stems_with_audio), output_path)
         assert os.path.exists(output_path)
 
-    def test_no_stems_prints_warning(self, config, tmp_path, capsys):
+    def test_no_stems_prints_warning(self, config, tmp_path, caplog):
         empty_dir = tmp_path / "empty"
         empty_dir.mkdir()
         assembly.assemble_audio(config, str(empty_dir), str(tmp_path / "out.mp3"))
-        assert "No stems found" in capsys.readouterr().out
+        assert "No stems found" in caplog.text
 
     def test_applies_phone_filter_for_frank(self, config, stems_with_audio, tmp_path):
         output_path = str(tmp_path / "master.mp3")
@@ -384,11 +384,11 @@ class TestAssembleMultitrack:
             assembly.assemble_multitrack(config, str(stems_with_bg), parsed_json, output)
         assert os.path.exists(output)
 
-    def test_no_stems_prints_warning(self, config, tmp_path, parsed_json, capsys):
+    def test_no_stems_prints_warning(self, config, tmp_path, parsed_json, caplog):
         empty_dir = tmp_path / "no_stems"
         empty_dir.mkdir()
         assembly.assemble_multitrack(config, str(empty_dir), parsed_json, str(tmp_path / "out.mp3"))
-        assert "No stems found" in capsys.readouterr().out
+        assert "No stems found" in caplog.text
 
     def test_output_is_stereo(self, config, stems_with_bg, parsed_json, tmp_path):
         output = str(tmp_path / "master.mp3")
@@ -401,7 +401,7 @@ class TestAssembleMultitrack:
 # ─── Tests: XILP003 main() fallback ───
 
 class TestAssembleAudioFromCastFile:
-    def test_main_loads_config_from_cast_json(self, sample_cast, tmp_path, capsys):
+    def test_main_loads_config_from_cast_json(self, sample_cast, tmp_path, caplog):
         cast_episode = tmp_path / "cast_the413_S01E01.json"
         import shutil
         shutil.copy2(sample_cast, str(cast_episode))
@@ -418,10 +418,9 @@ class TestAssembleAudioFromCastFile:
         finally:
             assembly.STEMS_DIR = original_dir
             os.chdir(original_cwd)
-        out = capsys.readouterr().out
-        assert "No stems found" in out
+        assert "No stems found" in caplog.text
 
-    def test_main_uses_multitrack_when_parsed_exists(self, sample_cast, tmp_path, capsys):
+    def test_main_uses_multitrack_when_parsed_exists(self, sample_cast, tmp_path, caplog):
         """main() picks up multitrack path when parsed JSON is present."""
         import shutil
         cast_episode = tmp_path / "cast_the413_S01E01.json"
@@ -455,6 +454,5 @@ class TestAssembleAudioFromCastFile:
         finally:
             assembly.STEMS_DIR = original_dir
             os.chdir(original_cwd)
-        out = capsys.readouterr().out
         # multitrack path prints "multi-track" or "No stems" (empty dir)
-        assert "multi-track" in out or "No stems" in out
+        assert "multi-track" in caplog.text or "No stems" in caplog.text

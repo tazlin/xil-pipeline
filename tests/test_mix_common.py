@@ -40,7 +40,7 @@ def _write_mp3(path: str, duration_ms: int = 100) -> None:
 # ─── Tests ───
 
 class TestCollectStemPlans:
-    def test_sfx_stem_matching_dialogue_entry_is_skipped(self, tmp_path, capsys):
+    def test_sfx_stem_matching_dialogue_entry_is_skipped(self, tmp_path, caplog):
         """A `_sfx.mp3` stem whose seq maps to a dialogue entry must be skipped."""
         stem = tmp_path / "005_act-one_sfx.mp3"
         _write_mp3(str(stem))
@@ -49,12 +49,11 @@ class TestCollectStemPlans:
         plans = collect_stem_plans(str(tmp_path), index)
 
         assert plans == []
-        captured = capsys.readouterr()
-        assert "[W]" in captured.out
-        assert "005_act-one_sfx.mp3" in captured.out
-        assert "dialogue" in captured.out
+        assert "WARNING" in caplog.text
+        assert "005_act-one_sfx.mp3" in caplog.text
+        assert "dialogue" in caplog.text
 
-    def test_dialogue_stem_matching_direction_entry_is_skipped(self, tmp_path, capsys):
+    def test_dialogue_stem_matching_direction_entry_is_skipped(self, tmp_path, caplog):
         """A speaker-named stem whose seq maps to a direction entry must be skipped."""
         stem = tmp_path / "005_act-one_adam.mp3"
         _write_mp3(str(stem))
@@ -63,10 +62,9 @@ class TestCollectStemPlans:
         plans = collect_stem_plans(str(tmp_path), index)
 
         assert plans == []
-        captured = capsys.readouterr()
-        assert "[W]" in captured.out
-        assert "005_act-one_adam.mp3" in captured.out
-        assert "direction" in captured.out
+        assert "WARNING" in caplog.text
+        assert "005_act-one_adam.mp3" in caplog.text
+        assert "direction" in caplog.text
 
     def test_valid_dialogue_stem_is_kept(self, tmp_path):
         """A speaker-named stem whose seq maps to a dialogue entry must be kept."""
@@ -92,7 +90,7 @@ class TestCollectStemPlans:
         assert plans[0].seq == 5
         assert plans[0].direction_type == "SFX"
 
-    def test_unknown_seq_stem_is_kept(self, tmp_path, capsys):
+    def test_unknown_seq_stem_is_kept(self, tmp_path, caplog):
         """A stem whose seq is not in the index must pass through without warnings."""
         stem = tmp_path / "099_act-two_sfx.mp3"
         _write_mp3(str(stem))
@@ -103,10 +101,9 @@ class TestCollectStemPlans:
         assert len(plans) == 1
         assert plans[0].seq == 99
         assert plans[0].entry_type is None
-        captured = capsys.readouterr()
-        assert "[W]" not in captured.out
+        assert "WARNING" not in caplog.text
 
-    def test_old_preamble_filenames_are_silently_skipped(self, tmp_path, capsys):
+    def test_old_preamble_filenames_are_silently_skipped(self, tmp_path, caplog):
         """Legacy preamble_tina.mp3 / preamble_music.mp3 have no numeric prefix — silently skipped."""
         _write_mp3(str(tmp_path / "preamble_tina.mp3"))
         _write_mp3(str(tmp_path / "preamble_music.mp3"))
@@ -115,8 +112,7 @@ class TestCollectStemPlans:
         plans = collect_stem_plans(str(tmp_path), index)
 
         assert plans == []
-        captured = capsys.readouterr()
-        assert "[W]" not in captured.out
+        assert "WARNING" not in caplog.text
 
     def test_n002_preamble_tina_is_included_as_dialogue(self, tmp_path):
         """n002_preamble_tina.mp3 → seq -2 dialogue plan; foreground_override=False."""

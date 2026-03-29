@@ -22,9 +22,13 @@ import argparse
 import os
 
 from elevenlabs.client import ElevenLabs
+from elevenlabs.core.api_error import ApiError
 
+from xil_pipeline.log_config import configure_logging, get_logger
 from xil_pipeline.models import CastConfiguration, derive_paths, resolve_slug
 from xil_pipeline.sfx_common import run_banner, tag_mp3
+
+logger = get_logger(__name__)
 
 # Setup ElevenLabs Client
 client = ElevenLabs(api_key=os.environ.get("ELEVENLABS_API_KEY"))
@@ -46,17 +50,17 @@ def check_elevenlabs_quota() -> int | None:
         limit = sub.character_limit
         remaining = limit - used
 
-        print("\n" + "="*40)
-        print("ELEVENLABS API STATUS:")
-        print(f"  Tier:      {sub.tier.upper()}")
-        print(f"  Usage:     {used:,} / {limit:,} characters")
-        print(f"  Remaining: {remaining:,}")
-        print("="*40 + "\n")
+        logger.info("\n" + "="*40)
+        logger.info("ELEVENLABS API STATUS:")
+        logger.info(f"  Tier:      {sub.tier.upper()}")
+        logger.info(f"  Usage:     {used:,} / {limit:,} characters")
+        logger.info(f"  Remaining: {remaining:,}")
+        logger.info("="*40 + "\n")
 
         return remaining
-    except Exception as e:
-        print("\n[!] API Error: Unable to fetch user subscription data.")
-        print(f"    Details: {e}")
+    except ApiError as e:
+        logger.warning("API Error: Unable to fetch user subscription data.")
+        logger.warning(f"    Details: {e}")
         return None
 
 
@@ -76,13 +80,13 @@ def has_enough_characters(text_to_generate: str) -> bool:
 
         required = len(text_to_generate)
         if remaining >= required:
-            print(f" [Guard] Quota OK: {required} required, {remaining:,} left.")
+            logger.info(f" [Guard] Quota OK: {required} required, {remaining:,} left.")
             return True
         else:
-            print(f" [Guard] STOP: Line requires {required} chars, but only {remaining:,} remain.")
+            logger.info(f" [Guard] STOP: Line requires {required} chars, but only {remaining:,} remain.")
             return False
-    except Exception:
-        print(" [Guard] Warning: Permission 'user_read' missing. Skipping quota check.")
+    except ApiError:
+        logger.info(" [Guard] Warning: Permission 'user_read' missing. Skipping quota check.")
         return True
 
 
@@ -101,18 +105,19 @@ def get_best_model_for_budget() -> str:
         remaining = user_info.subscription.character_limit - user_info.subscription.character_count
 
         if remaining > SAFE_THRESHOLD:
-            print(f" [Budget] Healthy Balance: {remaining:,} left. Using 'eleven_v3'.")
+            logger.info(f" [Budget] Healthy Balance: {remaining:,} left. Using 'eleven_v3'.")
             return "eleven_v3"
         else:
-            print(f" [Budget] LOW BALANCE: {remaining:,} left. Switching to 'eleven_flash_v2_5' (50% cheaper).")
+            logger.info(f" [Budget] LOW BALANCE: {remaining:,} left. Switching to 'eleven_flash_v2_5' (50% cheaper).")
             return "eleven_flash_v2_5"
 
-    except Exception:
-        print(" [Budget] API Check Failed. Defaulting to 'eleven_v3'.")
+    except ApiError:
+        logger.info(" [Budget] API Check Failed. Defaulting to 'eleven_v3'.")
         return "eleven_v3"
 
 
 def main() -> None:
+    configure_logging()
     with run_banner():
         parser = argparse.ArgumentParser(
             description="Generate a voice sample MP3 for each assigned cast member."
@@ -141,6 +146,9 @@ def main() -> None:
         )
         args = parser.parse_args()
 
+        if not args.dry_run and not os.environ.get("ELEVENLABS_API_KEY"):
+            sys.exit("Error: ELEVENLABS_API_KEY environment variable is not set.")
+
         # Resolve cast config path
         if args.cast:
             cast_path = args.cast
@@ -150,7 +158,7 @@ def main() -> None:
             cast_path = p["cast"]
 
         if not os.path.exists(cast_path):
-            print(f"[!] Cast config not found: {cast_path}")
+            logger.warning(f"Cast config not found: {cast_path}")
             raise SystemExit(1)
 
         import json
@@ -161,11 +169,11 @@ def main() -> None:
 
         out_dir = os.path.join(VOICE_SAMPLES_DIR, tag)
 
-        print(f"Cast config : {cast_path}")
-        print(f"Episode tag : {tag}")
-        print(f"Output dir  : {out_dir}")
-        print(f"Cast members: {len(cast_cfg.cast)}")
-        print()
+        logger.info(f"Cast config : {cast_path}")
+        logger.info(f"Episode tag : {tag}")
+        logger.info(f"Output dir  : {out_dir}")
+        logger.info(f"Cast members: {len(cast_cfg.cast)}")
+        logger.info("")
 
         if not args.dry_run:
             check_elevenlabs_quota()
@@ -177,7 +185,7 @@ def main() -> None:
 
         for key, member in cast_cfg.cast.items():
             if member.voice_id == "TBD":
-                print(f"  [ SKIP] {key:12s}  voice_id=TBD")
+                logger.info(f"  [ SKIP] {key:12s}  voice_id=TBD")
                 skipped_tbd += 1
                 continue
 
@@ -185,21 +193,21 @@ def main() -> None:
             text = f"I am {member.full_name} not yo momma"
 
             if not args.force and os.path.exists(out_path):
-                print(f"  [EXISTS] {key:12s}  {out_path}")
+                logger.info(f"  [EXISTS] {key:12s}  {out_path}")
                 skipped_exists += 1
                 continue
 
             if args.dry_run:
-                print(f"  [DRY RUN] {key:12s}  ({member.full_name})  →  {out_path}  ({len(text)} chars)")
+                logger.info(f"  [DRY RUN] {key:12s}  ({member.full_name})  →  {out_path}  ({len(text)} chars)")
                 generated += 1
                 continue
 
             if not has_enough_characters(text):
-                print(f"  [ STOP] {key:12s}  insufficient quota")
+                logger.info(f"  [ STOP] {key:12s}  insufficient quota")
                 break
 
             current_model = get_best_model_for_budget()
-            print(f"  [   GEN] {key:12s}  {member.full_name}  …", end="", flush=True)
+            logger.info(f"  [   GEN] {key:12s}  {member.full_name}  …")
 
             audio_stream = client.text_to_speech.convert(
                 text=text,
@@ -218,14 +226,14 @@ def main() -> None:
                 artist=member.full_name,
                 lyrics=text,
             )
-            print(f"  saved → {out_path}")
+            logger.info(f"  saved → {out_path}")
             generated += 1
 
-        print()
+        logger.info("")
         if args.dry_run:
-            print(f"Dry run: {generated} would be generated, {skipped_tbd} TBD skipped.")
+            logger.info(f"Dry run: {generated} would be generated, {skipped_tbd} TBD skipped.")
         else:
-            print(f"Done: {generated} generated, {skipped_exists} already existed, {skipped_tbd} TBD skipped.")
+            logger.info(f"Done: {generated} generated, {skipped_exists} already existed, {skipped_tbd} TBD skipped.")
 
 
 if __name__ == "__main__":

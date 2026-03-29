@@ -18,6 +18,9 @@ import sys
 from xil_pipeline.models import derive_paths, resolve_slug
 from xil_pipeline.sfx_common import run_banner
 from xil_pipeline.XILP001_script_parser import SECTION_MAP, SPEAKER_KEYS, load_speakers
+from xil_pipeline.log_config import configure_logging, get_logger
+
+logger = get_logger(__name__)
 
 SCRIPT_NAME = os.path.basename(__file__)
 
@@ -153,6 +156,7 @@ def regenerate_script(parsed: dict, cast: dict | None = None) -> str:
 
 
 def main():
+    configure_logging()
     parser = argparse.ArgumentParser(
         description="Regenerate a production script markdown from parsed JSON."
     )
@@ -185,7 +189,7 @@ def main():
         output_path = args.output or p["revised_script"]
 
         if not os.path.exists(parsed_path):
-            print(f"ERROR: Parsed JSON not found: {parsed_path}")
+            logger.error(f"Parsed JSON not found: {parsed_path}")
             sys.exit(1)
 
         with open(parsed_path, encoding="utf-8") as f:
@@ -205,8 +209,8 @@ def main():
         # Summary
         entry_count = len(parsed.get("entries", []))
         dialogue_count = parsed.get("stats", {}).get("dialogue_lines", 0)
-        print(f"  Regenerated script from {entry_count} entries ({dialogue_count} dialogue)")
-        print(f"  Written to: {output_path}")
+        logger.info(f"  Regenerated script from {entry_count} entries ({dialogue_count} dialogue)")
+        logger.info(f"  Written to: {output_path}")
 
 
 if __name__ == "__main__":

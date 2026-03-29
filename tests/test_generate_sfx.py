@@ -147,7 +147,7 @@ class TestLoadSfxPlan:
 # ─── Tests: main() CLI wiring ───
 
 class TestMainCli:
-    def test_dry_run_flag(self, sample_script, sample_sfx, sample_cast, tmp_path, capsys):
+    def test_dry_run_flag(self, sample_script, sample_sfx, sample_cast, tmp_path, caplog):
         stems_base = str(tmp_path / "stems")
         original = generate_sfx.STEMS_DIR
         generate_sfx.STEMS_DIR = stems_base
@@ -162,10 +162,9 @@ class TestMainCli:
         finally:
             generate_sfx.STEMS_DIR = original
             os.chdir(original_cwd)
-        out = capsys.readouterr().out
-        assert "DRY RUN" in out
+        assert "DRY RUN" in caplog.text
 
-    def test_max_duration_flag(self, sample_script, sample_sfx, sample_cast, tmp_path, capsys):
+    def test_max_duration_flag(self, sample_script, sample_sfx, sample_cast, tmp_path, caplog):
         stems_base = str(tmp_path / "stems")
         original = generate_sfx.STEMS_DIR
         generate_sfx.STEMS_DIR = stems_base
@@ -180,10 +179,9 @@ class TestMainCli:
         finally:
             generate_sfx.STEMS_DIR = original
             os.chdir(original_cwd)
-        out = capsys.readouterr().out
-        assert "AMBIENCE: RADIO STATION" not in out
-        assert "MUSIC: SHOW THEME" not in out
-        assert "SFX: PHONE BUZZING" in out or "BEAT" in out
+        assert "AMBIENCE: RADIO STATION" not in caplog.text
+        assert "MUSIC: SHOW THEME" not in caplog.text
+        assert "SFX: PHONE BUZZING" in caplog.text or "BEAT" in caplog.text
 
     def test_generate_creates_shared_and_episode_stems(
         self, sample_script, sample_sfx, sample_cast, tmp_path,

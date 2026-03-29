@@ -219,18 +219,16 @@ class TestLoadEpisode:
 # ─── Tests: dry_run ───
 
 class TestDryRun:
-    def test_prints_chapter_summary(self, capsys):
+    def test_prints_chapter_summary(self, caplog):
         chapters = onboard.build_content_json(SAMPLE_PARSED, SAMPLE_CAST)
         onboard.dry_run(chapters, SAMPLE_CAST)
-        captured = capsys.readouterr().out
-        assert "COLD OPEN" in captured
-        assert "ACT ONE" in captured
+        assert "COLD OPEN" in caplog.text
+        assert "ACT ONE" in caplog.text
 
-    def test_prints_voice_assignments(self, capsys):
+    def test_prints_voice_assignments(self, caplog):
         chapters = onboard.build_content_json(SAMPLE_PARSED, SAMPLE_CAST)
         onboard.dry_run(chapters, SAMPLE_CAST)
-        captured = capsys.readouterr().out
-        assert "adam" in captured.lower() or "Adam" in captured
+        assert "adam" in caplog.text.lower() or "Adam" in caplog.text
 
 
 # ─── Tests: CLI main ───
@@ -272,7 +270,8 @@ class TestMainCLI:
                 with unittest.mock.patch.object(
                     onboard, "create_project", return_value=mock_response
                 ) as mock_create:
-                    onboard.main()
-                    mock_create.assert_called_once()
+                    with unittest.mock.patch.object(onboard, "check_elevenlabs_quota", return_value=50000):
+                        onboard.main()
+                        mock_create.assert_called_once()
         finally:
             os.chdir(original_cwd)

@@ -41,11 +41,16 @@ Usage::
 import argparse
 import glob as _glob
 import json
+import math
 import os
 import re
+import tempfile
 
+from xil_pipeline.log_config import configure_logging, get_logger
 from xil_pipeline.models import derive_paths, resolve_slug
-from xil_pipeline.sfx_common import run_banner
+from xil_pipeline.sfx_common import file_nonempty, run_banner
+
+logger = get_logger(__name__)
 
 SFX_DIR = "SFX"
 CUES_DIR = "cues"
@@ -217,7 +222,7 @@ def asset_status(asset: dict, sfx_dir: str = SFX_DIR) -> str:
     - ``   NEW`` — marked NEW, needs API generation
     """
     path = asset_library_path(asset["asset_id"], sfx_dir)
-    if os.path.exists(path) and os.path.getsize(path) > 0:
+    if file_nonempty(path):
         return "EXISTS"
     return " REUSE" if asset["reuse"] else "   NEW"
 
@@ -225,12 +230,23 @@ def asset_status(asset: dict, sfx_dir: str = SFX_DIR) -> str:
 def generation_duration(asset: dict) -> float:
     """Return the API request duration, capped at API_MAX_DURATION.
 
-    Falls back to ``DEFAULT_SFX_DURATION`` when ``duration_seconds`` is None.
+    Falls back to ``DEFAULT_SFX_DURATION`` when ``duration_seconds`` is None,
+    zero, or negative.
     """
     d = asset.get("duration_seconds")
-    if d is None:
+    if d is None or d <= 0:
         return DEFAULT_SFX_DURATION
     return min(d, API_MAX_DURATION)
+
+
+def credits_for_duration(duration: float) -> int:
+    """Return the credit cost for a single generation call of *duration* seconds.
+
+    Uses ``math.ceil`` so fractional-second requests are never underestimated.
+    ElevenLabs bills per API call, so each call's cost must be rounded up
+    independently before summing.
+    """
+    return math.ceil(duration * CREDITS_PER_SECOND)
 
 
 # ─── Dry-run report ──────────────────────────────────────────────────────────
@@ -243,21 +259,21 @@ def dry_run_report(assets: list[dict], sfx_dir: str = SFX_DIR) -> None:
         if not a["reuse"] and asset_status(a, sfx_dir).strip() == "NEW"
     ]
     total_new_dur = sum(generation_duration(a) for a in new_assets)
-    total_credits = int(total_new_dur * CREDITS_PER_SECOND)
+    total_credits = sum(credits_for_duration(generation_duration(a)) for a in new_assets)
     capped = [a for a in new_assets if (a.get("duration_seconds") or 0) > API_MAX_DURATION]
     exists_count = sum(1 for a in assets if asset_status(a, sfx_dir) == "EXISTS")
     reuse_missing = sum(
         1 for a in assets if a["reuse"] and asset_status(a, sfx_dir).strip() == "REUSE"
     )
 
-    print(f"\n{'='*72}")
-    print(f"CUES SHEET AUDIT — {len(assets)} assets total")
-    print(
+    logger.info(f"\n{'='*72}")
+    logger.info(f"CUES SHEET AUDIT — {len(assets)} assets total")
+    logger.info(
         f"  {exists_count} in library  |  "
         f"{len(new_assets)} new to generate  |  "
         f"{reuse_missing} REUSE not yet in library"
     )
-    print(f"{'='*72}\n")
+    logger.info(f"{'='*72}\n")
 
     by_cat: dict[str, list[dict]] = {}
     for a in assets:
@@ -267,34 +283,34 @@ def dry_run_report(assets: list[dict], sfx_dir: str = SFX_DIR) -> None:
         cat_assets = by_cat.get(cat, [])
         if not cat_assets:
             continue
-        print(f"  ── {cat} ──")
+        logger.info(f"  ── {cat} ──")
         for a in cat_assets:
             st = asset_status(a, sfx_dir)
             dur = a.get("duration_seconds")
             api_dur = generation_duration(a)
             dur_str = f"{dur:.0f}s" if dur else f"~{api_dur:.0f}s"
             cap_note = f" [CAPPED→{API_MAX_DURATION:.0f}s]" if dur and dur > API_MAX_DURATION else ""
-            credits_note = f"  ~{int(api_dur * CREDITS_PER_SECOND)} cr" if st.strip() == "NEW" else ""
+            credits_note = f"  ~{credits_for_duration(api_dur)} cr" if st.strip() == "NEW" else ""
             loop_note = " [loop]" if a.get("loop") else ""
-            print(
+            logger.info(
                 f"    [{st}] {a['asset_id']:<32} {dur_str:>8}"
                 f"{cap_note}{credits_note}{loop_note}"
             )
             if st.strip() == "NEW":
                 truncated = a["prompt"][:72] + ("…" if len(a["prompt"]) > 72 else "")
-                print(f"            prompt: {truncated}")
-        print()
+                logger.info(f"            prompt: {truncated}")
+        logger.info("")
 
     if capped:
-        print(
+        logger.info(
             f"  NOTE: {len(capped)} asset(s) exceed the {API_MAX_DURATION:.0f}s API cap "
             "and will be generated at 30s."
         )
-        print()
+        logger.info("")
 
-    print(f"{'='*72}")
-    print(f"  New generation: {total_new_dur:.1f}s total, ~{total_credits} credits")
-    print(f"{'='*72}\n")
+    logger.info(f"{'='*72}")
+    logger.info(f"  New generation: {total_new_dur:.1f}s total, ~{total_credits} credits")
+    logger.info(f"{'='*72}\n")
 
 
 # ─── Asset generation ────────────────────────────────────────────────────────
@@ -316,32 +332,41 @@ def generate_new_assets(
         if not a["reuse"] and asset_status(a, sfx_dir).strip() == "NEW"
     ]
     if not to_generate:
-        print("All NEW assets already exist in library — nothing to generate.")
+        logger.info("All NEW assets already exist in library — nothing to generate.")
         return
 
-    print(f"Generating {len(to_generate)} new asset(s) into {sfx_dir}/…")
+    logger.info(f"Generating {len(to_generate)} new asset(s) into {sfx_dir}/…")
     for asset in to_generate:
         aid = asset["asset_id"]
         path = asset_library_path(aid, sfx_dir)
         dur = generation_duration(asset)
         orig = asset.get("duration_seconds")
         if orig and orig > API_MAX_DURATION:
-            print(f"  [WARN] {aid}: {orig:.0f}s capped to {API_MAX_DURATION:.0f}s for API")
-        print(f"  Generating {aid} ({dur:.1f}s)…")
+            logger.warning(f"{aid}: {orig:.0f}s capped to {API_MAX_DURATION:.0f}s for API")
+        logger.info(f"  Generating {aid} ({dur:.1f}s)…")
         stream = client.text_to_sound_effects.convert(
             text=asset["prompt"],
             duration_seconds=dur,
             prompt_influence=0.3,
         )
-        tmp = path + ".tmp"
-        with open(tmp, "wb") as f:
-            for chunk in stream:
-                if chunk:
-                    f.write(chunk)
-        os.rename(tmp, path)
-        print(f"    → {path}")
+        tmp_fd, tmp = tempfile.mkstemp(dir=os.path.dirname(path) or ".", suffix=".tmp")
+        os.close(tmp_fd)
+        try:
+            with open(tmp, "wb") as f:
+                for chunk in stream:
+                    if chunk:
+                        f.write(chunk)
+            os.rename(tmp, path)
+            tmp = None
+        except Exception:
+            try:
+                os.unlink(tmp)
+            except FileNotFoundError:
+                pass
+            raise
+        logger.info(f"    → {path}")
 
-    print(f"Done. {len(to_generate)} asset(s) generated.")
+    logger.info(f"Done. {len(to_generate)} asset(s) generated.")
 
 
 # ─── SFX config enrichment ───────────────────────────────────────────────────
@@ -374,6 +399,11 @@ def enrich_sfx_config(
 
     In dry-run mode, prints a diff of what would change without writing.
     """
+    if not os.path.exists(sfx_config_path):
+        raise FileNotFoundError(
+            f"SFX config not found: {sfx_config_path}\n"
+            "Run XILP001 first or check your --episode flag."
+        )
     with open(sfx_config_path, encoding="utf-8") as f:
         config = json.load(f)
     effects = config.get("effects", {})
@@ -396,12 +426,12 @@ def enrich_sfx_config(
                 continue
             update_count += 1
             if dry_run:
-                print(f"  WOULD UPDATE: {key}")
+                logger.info(f"  WOULD UPDATE: {key}")
                 if prompt_changed:
-                    print(f"    prompt: {old_prompt!r}")
-                    print(f"         → {new_prompt!r}")
+                    logger.info(f"    prompt: {old_prompt!r}")
+                    logger.info(f"         → {new_prompt!r}")
                 if dur_changed:
-                    print(f"    duration: {old_duration}s → {new_duration}s")
+                    logger.info(f"    duration: {old_duration}s → {new_duration}s")
             else:
                 if prompt_changed:
                     entry["prompt"] = new_prompt
@@ -412,14 +442,14 @@ def enrich_sfx_config(
     if not dry_run and update_count > 0:
         with open(sfx_config_path, "w", encoding="utf-8") as f:
             json.dump(config, f, indent=2)
-        print(
+        logger.info(
             f"Updated {update_count} entr{'y' if update_count == 1 else 'ies'} "
             f"in {sfx_config_path}"
         )
     elif update_count == 0:
-        print("No sfx config entries matched cues sheet assets — nothing to update.")
+        logger.info("No sfx config entries matched cues sheet assets — nothing to update.")
     else:
-        print(
+        logger.info(
             f"\n{update_count} entr{'y' if update_count == 1 else 'ies'} would be updated "
             "(pass --enrich-sfx-config without --dry-run to apply)."
         )
@@ -447,7 +477,7 @@ def write_manifest(assets: list[dict], episode_tag: str, cues_path: str) -> str:
     out_path = os.path.join(CUES_DIR, f"cues_manifest_{episode_tag}.json")
     with open(out_path, "w", encoding="utf-8") as f:
         json.dump(manifest, f, indent=2)
-    print(f"Manifest written: {out_path}")
+    logger.info(f"Manifest written: {out_path}")
     return out_path
 
 
@@ -473,6 +503,7 @@ def find_cues_file(episode: str, slug: str | None = None, cues_dir: str = CUES_D
 
 def main() -> None:
     """CLI entry point for the cues sheet ingester."""
+    configure_logging()
     with run_banner():
         parser = argparse.ArgumentParser(
             description=(
@@ -526,11 +557,11 @@ def main() -> None:
         sfx_config_path = p["sfx"]
 
         # Parse
-        print(f"Parsing: {cues_path}")
+        logger.info(f"Parsing: {cues_path}")
         assets = parse_cues_markdown(cues_path)
         new_count = sum(1 for a in assets if not a["reuse"])
         reuse_count = sum(1 for a in assets if a["reuse"])
-        print(f"Found {len(assets)} assets ({new_count} new, {reuse_count} reuse)")
+        logger.info(f"Found {len(assets)} assets ({new_count} new, {reuse_count} reuse)")
 
         # Always write manifest and show audit report
         write_manifest(assets, args.episode, cues_path)
@@ -539,11 +570,11 @@ def main() -> None:
         # Generate new assets
         if args.generate:
             if args.dry_run:
-                print("--dry-run active: skipping API generation.")
+                logger.info("--dry-run active: skipping API generation.")
             else:
                 api_key = os.environ.get("ELEVENLABS_API_KEY")
                 if not api_key:
-                    print("ERROR: ELEVENLABS_API_KEY not set. Cannot generate assets.")
+                    logger.error("ELEVENLABS_API_KEY not set. Cannot generate assets.")
                 else:
                     from elevenlabs.client import ElevenLabs
                     client = ElevenLabs(api_key=api_key)
@@ -552,12 +583,12 @@ def main() -> None:
         # Enrich sfx config
         if args.enrich_sfx_config:
             if not os.path.exists(sfx_config_path):
-                print(
-                    f"WARNING: {sfx_config_path} not found — "
+                logger.warning(
+                    f"{sfx_config_path} not found — "
                     "skipping sfx config enrichment."
                 )
             else:
-                print(f"\nEnriching {sfx_config_path}…")
+                logger.info(f"\nEnriching {sfx_config_path}…")
                 enrich_sfx_config(assets, sfx_config_path, dry_run=args.dry_run)
 
 

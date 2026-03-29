@@ -19,6 +19,10 @@ import argparse
 import json
 import os
 
+from xil_pipeline.log_config import configure_logging, get_logger
+
+logger = get_logger(__name__)
+
 # ---------------------------------------------------------------------------
 # Sample content templates
 # ---------------------------------------------------------------------------
@@ -128,9 +132,9 @@ def scaffold(directory: str, show_name: str) -> None:
         with open(project_path, "w", encoding="utf-8") as f:
             json.dump({"show": show_name}, f, indent=2)
             f.write("\n")
-        print(f"  Created {project_path}")
+        logger.info(f"  Created {project_path}")
     else:
-        print(f"  Skipped {project_path} (already exists)")
+        logger.info(f"  Skipped {project_path} (already exists)")
 
     # speakers.json
     speakers_path = os.path.join(directory, "speakers.json")
@@ -138,9 +142,9 @@ def scaffold(directory: str, show_name: str) -> None:
         with open(speakers_path, "w", encoding="utf-8") as f:
             json.dump(SAMPLE_SPEAKERS, f, indent=2)
             f.write("\n")
-        print(f"  Created {speakers_path}")
+        logger.info(f"  Created {speakers_path}")
     else:
-        print(f"  Skipped {speakers_path} (already exists)")
+        logger.info(f"  Skipped {speakers_path} (already exists)")
 
     # Subdirectories
     for subdir in ("scripts", "parsed", "stems", "SFX", "daw", "masters", "cues"):
@@ -152,15 +156,15 @@ def scaffold(directory: str, show_name: str) -> None:
     if not os.path.exists(script_path):
         with open(script_path, "w", encoding="utf-8") as f:
             f.write(SAMPLE_SCRIPT.format(show=show_name))
-        print(f"  Created {script_path}")
+        logger.info(f"  Created {script_path}")
     else:
-        print(f"  Skipped {script_path} (already exists)")
+        logger.info(f"  Skipped {script_path} (already exists)")
 
 
 def print_getting_started(directory: str) -> None:
     """Print a getting-started guide after scaffolding."""
     cd_prefix = f"cd {directory} && " if directory != "." else ""
-    print(f"""
+    logger.info(f"""
 Getting Started
 ===============
 
@@ -186,6 +190,7 @@ Getting Started
 
 def main() -> None:
     """CLI entry point for project scaffolding."""
+    configure_logging()
     parser = argparse.ArgumentParser(
         description="Scaffold a new xil-pipeline project workspace"
     )
@@ -202,8 +207,8 @@ def main() -> None:
     directory = os.path.abspath(args.directory)
     show_name = args.show
 
-    print(f"\nScaffolding xil-pipeline workspace in: {directory}")
-    print(f"Show: {show_name}\n")
+    logger.info(f"\nScaffolding xil-pipeline workspace in: {directory}")
+    logger.info(f"Show: {show_name}\n")
 
     scaffold(directory, show_name)
     print_getting_started(args.directory)

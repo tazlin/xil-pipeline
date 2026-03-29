@@ -80,6 +80,7 @@ packages = ["src/xil_pipeline"]
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 pythonpath = ["src"]
+log_level = "INFO"
 
 [tool.ruff]
 line-length = 120

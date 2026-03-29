@@ -31,11 +31,15 @@ Module Attributes:
 import argparse
 import json
 import os
+import sys
 
 from elevenlabs.client import ElevenLabs
 
+from xil_pipeline.log_config import configure_logging, get_logger
 from xil_pipeline.models import CastConfiguration, derive_paths, resolve_slug
 from xil_pipeline.sfx_common import dry_run_sfx, generate_sfx, load_sfx_entries, run_banner
+
+logger = get_logger(__name__)
 
 client = ElevenLabs(api_key=os.environ.get("ELEVENLABS_API_KEY"))
 
@@ -66,6 +70,11 @@ def load_sfx_plan(
         a list of dicts and ``stems_dir`` is the full path to the episode
         stems directory.
     """
+    if not os.path.exists(cast_json_path):
+        raise FileNotFoundError(
+            f"Cast config not found: {cast_json_path}\n"
+            "Run XILP001 first or check your --episode flag."
+        )
     with open(cast_json_path, encoding="utf-8") as f:
         cast_data = json.load(f)
     cast_cfg = CastConfiguration(**cast_data)
@@ -81,6 +90,7 @@ def load_sfx_plan(
 
 def main() -> None:
     """CLI entry point for standalone SFX stem generation."""
+    configure_logging()
     with run_banner():
         parser = argparse.ArgumentParser(
             description="Generate SFX stems from an SFX config (standalone utility)"
@@ -105,6 +115,9 @@ def main() -> None:
                             help="(deprecated) shorthand for --gen-sfx --gen-music --gen-ambience")
         args = parser.parse_args()
 
+        if not args.dry_run and not os.environ.get("ELEVENLABS_API_KEY"):
+            sys.exit("Error: ELEVENLABS_API_KEY environment variable is not set.")
+
         # Derive config paths from --episode
         slug = resolve_slug(args.show)
         p = derive_paths(slug, args.episode)
@@ -113,6 +126,8 @@ def main() -> None:
 
         # Derive default --script from cast config
         if args.script is None:
+            if not os.path.exists(cast_path):
+                sys.exit(f"Error: Cast config not found: {cast_path}\nRun XILP001 first or check your --episode flag.")
             with open(cast_path, encoding="utf-8") as f:
                 cast_data = json.load(f)
             CastConfiguration(**cast_data)  # validate cast config
@@ -134,6 +149,8 @@ def main() -> None:
             direction_types=direction_types,
         )
 
+        if not os.path.exists(sfx_path):
+            sys.exit(f"Error: SFX config not found: {sfx_path}\nRun XILP001 first or check your --episode flag.")
         with open(sfx_path, encoding="utf-8") as f:
             sfx_config_data = json.load(f)
 

@@ -32,6 +32,7 @@ Module Attributes:
 import argparse
 import json
 import os
+import subprocess
 
 from pydub import AudioSegment
 
@@ -45,6 +46,9 @@ from xil_pipeline.mix_common import (
 )
 from xil_pipeline.models import CastConfiguration, SfxConfiguration, VoiceConfig, derive_paths, resolve_slug
 from xil_pipeline.sfx_common import run_banner
+from xil_pipeline.log_config import configure_logging, get_logger
+
+logger = get_logger(__name__)
 
 STEMS_DIR = "stems"
 SILENCE_GAP_MS = 600
@@ -71,10 +75,10 @@ def assemble_audio(config: dict[str, dict], stems_dir: str, final_output: str, g
     import glob
     stem_files = sorted(glob.glob(os.path.join(stems_dir, "*.mp3")))
     if not stem_files:
-        print(f" [!] No stems found in {stems_dir}/. Run XILP002 first.")
+        logger.warning("No stems found in %s/. Run XILP002 first.", stems_dir)
         return
 
-    print(f"--- Phase 2: Assembling {len(stem_files)} stems (sequential) ---")
+    logger.info("--- Phase 2: Assembling %d stems (sequential) ---", len(stem_files))
     full_vocals = AudioSegment.empty()
 
     for stem_file in stem_files:
@@ -82,7 +86,7 @@ def assemble_audio(config: dict[str, dict], stems_dir: str, final_output: str, g
         basename = os.path.splitext(os.path.basename(stem_file))[0]
         speaker = basename.rsplit("_", 1)[-1]
 
-        print(f"   Loading: {stem_file} ({speaker})")
+        logger.info("   Loading: %s (%s)", stem_file, speaker)
         segment = AudioSegment.from_file(stem_file)
 
         # Apply per-speaker effects
@@ -94,8 +98,8 @@ def assemble_audio(config: dict[str, dict], stems_dir: str, final_output: str, g
         full_vocals += segment + AudioSegment.silent(duration=gap_ms)
 
     full_vocals.export(final_output, format="mp3")
-    print(f"--- Success! Created: {final_output} (Duration: {len(full_vocals)/1000:.1f}s) ---")
-    os.system(f"mpg123 {os.path.abspath(final_output)}")
+    logger.info("--- Success! Created: %s (Duration: %.1fs) ---", final_output, len(full_vocals)/1000)
+    subprocess.run(["mpg123", os.path.abspath(final_output)], check=False)
 
 
 def assemble_multitrack(
@@ -127,34 +131,34 @@ def assemble_multitrack(
     stem_plans = collect_stem_plans(stems_dir, entries_index, sfx_config=sfx_config)
 
     if not stem_plans:
-        print(f" [!] No stems found in {stems_dir}/. Run XILP002 first.")
+        logger.warning("No stems found in %s/. Run XILP002 first.", stems_dir)
         return
 
-    print(f"--- Phase 2: Assembling {len(stem_plans)} stems (multi-track) ---")
+    logger.info("--- Phase 2: Assembling %d stems (multi-track) ---", len(stem_plans))
 
     foreground, timeline = build_foreground(
         stem_plans, config, apply_phone_filter, gap_ms=gap_ms
     )
 
     if len(foreground) == 0:
-        print(" [!] No foreground stems found — only background stems present.")
+        logger.warning("No foreground stems found — only background stems present.")
         return
 
     total_ms = len(foreground)
     bg_plans = [p for p in stem_plans if p.is_background]
     if bg_plans:
-        print(f"   Mixing {len(bg_plans)} background stems (ambience/music)...")
+        logger.info("   Mixing %d background stems (ambience/music)...", len(bg_plans))
         ambience, _ = build_ambience_layer(stem_plans, timeline, total_ms)
         music, _ = build_music_layer(stem_plans, timeline, total_ms)
         background = ambience.overlay(music)
         master = foreground.overlay(background)
     else:
-        print("   No background stems found — skipping overlay pass.")
+        logger.info("   No background stems found — skipping overlay pass.")
         master = foreground
 
     master.export(final_output, format="mp3")
-    print(f"--- Success! Created: {final_output} (Duration: {len(master)/1000:.1f}s) ---")
-    os.system(f"mpg123 {os.path.abspath(final_output)}")
+    logger.info("--- Success! Created: %s (Duration: %.1fs) ---", final_output, len(master)/1000)
+    subprocess.run(["mpg123", os.path.abspath(final_output)], check=False)
 
 
 def main() -> None:
@@ -165,6 +169,7 @@ def main() -> None:
     runs two-pass multi-track mixing.  Otherwise falls back to sequential
     concatenation.  Does not require an ElevenLabs API key.
     """
+    configure_logging()
     with run_banner():
         parser = argparse.ArgumentParser(
             description="Audio Assembly — assemble voice stems into master MP3"
@@ -194,6 +199,10 @@ def main() -> None:
         slug = resolve_slug(args.show)
         p = derive_paths(slug, args.episode)
         cast_path = p["cast"]
+        if not os.path.exists(cast_path):
+            logger.error("Cast config not found: %s", cast_path)
+            logger.info("Run XILP001 first or check your --episode flag.")
+            return
         with open(cast_path, encoding="utf-8") as f:
             cast_data = json.load(f)
 
@@ -221,7 +230,7 @@ def main() -> None:
                 gap_ms=args.gap_ms,
             )
         else:
-            print(f"   [info] No parsed JSON at {parsed_path!r} — using sequential assembly.")
+            logger.info("   No parsed JSON at %r — using sequential assembly.", parsed_path)
             assemble_audio(config, stems_dir, output, gap_ms=args.gap_ms)
 
 

@@ -36,9 +36,13 @@ import shutil
 
 import httpx
 from mutagen.id3 import ID3
-from mutagen.mp3 import MP3
+from mutagen.id3 import error as MutagenID3Error
+from mutagen.mp3 import MP3, HeaderNotFoundError
 
+from xil_pipeline.log_config import configure_logging, get_logger
 from xil_pipeline.sfx_common import run_banner
+
+logger = get_logger(__name__)
 
 SFX_DIR = "SFX"
 ELEVENLABS_BASE = "https://api.elevenlabs.io"
@@ -100,14 +104,14 @@ def _read_local_record(path: str) -> dict:
             if key.startswith("USLT"):
                 prompt = str(tags[key])
                 break
-    except Exception:
+    except (MutagenID3Error, OSError):
         pass
 
     try:
         audio = MP3(path)
         duration_s = audio.info.length
         bitrate_kbps = audio.info.bitrate // 1000
-    except Exception:
+    except (HeaderNotFoundError, OSError):
         pass
 
     return {
@@ -127,7 +131,7 @@ def _read_local_record(path: str) -> dict:
 def fetch_local_records(sfx_dir: str) -> list[dict]:
     """Scan *sfx_dir* and return one record per ``.mp3`` file."""
     if not os.path.isdir(sfx_dir):
-        print(f"[!] SFX directory not found: {sfx_dir}")
+        logger.warning(f"SFX directory not found: {sfx_dir}")
         return []
 
     records = []
@@ -178,15 +182,15 @@ def fetch_api_records(api_key: str, max_items: int | None = None) -> list[dict]:
             body = resp.json()
             detail = body.get("detail", {}) if isinstance(body, dict) else {}
             status = detail.get("status", "") if isinstance(detail, dict) else ""
-            print("[!] ElevenLabs API: permission denied for sound-generation history.")
-            print()
+            logger.warning("ElevenLabs API: permission denied for sound-generation history.")
+            logger.warning("")
             if status in ("missing_permissions", "needs_authorization"):
-                print("    Fix: ElevenLabs dashboard → Profile → API Keys")
-                print("    Edit your key → Endpoints → Sound Effects → set to 'Access'")
-                print("    then re-run without --api to fall back to local scan,")
-                print("    or with --api once the permission is active.")
+                logger.warning("    Fix: ElevenLabs dashboard → Profile → API Keys")
+                logger.warning("    Edit your key → Endpoints → Sound Effects → set to 'Access'")
+                logger.warning("    then re-run without --api to fall back to local scan,")
+                logger.warning("    or with --api once the permission is active.")
             else:
-                print(f"    Response: {resp.text[:200]}")
+                logger.warning(f"    Response: {resp.text[:200]}")
             raise SystemExit(1)
 
         resp.raise_for_status()
@@ -234,17 +238,17 @@ def fetch_api_records(api_key: str, max_items: int | None = None) -> list[dict]:
 
 def print_verbose_local(rec: dict) -> None:
     """Print all fields for a local SFX record."""
-    print(f"  File           : {rec['filename']}")
+    logger.info(f"  File           : {rec['filename']}")
     prompt_display = rec["prompt"] if rec["prompt"] else "— (no prompt tag)"
-    print(f"  Prompt         : {prompt_display}")
+    logger.info(f"  Prompt         : {prompt_display}")
     if rec["title"]:
-        print(f"  Title          : {rec['title']}")
+        logger.info(f"  Title          : {rec['title']}")
     if rec["duration_seconds"] is not None:
-        print(f"  Duration       : {_fmt_duration(rec['duration_seconds'])}")
+        logger.info(f"  Duration       : {_fmt_duration(rec['duration_seconds'])}")
     if rec["bitrate_kbps"] is not None:
-        print(f"  Bitrate        : {rec['bitrate_kbps']} kbps")
-    print(f"  Size           : {_fmt_size(rec['size_bytes'])}")
-    print()
+        logger.info(f"  Bitrate        : {rec['bitrate_kbps']} kbps")
+    logger.info(f"  Size           : {_fmt_size(rec['size_bytes'])}")
+    logger.info("")
 
 
 def print_compact_local(rec: dict) -> None:
@@ -253,33 +257,33 @@ def print_compact_local(rec: dict) -> None:
     size = _fmt_size(rec["size_bytes"])
     prompt = rec["prompt"][:72] + "…" if len(rec["prompt"]) > 72 else rec["prompt"]
     meta = f"{dur:6s}  {size:8s}"
-    print(f"  {rec['filename']:<38}  {meta}")
+    logger.info(f"  {rec['filename']:<38}  {meta}")
     if prompt:
-        print(f"    {prompt}")
+        logger.info(f"    {prompt}")
 
 
 def print_verbose_api(rec: dict) -> None:
     """Print all fields for an API SFX record."""
-    print(f"  Prompt         : {rec['prompt']}")
-    print(f"  History ID     : {rec['history_item_id']}")
+    logger.info(f"  Prompt         : {rec['prompt']}")
+    logger.info(f"  History ID     : {rec['history_item_id']}")
     if rec["model_id"]:
-        print(f"  Model          : {rec['model_id']}")
-    print(f"  Created        : {rec['date'] or '—'}")
+        logger.info(f"  Model          : {rec['model_id']}")
+    logger.info(f"  Created        : {rec['date'] or '—'}")
     if rec["duration_seconds"] is not None:
-        print(f"  Duration       : {_fmt_duration(rec['duration_seconds'])}")
+        logger.info(f"  Duration       : {_fmt_duration(rec['duration_seconds'])}")
     if rec["prompt_influence"] is not None:
-        print(f"  Prompt infl.   : {rec['prompt_influence']}")
-    print(f"  Credits used   : {rec['credits_used']}")
-    print()
+        logger.info(f"  Prompt infl.   : {rec['prompt_influence']}")
+    logger.info(f"  Credits used   : {rec['credits_used']}")
+    logger.info("")
 
 
 def print_compact_api(rec: dict) -> None:
     """Print a compact summary line for an API SFX record."""
     dur = _fmt_duration(rec["duration_seconds"]) if rec["duration_seconds"] else ""
     prompt = rec["prompt"][:72] + "…" if len(rec["prompt"]) > 72 else rec["prompt"]
-    print(f"  {rec['date']}  {rec['history_item_id']}  {dur}")
+    logger.info(f"  {rec['date']}  {rec['history_item_id']}  {dur}")
     if prompt:
-        print(f"    {prompt}")
+        logger.info(f"    {prompt}")
 
 
 # ---------------------------------------------------------------------------
@@ -316,7 +320,7 @@ def export_kit(records: list[dict], output_dir: str = ".") -> tuple[str, str]:
         if os.path.exists(cwd_ref):
             shutil.copy2(cwd_ref, md_path)
         else:
-            print(f"  [!] Reference doc not found at {ref_src} or {cwd_ref}")
+            logger.warning(f"Reference doc not found at {ref_src} or {cwd_ref}")
             md_path = ""
 
     return json_path, md_path
@@ -328,6 +332,7 @@ def export_kit(records: list[dict], output_dir: str = ".") -> tuple[str, str]:
 
 def main() -> None:
     """CLI entry point for SFX discovery."""
+    configure_logging()
     with run_banner():
         parser = argparse.ArgumentParser(
             description="Discover personally generated Sound Effects from the ElevenLabs account or local SFX/ directory"
@@ -386,7 +391,7 @@ def main() -> None:
         use_api = args.api
 
         if use_api and not api_key:
-            print("[!] ELEVENLABS_API_KEY not set.")
+            logger.warning("ELEVENLABS_API_KEY not set.")
             raise SystemExit(1)
 
         # --- Fetch records ---
@@ -398,9 +403,9 @@ def main() -> None:
             except SystemExit:
                 if args.api:
                     raise  # user explicitly asked for API — propagate the error
-                print()
-                print("  Falling back to local SFX/ directory scan.")
-                print()
+                logger.info("")
+                logger.info("  Falling back to local SFX/ directory scan.")
+                logger.info("")
                 records = fetch_local_records(args.sfx_dir)
                 data_source = f"local ({args.sfx_dir}/)"
         else:
@@ -425,12 +430,12 @@ def main() -> None:
         # --- Export kit ---
         if args.export_kit is not None:
             json_path, md_path = export_kit(records, args.export_kit)
-            print(f"\n--- Export kit ({len(records)} assets) ---\n")
-            print(f"  JSON inventory : {json_path}")
+            logger.info(f"\n--- Export kit ({len(records)} assets) ---\n")
+            logger.info(f"  JSON inventory : {json_path}")
             if md_path:
-                print(f"  Reference doc  : {md_path}")
-            print()
-            print("  Attach both files to your Claude project as knowledge files.")
+                logger.info(f"  Reference doc  : {md_path}")
+            logger.info("")
+            logger.info("  Attach both files to your Claude project as knowledge files.")
             return
 
         # --- Output ---
@@ -438,12 +443,12 @@ def main() -> None:
             print(_json.dumps(records, indent=2))
             return
 
-        print(f"\n--- ElevenLabs Sound Effects  [{data_source}]  ({len(records)} items) ---\n")
+        logger.info(f"\n--- ElevenLabs Sound Effects  [{data_source}]  ({len(records)} items) ---\n")
 
         if not records:
-            print("  No sound-effect records found.")
+            logger.info("  No sound-effect records found.")
             if args.search:
-                print(f"  (search filter: {args.search!r})")
+                logger.info(f"  (search filter: {args.search!r})")
             return
 
         if args.verbose:
@@ -458,18 +463,18 @@ def main() -> None:
                     print_compact_local(rec)
                 else:
                     print_compact_api(rec)
-            print()
+            logger.info("")
 
             if data_source.startswith("local"):
                 total_size = sum(r.get("size_bytes", 0) for r in records)
-                print(f"  Total size: {total_size / (1024*1024):.1f} MB  ({len(records)} files)")
+                logger.info(f"  Total size: {total_size / (1024*1024):.1f} MB  ({len(records)} files)")
             else:
                 total_credits = sum(r.get("credits_used", 0) for r in records)
-                print(f"  Total credits used: {total_credits:,}")
+                logger.info(f"  Total credits used: {total_credits:,}")
 
-            print()
-            print("  Use --verbose for full details, --json for machine-readable output,")
-            print("  --search <text> to filter, --local / --api to select data source.")
+            logger.info("")
+            logger.info("  Use --verbose for full details, --json for machine-readable output,")
+            logger.info("  --search <text> to filter, --local / --api to select data source.")
 
 
 if __name__ == "__main__":

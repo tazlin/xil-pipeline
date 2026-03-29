@@ -22,9 +22,13 @@ import os
 import sys
 
 from elevenlabs.client import ElevenLabs
+from elevenlabs.core.api_error import ApiError
 
 from xil_pipeline.models import derive_paths, resolve_slug
 from xil_pipeline.sfx_common import run_banner
+from xil_pipeline.log_config import configure_logging, get_logger
+
+logger = get_logger(__name__)
 
 # ---------------------------------------------------------------------------
 # ElevenLabs client (lazily used — only needed for non-dry-run)
@@ -54,11 +58,11 @@ def load_episode(episode_tag: str, slug: str | None = None):
     cast_path = p["cast"]
 
     if not os.path.exists(parsed_path):
-        print(f"[ERROR] Parsed file not found: {parsed_path}")
+        logger.error("Parsed file not found: %s", parsed_path)
         sys.exit(1)
 
     if not os.path.exists(cast_path):
-        print(f"[ERROR] Cast file not found: {cast_path}")
+        logger.error("Cast file not found: %s", cast_path)
         sys.exit(1)
 
     with open(parsed_path, encoding="utf-8") as f:
@@ -73,8 +77,8 @@ def load_episode(episode_tag: str, slug: str | None = None):
         if info.get("voice_id", "TBD") == "TBD"
     ]
     if tbd_speakers:
-        print(f"[ERROR] TBD voice_id for: {', '.join(tbd_speakers)}")
-        print("        Assign voice IDs in cast config before onboarding.")
+        logger.error("TBD voice_id for: %s", ', '.join(tbd_speakers))
+        logger.error("        Assign voice IDs in cast config before onboarding.")
         sys.exit(1)
 
     return parsed, cast
@@ -171,16 +175,16 @@ def check_elevenlabs_quota() -> int | None:
         used = sub.character_count
         limit = sub.character_limit
         remaining = limit - used
-        print(f"\n{'=' * 40}")
-        print("ELEVENLABS API STATUS:")
-        print(f"  Tier:      {sub.tier.upper()}")
-        print(f"  Usage:     {used:,} / {limit:,} characters")
-        print(f"  Remaining: {remaining:,}")
-        print(f"{'=' * 40}\n")
+        logger.info("\n%s", "=" * 40)
+        logger.info("ELEVENLABS API STATUS:")
+        logger.info("  Tier:      %s", sub.tier.upper())
+        logger.info("  Usage:     %s / %s characters", f"{used:,}", f"{limit:,}")
+        logger.info("  Remaining: %s", f"{remaining:,}")
+        logger.info("%s\n", "=" * 40)
         return remaining
-    except Exception as e:
-        print("\n[!] API Error: Unable to fetch subscription data.")
-        print(f"    Details: {e}")
+    except ApiError as e:
+        logger.warning("API Error: Unable to fetch subscription data.")
+        logger.warning("    Details: %s", e)
         return None
 
 
@@ -229,12 +233,12 @@ def dry_run(chapters: list[dict], cast: dict) -> None:
     total_blocks = 0
     total_chars = 0
 
-    print("\n" + "=" * 60)
-    print("STUDIO PROJECT — DRY RUN")
-    print("=" * 60)
+    logger.info("\n%s", "=" * 60)
+    logger.info("STUDIO PROJECT — DRY RUN")
+    logger.info("%s", "=" * 60)
 
     for chapter in chapters:
-        print(f"\n  Chapter: {chapter['name']}")
+        logger.info("\n  Chapter: %s", chapter['name'])
         block_count = len(chapter["blocks"])
         total_blocks += block_count
         char_count = sum(
@@ -252,11 +256,11 @@ def dry_run(chapters: list[dict], cast: dict) -> None:
                 if vid:
                     voices_used.add(voice_map.get(vid, vid))
 
-        print(f"    Blocks: {block_count}  |  Characters: {char_count:,}")
-        print(f"    Voices: {', '.join(sorted(voices_used))}")
+        logger.info("    Blocks: %d  |  Characters: %s", block_count, f"{char_count:,}")
+        logger.info("    Voices: %s", ', '.join(sorted(voices_used)))
 
-    print(f"\n  TOTAL: {len(chapters)} chapters, {total_blocks} blocks, {total_chars:,} characters")
-    print("=" * 60 + "\n")
+    logger.info("\n  TOTAL: %d chapters, %d blocks, %s characters", len(chapters), total_blocks, f"{total_chars:,}")
+    logger.info("%s\n", "=" * 60)
 
 
 # ---------------------------------------------------------------------------
@@ -264,6 +268,7 @@ def dry_run(chapters: list[dict], cast: dict) -> None:
 # ---------------------------------------------------------------------------
 
 def main():
+    configure_logging()
     with run_banner():
         parser = argparse.ArgumentParser(
             description="Onboard an episode to an ElevenLabs Studio project."
@@ -292,6 +297,9 @@ def main():
 
         args = parser.parse_args()
 
+        if not args.dry_run and not os.environ.get("ELEVENLABS_API_KEY"):
+            sys.exit("Error: ELEVENLABS_API_KEY environment variable is not set.")
+
         slug = resolve_slug(args.show)
         parsed, cast = load_episode(args.episode, slug=slug)
         chapters = build_content_json(parsed, cast)
@@ -313,7 +321,7 @@ def main():
         title = parsed.get("title", args.episode)
         project_name = f"XILP004 - {show} — {title} ({args.episode})"
 
-        print(f"Creating Studio project: {project_name}")
+        logger.info("Creating Studio project: %s", project_name)
         check_elevenlabs_quota()
 
         response = create_project(
@@ -324,8 +332,8 @@ def main():
             quality=args.quality,
         )
 
-        print("\nProject created successfully!")
-        print(f"  Project ID: {response.project.project_id}")
+        logger.info("\nProject created successfully!")
+        logger.info("  Project ID: %s", response.project.project_id)
 
 
 if __name__ == "__main__":

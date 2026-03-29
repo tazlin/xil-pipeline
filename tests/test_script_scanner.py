@@ -270,22 +270,21 @@ class TestFormatReport:
 # ─── Tests: CLI main ───
 
 class TestMainCLI:
-    def test_main_prints_report(self, tmp_path, capsys):
+    def test_main_prints_report(self, tmp_path, caplog):
         p = tmp_path / "s.md"
         p.write_text(SIMPLE_SCRIPT, encoding="utf-8")
         with unittest.mock.patch("sys.argv", ["XILP000", str(p)]):
             scanner.main()
-        out = capsys.readouterr().out
-        assert "COLD OPEN" in out
-        assert "adam" in out.lower() or "ADAM" in out
+        assert "COLD OPEN" in caplog.text
+        assert "adam" in caplog.text.lower() or "ADAM" in caplog.text
 
     def test_main_json_flag_returns_valid_json(self, tmp_path, capsys):
         p = tmp_path / "s.md"
         p.write_text(SIMPLE_SCRIPT, encoding="utf-8")
         with unittest.mock.patch("sys.argv", ["XILP000", str(p), "--json"]):
             scanner.main()
+        # JSON is printed to stdout via print() (machine-readable output)
         out = capsys.readouterr().out
-        # Strip run_banner header/footer lines; find the JSON object
         json_start = out.find("{")
         json_end = out.rfind("}") + 1
         data = json.loads(out[json_start:json_end])

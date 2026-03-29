@@ -30,6 +30,9 @@ from pydub import AudioSegment
 
 from xil_pipeline.models import CastConfiguration, derive_paths, resolve_slug
 from xil_pipeline.sfx_common import run_banner, tag_mp3
+from xil_pipeline.log_config import configure_logging, get_logger
+
+logger = get_logger(__name__)
 
 MASTERS_DIR = "masters"
 DAW_DIR = "daw"
@@ -108,6 +111,7 @@ def export_master(
 
 def main() -> None:
     """CLI entry point for final master MP3 export."""
+    configure_logging()
     with run_banner():
         parser = argparse.ArgumentParser(
             description="Final Master MP3 Export — mix DAW layers into a single podcast-ready MP3"
@@ -167,35 +171,35 @@ def main() -> None:
         layers = load_layer_wavs(daw_dir, tag)
         missing = [s for s in LAYER_SUFFIXES if s not in {l[0] for l in layers}]
 
-        print(f"  Episode    : {tag}")
-        print(f"  Show       : {show_name} (slug: {slug})")
-        print(f"  DAW dir    : {daw_dir}")
-        print(f"  Output     : {output_path}")
-        print(f"  Format     : Stereo, {SAMPLE_RATE} Hz, VBR MP3 (~145-185 kbps)")
-        print(f"  Layers     : {len(layers)}/{len(LAYER_SUFFIXES)} found")
+        logger.info(f"  Episode    : {tag}")
+        logger.info(f"  Show       : {show_name} (slug: {slug})")
+        logger.info(f"  DAW dir    : {daw_dir}")
+        logger.info(f"  Output     : {output_path}")
+        logger.info(f"  Format     : Stereo, {SAMPLE_RATE} Hz, VBR MP3 (~145-185 kbps)")
+        logger.info(f"  Layers     : {len(layers)}/{len(LAYER_SUFFIXES)} found")
         for name, path in layers:
-            print(f"    [{name:>9s}] {path}")
+            logger.info(f"    [{name:>9s}] {path}")
         if missing:
-            print(f"  Missing    : {', '.join(missing)}")
-        print()
+            logger.info(f"  Missing    : {', '.join(missing)}")
+        logger.info("")
 
         if not layers:
-            print("[!] No layer WAVs found. Run XILP005 first.")
+            logger.warning("No layer WAVs found. Run XILP005 first.")
             return
 
         if args.dry_run:
-            print("--- Dry run — no files written ---")
+            logger.info("--- Dry run — no files written ---")
             return
 
         # Mix and export
-        print("--- Mixing layers ---")
+        logger.info("--- Mixing layers ---")
         combined = mix_layers(layers)
         duration_s = len(combined) / 1000.0
         minutes = int(duration_s // 60)
         seconds = duration_s % 60
 
-        print(f"  Duration   : {minutes}:{seconds:05.2f}")
-        print("--- Exporting master MP3 ---")
+        logger.info(f"  Duration   : {minutes}:{seconds:05.2f}")
+        logger.info("--- Exporting master MP3 ---")
 
         title = f"{show_name} — {episode_title}" if episode_title else tag
         export_master(
@@ -207,8 +211,8 @@ def main() -> None:
         )
 
         file_size_mb = os.path.getsize(output_path) / (1024 * 1024)
-        print(f"  Written    : {output_path} ({file_size_mb:.1f} MB)")
-        print("--- Done! ---")
+        logger.info(f"  Written    : {output_path} ({file_size_mb:.1f} MB)")
+        logger.info("--- Done! ---")
 
 
 if __name__ == "__main__":
