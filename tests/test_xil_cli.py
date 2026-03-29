@@ -81,3 +81,23 @@ def test_all_commands_have_valid_group():
     valid_groups = {xil._PIPELINE, xil._UTILITY}
     invalid = {name: spec.group for name, spec in xil.XIL_SCRIPT_COMMANDS.items() if spec.group not in valid_groups}
     assert not invalid, f"Commands with invalid group: {invalid}"
+
+
+def test_studio_not_in_commands():
+    """XILP004 studio onboarding is retired from the dispatcher pending API permission."""
+    assert "studio" not in xil.XIL_SCRIPT_COMMANDS
+
+
+def test_help_shows_module_tags(capsys):
+    """Help output should include XILP/XILU identifiers next to each command."""
+    xil.main([])
+    out = capsys.readouterr().out
+    assert "XILP000" in out
+    assert "XILP001" in out
+    assert "XILU001" in out
+
+
+def test_module_tag_extracts_identifier():
+    assert xil._module_tag("xil_pipeline.XILP000_script_scanner") == "XILP000"
+    assert xil._module_tag("xil_pipeline.XILU002_generate_SFX") == "XILU002"
+    assert xil._module_tag("xil_pipeline.xil_init") == ""

@@ -13,6 +13,7 @@ single ergonomic top-level command:
 from __future__ import annotations
 
 import importlib
+import re
 import sys
 from dataclasses import dataclass
 from typing import TextIO
@@ -44,7 +45,6 @@ XIL_SCRIPT_COMMANDS: dict[str, CommandSpec] = {
     "daw": CommandSpec("xil_pipeline.XILP005_daw_export", "DAW layer export", _PIPELINE),
     "migrate": CommandSpec("xil_pipeline.XILP007_stem_migrator", "stem migration", _PIPELINE),
     "cleanup": CommandSpec("xil_pipeline.XILP008_stale_stem_cleanup", "stale stem cleanup", _PIPELINE),
-    "studio": CommandSpec("xil_pipeline.XILP004_studio_onboard", "ElevenLabs Studio onboarding", _PIPELINE),
     "import": CommandSpec("xil_pipeline.XILP010_studio_import", "Studio export import", _PIPELINE),
     "regen": CommandSpec("xil_pipeline.XILP009_script_regenerator", "script regeneration", _PIPELINE),
     "master": CommandSpec("xil_pipeline.XILP011_master_export", "final master MP3 export", _PIPELINE),
@@ -88,6 +88,13 @@ XIL_SCRIPT_COMMANDS: dict[str, CommandSpec] = {
 """Subcommand registry. Insertion order defines display order within each group."""
 
 
+def _module_tag(module: str) -> str:
+    """Return the XILP/XILU identifier from a module path, e.g. 'XILP000' or 'XILU001'.
+    Returns empty string for modules without that prefix (e.g. xil_init)."""
+    m = re.search(r"(XIL[PU]\d+)", module)
+    return m.group(1) if m else ""
+
+
 def _print_help(stream: TextIO) -> None:
     print("Usage: xil <command> [args...]", file=stream)
     print("", file=stream)
@@ -97,8 +104,10 @@ def _print_help(stream: TextIO) -> None:
         for name, spec in XIL_SCRIPT_COMMANDS.items():
             if spec.group != group_key:
                 continue
+            tag = _module_tag(spec.module)
+            tag_str = f"{tag:<8}" if tag else " " * 8
             suffix = f"  {spec.hint}" if spec.hint else ""
-            print(f"  {name:<{width}}  {spec.description}{suffix}", file=stream)
+            print(f"  {name:<{width}}  {tag_str} {spec.description}{suffix}", file=stream)
         print("", file=stream)
     print("Run 'xil <command> --help' for command-specific options.", file=stream)
 
