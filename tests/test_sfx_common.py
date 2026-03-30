@@ -559,8 +559,6 @@ class TestLoadSfxEntriesLocalOnly:
         """Effects already in SFX/ are included even when local_only=True."""
         sfx_dir = tmp_path / "SFX"
         sfx_dir.mkdir()
-        # Pre-create the shared asset for SFX: PHONE BUZZING
-        shared = sfx_dir / "sfx_phone-buzzing.mp3"
         # Use the real slugify to get the correct filename
         slug = sfx_common.slugify_effect_key("SFX: PHONE BUZZING")
         (sfx_dir / f"{slug}.mp3").write_bytes(b"\xff\xfb" + b"\x00" * 100)
