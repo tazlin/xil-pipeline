@@ -1,0 +1,1217 @@
+<html lang="en"><head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>xil-pipeline — AI-Powered Podcast &amp; Audiobook Production Pipeline</title>
+  <meta name="description" content="xil-pipeline is an open source pipeline that transforms AI-generated scripts into fully produced podcasts and audiobooks using ElevenLabs TTS, sound effects, music, and ambient audio.">
+  <meta name="keywords" content="xil-pipeline, podcast automation, audiobook generator, ElevenLabs TTS, AI script, open source audio pipeline, text to speech">
+  <meta name="robots" content="index, follow">
+
+  <!-- Open Graph -->
+  <meta property="og:title" content="xil-pipeline — AI-Powered Audio Production Pipeline">
+  <meta property="og:description" content="Transform AI-generated scripts into fully produced podcasts and audiobooks. Open source. ElevenLabs powered.">
+  <meta property="og:image" content="https://placehold.co/1200x630/0a1a0a/39ff14?text=xil-pipeline">
+  <meta property="og:url" content="https://xilcmd.xyz">
+  <meta property="og:type" content="website">
+
+  <!-- Twitter Card -->
+  <meta name="twitter:card" content="summary_large_image">
+  <meta name="twitter:title" content="xil-pipeline — AI-Powered Audio Production Pipeline">
+  <meta name="twitter:description" content="Transform AI-generated scripts into fully produced podcasts and audiobooks. Open source. ElevenLabs powered.">
+  <meta name="twitter:image" content="https://placehold.co/1200x630/0a1a0a/39ff14?text=xil-pipeline">
+
+  <!-- Favicon -->
+  <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Crect width='100' height='100' fill='%230a1a0a'/%3E%3Ctext x='50' y='68' font-family='monospace' font-size='54' font-weight='bold' fill='%2339ff14' text-anchor='middle'%3E%7C%3E%3C/text%3E%3C/svg%3E">
+
+  <script type="application/ld+json">
+  {
+    "@context": "https://schema.org",
+    "@type": "SoftwareApplication",
+    "name": "xil-pipeline",
+    "description": "An open source pipeline that transforms AI-generated scripts into fully produced podcasts and audiobooks using ElevenLabs TTS.",
+    "applicationCategory": "DeveloperApplication",
+    "operatingSystem": "Linux, macOS, Windows",
+    "url": "https://xilcmd.xyz",
+    "license": "https://opensource.org/licenses/AGPL-3.0",
+    "codeRepository": "https://github.com/xilcmd/xil-pipeline",
+    "programmingLanguage": "Python"
+  }
+  </script>
+
+  <style>
+    :root {
+      --bg: #060f06;
+      --bg2: #0a1a0a;
+      --bg3: #0f240f;
+      --panel: #0d1f0d;
+      --border: #1a3a1a;
+      --green: #39ff14;
+      --green-dim: #22cc00;
+      --green-faint: #1a4a1a;
+      --copper: #b87333;
+      --copper-light: #d4924a;
+      --amber: #ffb700;
+      --text: #c8e6c8;
+      --text-dim: #7aaa7a;
+      --text-muted: #4a7a4a;
+      --code-bg: #040c04;
+      --mono: 'Courier New', 'Lucida Console', monospace;
+      --sans: 'Segoe UI', system-ui, -apple-system, sans-serif;
+      --radius: 6px;
+      --glow: 0 0 12px rgba(57,255,20,0.3);
+      --glow-strong: 0 0 24px rgba(57,255,20,0.5);
+    }
+
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    html { scroll-behavior: smooth; }
+
+    body {
+      background: var(--bg);
+      color: var(--text);
+      font-family: var(--sans);
+      font-size: 16px;
+      line-height: 1.6;
+      overflow-x: hidden;
+    }
+
+    /* === CIRCUIT BOARD BACKGROUND === */
+    body::before {
+      content: '';
+      position: fixed;
+      inset: 0;
+      background-image:
+        linear-gradient(rgba(57,255,20,0.03) 1px, transparent 1px),
+        linear-gradient(90deg, rgba(57,255,20,0.03) 1px, transparent 1px),
+        linear-gradient(rgba(184,115,51,0.04) 1px, transparent 1px),
+        linear-gradient(90deg, rgba(184,115,51,0.04) 1px, transparent 1px);
+      background-size: 80px 80px, 80px 80px, 20px 20px, 20px 20px;
+      pointer-events: none;
+      z-index: 0;
+    }
+
+    /* Trace lines overlay */
+    body::after {
+      content: '';
+      position: fixed;
+      inset: 0;
+      background:
+        radial-gradient(ellipse at 20% 50%, rgba(57,255,20,0.04) 0%, transparent 60%),
+        radial-gradient(ellipse at 80% 20%, rgba(184,115,51,0.05) 0%, transparent 50%),
+        radial-gradient(ellipse at 60% 80%, rgba(57,255,20,0.03) 0%, transparent 40%);
+      pointer-events: none;
+      z-index: 0;
+    }
+
+    * { position: relative; z-index: 1; }
+
+    /* === HEADER === */
+    header {
+      background: rgba(6,15,6,0.95);
+      border-bottom: 1px solid var(--border);
+      backdrop-filter: blur(10px);
+      position: sticky;
+      top: 0;
+      z-index: 100;
+    }
+
+    .header-inner {
+      max-width: 1200px;
+      margin: 0 auto;
+      padding: 0 24px;
+      height: 64px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 16px;
+    }
+
+    .logo {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      text-decoration: none;
+      flex-shrink: 0;
+    }
+
+    .logo-icon {
+      width: 36px;
+      height: 36px;
+      background: var(--bg3);
+      border: 1px solid var(--green-dim);
+      border-radius: 4px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-family: var(--mono);
+      font-size: 14px;
+      font-weight: bold;
+      color: var(--green);
+      box-shadow: var(--glow);
+      letter-spacing: -1px;
+    }
+
+    .logo-text {
+      font-family: var(--mono);
+      font-size: 18px;
+      font-weight: bold;
+      color: var(--green);
+      text-shadow: 0 0 8px rgba(57,255,20,0.4);
+    }
+
+    .version-badge {
+      background: var(--green-faint);
+      border: 1px solid var(--green-dim);
+      color: var(--green);
+      font-family: var(--mono);
+      font-size: 11px;
+      padding: 2px 8px;
+      border-radius: 20px;
+    }
+
+    nav { display: flex; align-items: center; gap: 4px; flex-wrap: wrap; }
+
+    nav a {
+      color: var(--text-dim);
+      text-decoration: none;
+      font-size: 14px;
+      padding: 6px 12px;
+      border-radius: var(--radius);
+      transition: color 0.2s, background 0.2s;
+      white-space: nowrap;
+    }
+
+    nav a:hover { color: var(--green); background: var(--green-faint); }
+
+    .nav-github {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      background: var(--bg3);
+      border: 1px solid var(--border);
+      color: var(--text) !important;
+      padding: 6px 14px !important;
+      font-size: 13px !important;
+    }
+
+    .nav-github:hover { border-color: var(--green) !important; box-shadow: var(--glow); }
+
+    /* === HERO === */
+    .hero {
+      max-width: 1200px;
+      margin: 0 auto;
+      padding: 80px 24px 60px;
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 60px;
+      align-items: center;
+    }
+
+    .hero-eyebrow {
+      font-family: var(--mono);
+      font-size: 12px;
+      color: var(--copper-light);
+      letter-spacing: 3px;
+      text-transform: uppercase;
+      margin-bottom: 16px;
+    }
+
+    .hero h1 {
+      font-family: var(--mono);
+      font-size: clamp(2.2rem, 5vw, 3.4rem);
+      font-weight: bold;
+      color: var(--green);
+      text-shadow: var(--glow-strong);
+      line-height: 1.1;
+      margin-bottom: 8px;
+    }
+
+    .hero-tagline {
+      font-size: clamp(1rem, 2vw, 1.2rem);
+      color: var(--text-dim);
+      margin-bottom: 24px;
+      line-height: 1.5;
+    }
+
+    .hero-tagline strong { color: var(--text); }
+
+    .hero-desc {
+      color: var(--text-dim);
+      font-size: 15px;
+      margin-bottom: 36px;
+      line-height: 1.7;
+    }
+
+    .hero-actions { display: flex; gap: 12px; flex-wrap: wrap; }
+
+    .btn {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      padding: 12px 24px;
+      border-radius: var(--radius);
+      font-size: 15px;
+      font-weight: 600;
+      text-decoration: none;
+      transition: all 0.2s;
+      cursor: pointer;
+      border: none;
+      white-space: nowrap;
+    }
+
+    .btn-primary {
+      background: var(--green);
+      color: #060f06;
+      box-shadow: 0 0 20px rgba(57,255,20,0.4);
+    }
+
+    .btn-primary:hover { background: #4fff2a; box-shadow: 0 0 30px rgba(57,255,20,0.6); transform: translateY(-1px); }
+
+    .btn-secondary {
+      background: transparent;
+      color: var(--text);
+      border: 1px solid var(--border);
+    }
+
+    .btn-secondary:hover { border-color: var(--green); color: var(--green); box-shadow: var(--glow); }
+
+    .btn-copper {
+      background: transparent;
+      color: var(--copper-light);
+      border: 1px solid var(--copper);
+    }
+
+    .btn-copper:hover { background: rgba(184,115,51,0.1); box-shadow: 0 0 12px rgba(184,115,51,0.3); }
+
+    /* Hero terminal */
+    .hero-terminal {
+      background: var(--code-bg);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      overflow: hidden;
+      box-shadow: 0 0 40px rgba(57,255,20,0.1), 0 20px 60px rgba(0,0,0,0.5);
+    }
+
+    .terminal-bar {
+      background: var(--bg3);
+      border-bottom: 1px solid var(--border);
+      padding: 10px 16px;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .dot { width: 12px; height: 12px; border-radius: 50%; }
+    .dot-r { background: #ff5f57; }
+    .dot-y { background: #febc2e; }
+    .dot-g { background: #28c840; }
+
+    .terminal-title {
+      font-family: var(--mono);
+      font-size: 12px;
+      color: var(--text-muted);
+      margin-left: auto;
+      margin-right: auto;
+    }
+
+    .terminal-body {
+      padding: 20px;
+      font-family: var(--mono);
+      font-size: 13px;
+      line-height: 1.8;
+    }
+
+    .t-prompt { color: var(--green); }
+    .t-cmd { color: var(--text); }
+    .t-comment { color: var(--text-muted); }
+    .t-output { color: var(--text-dim); }
+    .t-success { color: var(--green-dim); }
+    .t-warn { color: var(--amber); }
+    .t-copper { color: var(--copper-light); }
+    .t-blank { display: block; height: 6px; }
+
+    /* === SECTION COMMON === */
+    section { padding: 60px 24px; }
+
+    .section-inner { max-width: 1200px; margin: 0 auto; }
+
+    .section-label {
+      font-family: var(--mono);
+      font-size: 11px;
+      letter-spacing: 3px;
+      text-transform: uppercase;
+      color: var(--copper-light);
+      margin-bottom: 8px;
+    }
+
+    .section-title {
+      font-family: var(--mono);
+      font-size: clamp(1.4rem, 3vw, 2rem);
+      color: var(--green);
+      margin-bottom: 12px;
+    }
+
+    .section-sub {
+      color: var(--text-dim);
+      font-size: 15px;
+      max-width: 600px;
+      margin-bottom: 40px;
+    }
+
+    /* === PIPELINE DIAGRAM === */
+    .pipeline-section { background: var(--bg2); border-top: 1px solid var(--border); border-bottom: 1px solid var(--border); }
+
+    .pipeline-flow {
+      display: flex;
+      align-items: center;
+      gap: 0;
+      overflow-x: auto;
+      padding: 8px 0 16px;
+    }
+
+    .pipe-step {
+      flex: 1;
+      min-width: 130px;
+      background: var(--panel);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 16px 12px;
+      text-align: center;
+    }
+
+    .pipe-step:hover { border-color: var(--green-dim); box-shadow: var(--glow); }
+
+    .pipe-icon { font-size: 24px; margin-bottom: 8px; display: block; }
+
+    .pipe-label {
+      font-family: var(--mono);
+      font-size: 12px;
+      color: var(--green);
+      font-weight: bold;
+      margin-bottom: 4px;
+    }
+
+    .pipe-desc { font-size: 11px; color: var(--text-muted); line-height: 1.4; }
+
+    .pipe-arrow {
+      color: var(--copper);
+      font-size: 20px;
+      padding: 0 8px;
+      flex-shrink: 0;
+    }
+
+    /* === DEMO SECTION === */
+    .demo-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+      gap: 20px;
+    }
+
+    .demo-card {
+      background: var(--panel);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      overflow: hidden;
+      transition: border-color 0.2s, box-shadow 0.2s;
+    }
+
+    .demo-card:hover { border-color: var(--green-dim); box-shadow: var(--glow); }
+
+    .demo-thumb {
+      background: var(--bg3);
+      height: 140px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      border-bottom: 1px solid var(--border);
+      font-size: 48px;
+      position: relative;
+    }
+
+    .demo-play {
+      position: absolute;
+      width: 52px;
+      height: 52px;
+      background: rgba(57,255,20,0.15);
+      border: 2px solid var(--green);
+      border-radius: 50%;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 18px;
+      cursor: pointer;
+      transition: all 0.2s;
+      box-shadow: var(--glow);
+    }
+
+    .demo-play:hover { background: rgba(57,255,20,0.3); transform: scale(1.1); }
+
+    .demo-info { padding: 16px; }
+
+    .demo-title {
+      font-family: var(--mono);
+      font-size: 14px;
+      color: var(--text);
+      font-weight: bold;
+      margin-bottom: 6px;
+    }
+
+    .demo-meta { font-size: 12px; color: var(--text-muted); margin-bottom: 10px; }
+
+    .demo-tags { display: flex; gap: 6px; flex-wrap: wrap; }
+
+    .tag {
+      font-family: var(--mono);
+      font-size: 10px;
+      padding: 2px 8px;
+      border-radius: 20px;
+      border: 1px solid;
+    }
+
+    .tag-green { color: var(--green); border-color: var(--green-faint); background: rgba(57,255,20,0.05); }
+    .tag-copper { color: var(--copper-light); border-color: rgba(184,115,51,0.3); background: rgba(184,115,51,0.05); }
+    .tag-amber { color: var(--amber); border-color: rgba(255,183,0,0.3); background: rgba(255,183,0,0.05); }
+
+    /* === DOC CARDS === */
+    .doc-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+      gap: 16px;
+    }
+
+    .doc-card {
+      background: var(--panel);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 24px;
+      text-decoration: none;
+      display: block;
+      transition: all 0.2s;
+    }
+
+    .doc-card:hover { border-color: var(--green-dim); box-shadow: var(--glow); transform: translateY(-2px); }
+
+    .doc-card-icon {
+      font-size: 28px;
+      margin-bottom: 12px;
+      display: block;
+    }
+
+    .doc-card-title {
+      font-family: var(--mono);
+      font-size: 15px;
+      color: var(--green);
+      font-weight: bold;
+      margin-bottom: 8px;
+    }
+
+    .doc-card-desc { font-size: 13px; color: var(--text-dim); line-height: 1.5; }
+
+    /* === CODE BLOCK === */
+    .code-section { background: var(--bg2); border-top: 1px solid var(--border); border-bottom: 1px solid var(--border); }
+
+    .code-tabs { display: flex; gap: 0; border-bottom: 1px solid var(--border); margin-bottom: 0; }
+
+    .code-tab {
+      font-family: var(--mono);
+      font-size: 12px;
+      padding: 10px 20px;
+      color: var(--text-muted);
+      cursor: pointer;
+      border-bottom: 2px solid transparent;
+      transition: all 0.2s;
+    }
+
+    .code-tab.active { color: var(--green); border-bottom-color: var(--green); }
+
+    .code-block {
+      background: var(--code-bg);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      overflow: hidden;
+    }
+
+    .code-header {
+      background: var(--bg3);
+      border-bottom: 1px solid var(--border);
+      padding: 10px 16px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+    }
+
+    .code-filename { font-family: var(--mono); font-size: 12px; color: var(--text-muted); }
+
+    .code-copy {
+      font-family: var(--mono);
+      font-size: 11px;
+      color: var(--text-muted);
+      background: none;
+      border: 1px solid var(--border);
+      border-radius: 4px;
+      padding: 3px 10px;
+      cursor: pointer;
+      transition: all 0.2s;
+    }
+
+    .code-copy:hover { color: var(--green); border-color: var(--green); }
+
+    pre {
+      padding: 20px;
+      overflow-x: auto;
+      font-family: var(--mono);
+      font-size: 13px;
+      line-height: 1.8;
+      margin: 0;
+    }
+
+    .kw { color: #ff79c6; }
+    .str { color: #f1fa8c; }
+    .cm { color: var(--text-muted); font-style: italic; }
+    .fn { color: #8be9fd; }
+    .num { color: var(--amber); }
+    .key { color: var(--copper-light); }
+    .val { color: #50fa7b; }
+
+    /* === FEATURES === */
+    .features-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+      gap: 20px;
+    }
+
+    .feature-card {
+      background: var(--panel);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 24px;
+      transition: all 0.2s;
+    }
+
+    .feature-card:hover { border-color: var(--green-dim); }
+
+    .feature-icon {
+      width: 44px;
+      height: 44px;
+      background: var(--green-faint);
+      border: 1px solid var(--green-dim);
+      border-radius: 8px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 20px;
+      margin-bottom: 16px;
+    }
+
+    .feature-title {
+      font-family: var(--mono);
+      font-size: 14px;
+      color: var(--text);
+      font-weight: bold;
+      margin-bottom: 8px;
+    }
+
+    .feature-desc { font-size: 13px; color: var(--text-dim); line-height: 1.6; }
+
+    /* === CONTRIBUTE === */
+    .contribute-section { background: var(--bg2); border-top: 1px solid var(--border); }
+
+    .contribute-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 40px;
+      align-items: start;
+    }
+
+    .contribute-steps { list-style: none; }
+
+    .contribute-steps li {
+      display: flex;
+      gap: 16px;
+      padding: 16px 0;
+      border-bottom: 1px solid var(--border);
+    }
+
+    .contribute-steps li:last-child { border-bottom: none; }
+
+    .step-num {
+      font-family: var(--mono);
+      font-size: 12px;
+      color: var(--green);
+      background: var(--green-faint);
+      border: 1px solid var(--green-dim);
+      width: 28px;
+      height: 28px;
+      border-radius: 50%;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      flex-shrink: 0;
+      margin-top: 2px;
+    }
+
+    .step-content h4 { font-size: 14px; color: var(--text); margin-bottom: 4px; }
+    .step-content p { font-size: 13px; color: var(--text-dim); }
+
+    .stats-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 12px;
+    }
+
+    .stat-card {
+      background: var(--panel);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 20px;
+      text-align: center;
+    }
+
+    .stat-num {
+      font-family: var(--mono);
+      font-size: 2rem;
+      color: var(--green);
+      font-weight: bold;
+      text-shadow: var(--glow);
+      display: block;
+    }
+
+    .stat-label { font-size: 12px; color: var(--text-muted); margin-top: 4px; }
+
+    .good-first {
+      background: var(--panel);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 20px;
+      margin-top: 20px;
+    }
+
+    .good-first h4 {
+      font-family: var(--mono);
+      font-size: 13px;
+      color: var(--amber);
+      margin-bottom: 12px;
+    }
+
+    .issue-item {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      padding: 8px 0;
+      border-bottom: 1px solid var(--border);
+      font-size: 13px;
+      color: var(--text-dim);
+    }
+
+    .issue-item:last-child { border-bottom: none; }
+    .issue-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--green); flex-shrink: 0; }
+
+    /* === FOOTER === */
+    footer {
+      background: var(--bg2);
+      border-top: 1px solid var(--border);
+      padding: 40px 24px;
+    }
+
+    .footer-inner {
+      max-width: 1200px;
+      margin: 0 auto;
+    }
+
+    .footer-top {
+      display: grid;
+      grid-template-columns: 2fr 1fr 1fr 1fr;
+      gap: 40px;
+      margin-bottom: 40px;
+    }
+
+    .footer-brand p { font-size: 13px; color: var(--text-muted); margin-top: 12px; line-height: 1.6; }
+
+    .footer-col h5 {
+      font-family: var(--mono);
+      font-size: 11px;
+      letter-spacing: 2px;
+      text-transform: uppercase;
+      color: var(--text-muted);
+      margin-bottom: 12px;
+    }
+
+    .footer-col a {
+      display: block;
+      color: var(--text-dim);
+      text-decoration: none;
+      font-size: 13px;
+      padding: 4px 0;
+      transition: color 0.2s;
+    }
+
+    .footer-col a:hover { color: var(--green); }
+
+    .footer-bottom {
+      border-top: 1px solid var(--border);
+      padding-top: 24px;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      flex-wrap: wrap;
+      gap: 12px;
+    }
+
+    .footer-bottom p { font-size: 12px; color: var(--text-muted); font-family: var(--mono); }
+
+    .footer-badges { display: flex; gap: 8px; flex-wrap: wrap; }
+
+    .badge {
+      font-family: var(--mono);
+      font-size: 10px;
+      padding: 3px 10px;
+      border-radius: 20px;
+      border: 1px solid;
+    }
+
+    .badge-green { color: var(--green); border-color: var(--green-faint); }
+    .badge-copper { color: var(--copper-light); border-color: rgba(184,115,51,0.3); }
+    .badge-amber { color: var(--amber); border-color: rgba(255,183,0,0.3); }
+
+    /* === RESPONSIVE === */
+    @media (max-width: 900px) {
+      .hero { grid-template-columns: 1fr; gap: 40px; padding: 50px 24px 40px; }
+      .contribute-grid { grid-template-columns: 1fr; }
+      .footer-top { grid-template-columns: 1fr 1fr; }
+    }
+
+    @media (max-width: 600px) {
+      .pipeline-flow { gap: 4px; }
+      .pipe-arrow { font-size: 14px; padding: 0 4px; }
+      .footer-top { grid-template-columns: 1fr; gap: 24px; }
+      .stats-grid { grid-template-columns: 1fr 1fr; }
+      nav a:not(.nav-github) { display: none; }
+    }
+
+    /* LED pulse animation */
+    @keyframes pulse {
+      0%, 100% { opacity: 1; }
+      50% { opacity: 0.4; }
+    }
+
+    .led {
+      display: inline-block;
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      background: var(--green);
+      box-shadow: 0 0 6px var(--green);
+      animation: pulse 2s ease-in-out infinite;
+      vertical-align: middle;
+    }
+
+    .led-amber { background: var(--amber); box-shadow: 0 0 6px var(--amber); }
+  </style>
+<style id="_goober"> .go1475592160{height:0;}.go1671063245{height:auto;}.go1888806478{display:flex;flex-wrap:wrap;flex-grow:1;}@media (min-width:600px){.go1888806478{flex-grow:initial;min-width:288px;}}.go167266335{background-color:#313131;font-size:0.875rem;line-height:1.43;letter-spacing:0.01071em;color:#fff;align-items:center;padding:6px 16px;border-radius:4px;box-shadow:0px 3px 5px -1px rgba(0,0,0,0.2),0px 6px 10px 0px rgba(0,0,0,0.14),0px 1px 18px 0px rgba(0,0,0,0.12);}.go3162094071{padding-left:20px;}.go3844575157{background-color:#313131;}.go1725278324{background-color:#43a047;}.go3651055292{background-color:#d32f2f;}.go4215275574{background-color:#ff9800;}.go1930647212{background-color:#2196f3;}.go946087465{display:flex;align-items:center;padding:8px 0;}.go703367398{display:flex;align-items:center;margin-left:auto;padding-left:16px;margin-right:-8px;}.go3963613292{width:100%;position:relative;transform:translateX(0);top:0;right:0;bottom:0;left:0;min-width:288px;}.go1141946668{box-sizing:border-box;display:flex;max-height:100%;position:fixed;z-index:1400;height:auto;width:auto;transition:top 300ms ease 0ms,right 300ms ease 0ms,bottom 300ms ease 0ms,left 300ms ease 0ms,max-width 300ms ease 0ms;pointer-events:none;max-width:calc(100% - 40px);}.go1141946668 .notistack-CollapseWrapper{padding:6px 0px;transition:padding 300ms ease 0ms;}@media (max-width:599.95px){.go1141946668{width:100%;max-width:calc(100% - 32px);}}.go3868796639 .notistack-CollapseWrapper{padding:2px 0px;}.go3118922589{top:14px;flex-direction:column;}.go1453831412{bottom:14px;flex-direction:column-reverse;}.go4027089540{left:20px;}@media (min-width:600px){.go4027089540{align-items:flex-start;}}@media (max-width:599.95px){.go4027089540{left:16px;}}.go2989568495{right:20px;}@media (min-width:600px){.go2989568495{align-items:flex-end;}}@media (max-width:599.95px){.go2989568495{right:16px;}}.go4034260886{left:50%;transform:translateX(-50%);}@media (min-width:600px){.go4034260886{align-items:center;}}</style></head>
+<body>
+
+<!-- HEADER -->
+<header>
+  <div class="header-inner">
+    <a href="#" class="logo">
+      <div class="logo-icon">|&gt;</div>
+      <span class="logo-text">xil-pipeline</span>
+    </a>
+    <nav>
+      <a href="#docs">Docs</a>
+      <a href="#quickstart">Quick Start</a>
+      <a href="#demos">Demos</a>
+      <a href="#contribute">Contribute</a>
+      <a href="https://github.com/xilcmd/xil-pipeline" class="btn nav-github" target="_blank" rel="noopener">
+        ⭐ GitHub
+      </a>
+    </nav>
+  </div>
+</header>
+
+<!-- HERO -->
+<section style="padding: 0;">
+  <div class="hero">
+    <div class="hero-content">
+      <p class="hero-eyebrow">// open source audio pipeline</p>
+      <h1>xil-pipeline</h1>
+      <p class="hero-tagline">
+        <strong>Script → Voice → Production.</strong><br>
+        Fully automated.
+      </p>
+      <p class="hero-desc">
+        Transform AI-generated scripts into fully produced podcasts and audiobooks.
+        Multi-voice TTS via ElevenLabs, layered sound effects, music beds, and ambient audio —
+        all orchestrated from a single structured script format.
+      </p>
+      <div class="hero-actions">
+        <a href="#quickstart" class="btn btn-primary">⚡ Get Started</a>
+        <a href="https://github.com/xilcmd/xil-pipeline" class="btn btn-secondary" target="_blank" rel="noopener">⭐ Star on GitHub</a>
+        <a href="#demos" class="btn btn-copper">🎧 Hear Demos</a>
+      </div>
+    </div>
+    <div class="hero-terminal">
+      <div class="terminal-bar">
+        <span class="dot dot-r"></span>
+        <span class="dot dot-y"></span>
+        <span class="dot dot-g"></span>
+        <span class="terminal-title">xil-pipeline — terminal</span>
+      </div>
+      <div class="terminal-body">
+        <span class="t-comment"># Scaffold a new project workspace</span><br>
+        <span class="t-prompt">$ </span><span class="t-cmd">xil-init my-show --show <span class="t-copper">"My Podcast"</span></span><br>
+        <span class="t-prompt">$ </span><span class="t-cmd">cd my-show</span><br>
+        <span class="t-blank"></span>
+        <span class="t-comment"># Scan the sample script (pre-flight check)</span><br>
+        <span class="t-prompt">$ </span><span class="t-cmd">xil-scan scripts/sample_S01E01.md</span><br>
+        <span class="t-blank"></span>
+        <span class="t-comment"># Parse into structured JSON</span><br>
+        <span class="t-prompt">$ </span><span class="t-cmd">xil-parse scripts/sample_S01E01.md --episode S01E01</span><br>
+        <span class="t-blank"></span>
+        <span class="t-comment"># Preview TTS cost (no API calls)</span><br>
+        <span class="t-prompt">$ </span><span class="t-cmd">xil-produce --episode S01E01 --dry-run</span><br>
+        <span class="t-blank"></span>
+        <span class="t-output">⠿ Parsing voices...       </span><span class="t-success">✓ done</span><br>
+        <span class="t-output">⠿ Mixing audio layers...  </span><span class="t-success">✓ done</span><br>
+        <span class="t-output">⠿ Exporting master...     </span><span class="t-success">✓ episode.mp3</span><br>
+        <span class="t-blank"></span>
+        <span class="t-warn">🎙 Runtime: 12m 34s · 48kHz stereo · VBR MP3</span>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- PIPELINE DIAGRAM -->
+<section class="pipeline-section" id="pipeline">
+  <div class="section-inner">
+    <p class="section-label">// how it works</p>
+    <h2 class="section-title">The Pipeline</h2>
+    <p class="section-sub">From raw idea to finished audio in five stages.</p>
+    <div class="pipeline-flow">
+      <div class="pipe-step">
+        <span class="pipe-icon">🧠</span>
+        <div class="pipe-label">AI Script</div>
+        <div class="pipe-desc">Generate structured .xil.yaml scripts via LLM prompts</div>
+      </div>
+      <div class="pipe-arrow">→</div>
+      <div class="pipe-step">
+        <span class="pipe-icon">📝</span>
+        <div class="pipe-label">Parse</div>
+        <div class="pipe-desc">Validate script format, assign voices, cues &amp; timing</div>
+      </div>
+      <div class="pipe-arrow">→</div>
+      <div class="pipe-step">
+        <span class="pipe-icon">🎙</span>
+        <div class="pipe-label">TTS Render</div>
+        <div class="pipe-desc">ElevenLabs synthesizes each voice track in parallel</div>
+      </div>
+      <div class="pipe-arrow">→</div>
+      <div class="pipe-step">
+        <span class="pipe-icon">🎵</span>
+        <div class="pipe-label">Layer Audio</div>
+        <div class="pipe-desc">Mix SFX, music beds, and ambient sound layers</div>
+      </div>
+      <div class="pipe-arrow">→</div>
+      <div class="pipe-step">
+        <span class="pipe-icon">📦</span>
+        <div class="pipe-label">Export</div>
+        <div class="pipe-desc">Output MP3, WAV, or chapter-split audiobook files</div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- AUDIO DEMOS -->
+<section id="demos">
+  <div class="section-inner">
+    <p class="section-label">// audio demos</p>
+    <h2 class="section-title">Hear It In Action</h2>
+    <p class="section-sub">Sample outputs generated entirely by xil-pipeline — AI script, ElevenLabs voices, layered audio.</p>
+    <div class="demo-grid">
+      <div class="demo-card">
+        <div class="demo-thumb">
+          🎙
+          <div class="demo-play">▶</div>
+        </div>
+        <div class="demo-info">
+          <div class="demo-title">Tech Deep Dive — "The Rise of Open Source AI"</div>
+          <div class="demo-meta"><span class="led"></span> &nbsp;2 voices · 8m 42s · Podcast format</div>
+          <div class="demo-tags">
+            <span class="tag tag-green">podcast</span>
+            <span class="tag tag-copper">elevenlabs</span>
+            <span class="tag tag-amber">music-bed</span>
+          </div>
+        </div>
+      </div>
+      <div class="demo-card">
+        <div class="demo-thumb">
+          📖
+          <div class="demo-play">▶</div>
+        </div>
+        <div class="demo-info">
+          <div class="demo-title">Audiobook Sample — "Chapter 1: The Signal"</div>
+          <div class="demo-meta"><span class="led"></span> &nbsp;1 narrator · 14m 20s · Audiobook format</div>
+          <div class="demo-tags">
+            <span class="tag tag-green">audiobook</span>
+            <span class="tag tag-copper">ambient-sfx</span>
+            <span class="tag tag-amber">chapters</span>
+          </div>
+        </div>
+      </div>
+      <div class="demo-card">
+        <div class="demo-thumb">
+          🎭
+          <div class="demo-play">▶</div>
+        </div>
+        <div class="demo-info">
+          <div class="demo-title">Drama Short — "The Interview" (3-voice scene)</div>
+          <div class="demo-meta"><span class="led led-amber"></span> &nbsp;3 voices · 5m 08s · Drama format</div>
+          <div class="demo-tags">
+            <span class="tag tag-green">drama</span>
+            <span class="tag tag-copper">multi-voice</span>
+            <span class="tag tag-amber">sfx-layers</span>
+          </div>
+        </div>
+      </div>
+    </div>
+    <p style="margin-top: 20px; font-size: 13px; color: var(--text-muted); font-family: var(--mono);">
+      // Demo audio coming soon — <a href="https://github.com/xilcmd/xil-pipeline" style="color: var(--green);">watch the repo</a> for release announcements.
+    </p>
+  </div>
+</section>
+
+<!-- QUICK START CODE -->
+<section class="code-section" id="quickstart">
+  <div class="section-inner">
+    <p class="section-label">// quick start</p>
+    <h2 class="section-title">Up and Running in Minutes</h2>
+    <p class="section-sub">Install, write a script, render audio. That's the whole loop.</p>
+
+    <div class="code-block">
+      <div class="code-header">
+        <span class="code-filename">terminal</span>
+        <button class="code-copy" onclick="this.textContent='✓ copied'">copy</button>
+      </div>
+      <pre><code><span class="cm"># Scaffold a new project workspace (creates a copy of the sample script)</span>
+<span class="t-prompt" style="color:var(--green)">$</span> xil-init my-show --show <span class="str">"My Podcast"</span>
+<span class="t-prompt" style="color:var(--green)">$</span> cd my-show
+
+<span class="cm"># Scan the sample script (pre-flight check)</span>
+<span class="t-prompt" style="color:var(--green)">$</span> xil-scan scripts/sample_S01E01.md
+
+<span class="cm"># Parse into structured JSON</span>
+<span class="t-prompt" style="color:var(--green)">$</span> xil-parse scripts/sample_S01E01.md --episode S01E01
+
+<span class="cm"># Preview TTS character cost (no API calls)</span>
+<span class="t-prompt" style="color:var(--green)">$</span> xil-produce --episode S01E01 --dry-run
+
+<span class="cm"># Generate voice and SFX stems (requires ELEVENLABS_API_KEY — see Environment below)</span>
+<span class="t-prompt" style="color:var(--green)">$</span> xil-produce --episode S01E01
+
+<span class="cm"># Export DAW layers for mixing in Audacity</span>
+<span class="t-prompt" style="color:var(--green)">$</span> xil-daw --episode S01E01
+
+<span class="cm"># Produce final master MP3</span>
+<span class="t-prompt" style="color:var(--green)">$</span> xil-master --episode S01E01</code></pre>
+    </div>
+  </div>
+</section>
+
+<!-- DOC CARDS -->
+<section id="docs">
+  <div class="section-inner">
+    <p class="section-label">// documentation</p>
+    <h2 class="section-title">Explore the Docs</h2>
+    <p class="section-sub">Everything you need to build, extend, and contribute to xil-pipeline.</p>
+    <div class="doc-grid">
+      <a href="#" class="doc-card">
+        <span class="doc-card-icon">🚀</span>
+        <div class="doc-card-title">Getting Started</div>
+        <div class="doc-card-desc">Install xil-pipeline, configure your API keys, and render your first audio file in under 5 minutes.</div>
+      </a>
+      <a href="#" class="doc-card">
+        <span class="doc-card-icon">📄</span>
+        <div class="doc-card-title">Script Format</div>
+        <div class="doc-card-desc">The .xil.yaml schema — voices, cues, SFX, music layers, timing, and AI generation prompts.</div>
+      </a>
+      <a href="#" class="doc-card">
+        <span class="doc-card-icon">🎙</span>
+        <div class="doc-card-title">ElevenLabs Integration</div>
+        <div class="doc-card-desc">Configure voice IDs, stability, similarity boost, and streaming settings for TTS rendering.</div>
+      </a>
+      <a href="#" class="doc-card">
+        <span class="doc-card-icon">🎵</span>
+        <div class="doc-card-title">Audio Layering</div>
+        <div class="doc-card-desc">Mix music beds, ambient tracks, and sound effects with per-layer volume, fade, and timing control.</div>
+      </a>
+      <a href="#" class="doc-card">
+        <span class="doc-card-icon">⚙️</span>
+        <div class="doc-card-title">CLI Reference</div>
+        <div class="doc-card-desc">Full reference for all xil commands: render, generate, validate, export, and config management.</div>
+      </a>
+      <a href="#" class="doc-card">
+        <span class="doc-card-icon">🔌</span>
+        <div class="doc-card-title">API &amp; Plugins</div>
+        <div class="doc-card-desc">Extend xil-pipeline with custom TTS providers, audio processors, and script generators via the plugin API.</div>
+      </a>
+    </div>
+  </div>
+</section>
+
+<!-- FEATURES -->
+<section style="background: var(--bg2); border-top: 1px solid var(--border);">
+  <div class="section-inner">
+    <p class="section-label">// capabilities</p>
+    <h2 class="section-title">What xil-pipeline Does</h2>
+    <p class="section-sub">A full audio production stack, driven by code.</p>
+    <div class="features-grid">
+      <div class="feature-card">
+        <div class="feature-icon">🧠</div>
+        <div class="feature-title">AI Script Generation</div>
+        <div class="feature-desc">Prompt any LLM to generate structured .xil.yaml scripts. Built-in templates for podcasts, audiobooks, interviews, and drama formats.</div>
+      </div>
+      <div class="feature-card">
+        <div class="feature-icon">🎙</div>
+        <div class="feature-title">Multi-Voice TTS</div>
+        <div class="feature-desc">Assign unique ElevenLabs voices to each character or narrator. Parallel rendering keeps production fast even for long-form content.</div>
+      </div>
+      <div class="feature-card">
+        <div class="feature-icon">🎵</div>
+        <div class="feature-title">Layered Audio Mixing</div>
+        <div class="feature-desc">Stack music beds, ambient sounds, and SFX cues with per-layer volume envelopes, crossfades, and ducking when voices are active.</div>
+      </div>
+      <div class="feature-card">
+        <div class="feature-icon">📦</div>
+        <div class="feature-title">Flexible Export</div>
+        <div class="feature-desc">Output to MP3, WAV, or FLAC. Audiobook mode splits by chapter markers. Podcast mode embeds ID3 metadata automatically.</div>
+      </div>
+      <div class="feature-card">
+        <div class="feature-icon">🔌</div>
+        <div class="feature-title">Plugin Architecture</div>
+        <div class="feature-desc">Swap in alternative TTS providers, custom audio processors, or your own script generators via a clean plugin interface.</div>
+      </div>
+      <div class="feature-card">
+        <div class="feature-icon">⚡</div>
+        <div class="feature-title">CLI-First Design</div>
+        <div class="feature-desc">Fully scriptable. Integrate into CI/CD pipelines, cron jobs, or content automation workflows with zero GUI required.</div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- CONTRIBUTE -->
+<section class="contribute-section" id="contribute">
+  <div class="section-inner">
+    <p class="section-label">// open source</p>
+    <h2 class="section-title">Join the Build</h2>
+    <p class="section-sub">xil-pipeline is early-stage and actively welcoming contributors. Every PR counts.</p>
+    <div class="contribute-grid">
+      <div>
+        <ul class="contribute-steps">
+          <li>
+            <div class="step-num">1</div>
+            <div class="step-content">
+              <h4>Fork &amp; Clone</h4>
+              <p>Fork the repo on GitHub and clone it locally. Read CONTRIBUTING.md to get oriented.</p>
+            </div>
+          </li>
+          <li>
+            <div class="step-num">2</div>
+            <div class="step-content">
+              <h4>Pick an Issue</h4>
+              <p>Browse open issues tagged <span class="tag tag-green" style="font-size:11px;">good first issue</span> or <span class="tag tag-amber" style="font-size:11px;">help wanted</span> to find a good starting point.</p>
+            </div>
+          </li>
+          <li>
+            <div class="step-num">3</div>
+            <div class="step-content">
+              <h4>Build &amp; Test</h4>
+              <p>Run the test suite, make your changes, and add tests for new functionality.</p>
+            </div>
+          </li>
+          <li>
+            <div class="step-num">4</div>
+            <div class="step-content">
+              <h4>Open a PR</h4>
+              <p>Submit your pull request with a clear description. We review quickly and give constructive feedback.</p>
+            </div>
+          </li>
+        </ul>
+        <div style="margin-top: 24px; display: flex; gap: 12px; flex-wrap: wrap;">
+          <a href="https://github.com/xilcmd/xil-pipeline" class="btn btn-primary" target="_blank" rel="noopener">⭐ Star on GitHub</a>
+          <a href="https://github.com/xilcmd/xil-pipeline/issues" class="btn btn-secondary" target="_blank" rel="noopener">🐛 Browse Issues</a>
+        </div>
+      </div>
+      <div>
+        <div class="stats-grid">
+          <div class="stat-card">
+            <span class="stat-num">AGPL-3.0</span>
+            <div class="stat-label">License</div>
+          </div>
+          <div class="stat-card">
+            <span class="stat-num">🟢</span>
+            <div class="stat-label">Active Development</div>
+          </div>
+          <div class="stat-card">
+            <span class="stat-num">∞</span>
+            <div class="stat-label">PRs Welcome</div>
+          </div>
+        </div>
+        <div class="good-first">
+          <h4>// good first issues</h4>
+          <div class="issue-item"><div class="issue-dot"></div>Add support for SSML tags in voice cues</div>
+          <div class="issue-item"><div class="issue-dot"></div>Write unit tests for the YAML parser</div>
+          <div class="issue-item"><div class="issue-dot"></div>Add OpenAI script generation template</div>
+          <div class="issue-item"><div class="issue-dot"></div>Document the plugin API with examples</div>
+          <div class="issue-item"><div class="issue-dot"></div>Build a sample audiobook demo script</div>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- FOOTER -->
+<footer>
+  <div class="footer-inner">
+    <div class="footer-top">
+      <div class="footer-brand">
+        <a href="#" class="logo" style="text-decoration:none;">
+          <div class="logo-icon">|&gt;</div>
+          <span class="logo-text">xil-pipeline</span>
+        </a>
+        <p>An open source audio production pipeline. Transform AI-generated scripts into fully produced podcasts and audiobooks using ElevenLabs TTS.</p>
+        <div style="margin-top: 12px; display: flex; gap: 8px; flex-wrap: wrap;">
+          <span class="badge badge-copper">AGPL-3.0 License</span>
+          <span class="badge badge-amber">ElevenLabs Powered</span>
+        </div>
+      </div>
+      <div class="footer-col">
+        <h5>Docs</h5>
+        <a href="#">Getting Started</a>
+        <a href="#">Script Format</a>
+        <a href="#">CLI Reference</a>
+        <a href="#">API &amp; Plugins</a>
+      </div>
+      <div class="footer-col">
+        <h5>Project</h5>
+        <a href="https://github.com/xilcmd/xil-pipeline" target="_blank" rel="noopener">GitHub Repo</a>
+        <a href="https://github.com/xilcmd/xil-pipeline/issues" target="_blank" rel="noopener">Issues</a>
+        <a href="https://github.com/xilcmd/xil-pipeline/releases" target="_blank" rel="noopener">Releases</a>
+        <a href="#">Changelog</a>
+      </div>
+      <div class="footer-col">
+        <h5>Community</h5>
+        <a href="https://github.com/xilcmd/xil-pipeline/blob/main/CONTRIBUTING.md" target="_blank" rel="noopener">Contributing Guide</a>
+        <a href="https://github.com/xilcmd/xil-pipeline/blob/main/CODE_OF_CONDUCT.md" target="_blank" rel="noopener">Code of Conduct</a>
+        <a href="https://github.com/xilcmd/xil-pipeline/discussions" target="_blank" rel="noopener">Discussions</a>
+        <a href="https://github.com/xilcmd/xil-pipeline/issues?q=label%3Aroadmap" target="_blank" rel="noopener">Roadmap</a>
+      </div>
+    </div>
+    <div class="footer-bottom">
+      <p>© 2025 xil-pipeline · <a href="https://xilcmd.xyz" style="color:var(--text-dim)">xilcmd.xyz</a> (Web2) · <span style="color:var(--text-muted)">xilcmd.hub (Web3)</span> · Open Source under AGPL-3.0 License</p>
+      <p style="color: var(--text-muted);">Built with <span style="color:var(--green)">♥</span> by the community · Powered by ElevenLabs TTS</p>
+    </div>
+  </div>
+</footer>
+
+
+</body></html>

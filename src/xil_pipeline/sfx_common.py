@@ -230,8 +230,62 @@ def ensure_shared_sfx(
 
     os.makedirs(sfx_dir, exist_ok=True)
 
-    if effect.source is not None:
+    if effect.source is not None and os.path.exists(effect.source):
         shutil.copy2(effect.source, path)
+    elif effect.source is not None:
+        # Source file declared but missing — fall back to API generation if a
+        # prompt is available, otherwise raise an actionable error.
+        if effect.prompt is None:
+            raise FileNotFoundError(
+                f"Source file not found: '{effect.source}' "
+                f"(key: '{effect_key}'). "
+                "Add the file or add a 'prompt' field to generate it via the API."
+            )
+        print(
+            f"   [warn] source '{effect.source}' not found — "
+            f"generating via API for '{effect_key}'"
+        )
+        # fall through to API generation branch below
+        if client is None:
+            raise ValueError(
+                f"client is required to generate SFX for '{effect_key}'"
+            )
+        prompt_influence = effect.prompt_influence
+        if prompt_influence is None:
+            prompt_influence = defaults.get("prompt_influence", 0.3)
+        tmp_fd, tmp_path = tempfile.mkstemp(
+            dir=os.path.dirname(path) or ".", suffix=".tmp"
+        )
+        os.close(tmp_fd)
+        try:
+            max_retries, delay = 5, 10
+            for attempt in range(1, max_retries + 1):
+                try:
+                    audio_stream = client.text_to_sound_effects.convert(
+                        text=effect.prompt,
+                        duration_seconds=effect.duration_seconds,
+                        prompt_influence=prompt_influence,
+                    )
+                    with open(tmp_path, "wb") as f:
+                        for chunk in audio_stream:
+                            if chunk:
+                                f.write(chunk)
+                    os.rename(tmp_path, path)
+                    tmp_path = None
+                    break
+                except (ApiError, httpx.TransportError) as exc:
+                    is_rate_limit = isinstance(exc, ApiError) and exc.status_code == 429
+                    if is_rate_limit and attempt < max_retries:
+                        wait = delay * attempt
+                        print(f"   [429] rate limited — retrying in {wait}s (attempt {attempt}/{max_retries})")
+                        time.sleep(wait)
+                    else:
+                        raise
+        finally:
+            if tmp_path and os.path.exists(tmp_path):
+                os.unlink(tmp_path)
+        tag_mp3(path, show=show, title=effect_key)
+        return path
     elif effect.type == "silence":
         duration_ms = int(effect.duration_seconds * 1000)
         silence = AudioSegment.silent(duration=duration_ms)

@@ -448,6 +448,48 @@ class TestEnsureSharedSfx:
         assert exc_info.value.status_code == 400
         assert mock_client.text_to_sound_effects.convert.call_count == 1
 
+    def test_source_missing_no_prompt_raises(self, tmp_path):
+        from xil_pipeline.models import SfxEntry
+        effect = SfxEntry(source="SFX/nonexistent.mp3", duration_seconds=2.0)
+        sfx_dir = str(tmp_path / "SFX")
+
+        with pytest.raises(FileNotFoundError, match="SFX/nonexistent.mp3"):
+            sfx_common.ensure_shared_sfx(
+                "SFX: CREAK", effect, sfx_dir, defaults={}, client=None,
+            )
+
+    def test_source_missing_with_prompt_generates_via_api(self, tmp_path):
+        from xil_pipeline.models import SfxEntry
+        effect = SfxEntry(
+            source="SFX/nonexistent.mp3",
+            prompt="Chair creak",
+            duration_seconds=2.0,
+        )
+        sfx_dir = str(tmp_path / "SFX")
+        mock_client = unittest.mock.MagicMock()
+        mock_client.text_to_sound_effects.convert.return_value = iter(
+            [b"\xff\xfb" * 50]
+        )
+
+        path = sfx_common.ensure_shared_sfx(
+            "SFX: CREAK", effect, sfx_dir,
+            defaults={"prompt_influence": 0.3}, client=mock_client,
+        )
+        assert os.path.exists(path)
+        mock_client.text_to_sound_effects.convert.assert_called_once()
+
+    def test_source_present_copies_without_api(self, tmp_path):
+        from xil_pipeline.models import SfxEntry
+        src = tmp_path / "chair.mp3"
+        src.write_bytes(b"\xff\xfb" * 50)
+        effect = SfxEntry(source=str(src), duration_seconds=2.0)
+        sfx_dir = str(tmp_path / "SFX")
+
+        path = sfx_common.ensure_shared_sfx(
+            "SFX: CREAK", effect, sfx_dir, defaults={}, client=None,
+        )
+        assert os.path.exists(path)
+
 
 # ─── Tests: place_episode_stem ───
 
