@@ -827,3 +827,81 @@ class TestResolveAudioParamsGlobalFallback:
                         entry_type="direction", text="SFX: BANG")
         vol, _, _, _ = _resolve_audio_params(plan, config)
         assert vol == 50
+
+
+# ── collect_stem_plans: duration_seconds → play_duration for source-based clips ──
+
+class TestSourceDurationSecondsToPlayDuration:
+    """duration_seconds on a source= entry is converted to play_duration percentage."""
+
+    def _make_sfx_config_with_source(self, key, source_path, duration_seconds,
+                                      play_duration=None):
+        effects = {
+            key: {
+                "source": source_path,
+                "duration_seconds": duration_seconds,
+                **({"play_duration": play_duration} if play_duration is not None else {}),
+            }
+        }
+        return SfxConfiguration(show="TEST", episode=1, defaults={}, effects=effects)
+
+    def test_duration_seconds_converted_to_play_duration(self, tmp_path):
+        """A 30s source clip with duration_seconds=15 → play_duration ~50%."""
+        stem = tmp_path / "010_act-one_sfx.mp3"
+        _write_mp3(str(stem), duration_ms=30_000)
+        source = tmp_path / "source.mp3"
+        _write_mp3(str(source), duration_ms=30_000)
+        index = {10: {"seq": 10, "type": "direction", "direction_type": "MUSIC",
+                      "text": "MUSIC: THEME", "section": "act-one"}}
+        sfx_config = self._make_sfx_config_with_source(
+            "MUSIC: THEME", str(source), duration_seconds=15.0
+        )
+        plans = collect_stem_plans(str(tmp_path), index, sfx_config=sfx_config)
+        assert len(plans) == 1
+        pd = plans[0].play_duration
+        assert pd is not None
+        # 15s / 30s * 100 = 50%
+        assert abs(pd - 50.0) < 1.0
+
+    def test_explicit_play_duration_wins_over_duration_seconds(self, tmp_path):
+        """Explicit play_duration in config is not overridden by duration_seconds."""
+        stem = tmp_path / "010_act-one_sfx.mp3"
+        _write_mp3(str(stem), duration_ms=30_000)
+        source = tmp_path / "source.mp3"
+        _write_mp3(str(source), duration_ms=30_000)
+        index = {10: {"seq": 10, "type": "direction", "direction_type": "MUSIC",
+                      "text": "MUSIC: THEME", "section": "act-one"}}
+        sfx_config = self._make_sfx_config_with_source(
+            "MUSIC: THEME", str(source), duration_seconds=15.0, play_duration=75.0
+        )
+        plans = collect_stem_plans(str(tmp_path), index, sfx_config=sfx_config)
+        assert len(plans) == 1
+        # play_duration from config (75) takes priority; duration_seconds is ignored
+        assert abs(plans[0].play_duration - 75.0) < 0.1
+
+    def test_duration_seconds_capped_at_100_percent(self, tmp_path):
+        """duration_seconds longer than clip → play_duration capped at 100%."""
+        stem = tmp_path / "010_act-one_sfx.mp3"
+        _write_mp3(str(stem), duration_ms=5_000)
+        source = tmp_path / "source.mp3"
+        _write_mp3(str(source), duration_ms=5_000)
+        index = {10: {"seq": 10, "type": "direction", "direction_type": "MUSIC",
+                      "text": "MUSIC: THEME", "section": "act-one"}}
+        sfx_config = self._make_sfx_config_with_source(
+            "MUSIC: THEME", str(source), duration_seconds=99.0
+        )
+        plans = collect_stem_plans(str(tmp_path), index, sfx_config=sfx_config)
+        assert len(plans) == 1
+        assert plans[0].play_duration == 100.0
+
+    def test_non_source_entry_unaffected(self, tmp_path):
+        """API-generated (no source) entries are not affected."""
+        stem = tmp_path / "010_act-one_sfx.mp3"
+        _write_mp3(str(stem))
+        index = {10: {"seq": 10, "type": "direction", "direction_type": "MUSIC",
+                      "text": "MUSIC: THEME", "section": "act-one"}}
+        effects = {"MUSIC: THEME": {"prompt": "theme music", "duration_seconds": 15.0}}
+        sfx_config = SfxConfiguration(show="TEST", episode=1, defaults={}, effects=effects)
+        plans = collect_stem_plans(str(tmp_path), index, sfx_config=sfx_config)
+        assert len(plans) == 1
+        assert plans[0].play_duration is None

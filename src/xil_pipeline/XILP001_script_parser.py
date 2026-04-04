@@ -640,6 +640,11 @@ def parse_script(
             brackets = re.findall(r"\[([^\]]+)\]", line)
             for bracket_text in brackets:
                 clean_text, sfx_source = _parse_direction_hint(bracket_text.strip())
+                direction_type = classify_direction(clean_text)
+                if direction_type is None:
+                    # Acting note in square brackets (e.g. [drawn out]) — not a technical cue
+                    logger.debug(f"  Skipping unrecognized embedded direction: [{clean_text}]")
+                    continue
                 seq += 1
                 entry = {
                     "seq": seq,
@@ -649,7 +654,7 @@ def parse_script(
                     "speaker": None,
                     "direction": None,
                     "text": clean_text,
-                    "direction_type": classify_direction(clean_text),
+                    "direction_type": direction_type,
                 }
                 if sfx_source:
                     entry["sfx_source"] = sfx_source
@@ -666,6 +671,11 @@ def parse_script(
             brackets = re.findall(r"\[([^\]]+)\]", line)
             for bracket_text in brackets:
                 clean_text, sfx_source = _parse_direction_hint(bracket_text.strip())
+                direction_type = classify_direction(clean_text)
+                if direction_type is None:
+                    # Acting note in square brackets (e.g. [drawn out]) — not a technical cue
+                    logger.debug(f"  Skipping unrecognized direction: [{clean_text}]")
+                    continue
                 seq += 1
                 entry = {
                     "seq": seq,
@@ -675,7 +685,7 @@ def parse_script(
                     "speaker": None,
                     "direction": None,
                     "text": clean_text,
-                    "direction_type": classify_direction(clean_text),
+                    "direction_type": direction_type,
                 }
                 if sfx_source:
                     entry["sfx_source"] = sfx_source

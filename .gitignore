@@ -20,6 +20,9 @@ daw/
 *.wav
 *.aup3
 
+# Sample audio — checked in intentionally for repo users
+!samples/*.mp3
+
 # IDE / tool artifacts
 .qodo/
 .claude/

@@ -1663,3 +1663,100 @@ class TestPrintSpeakerStats:
     def test_prints_percentages(self, parsed, caplog):
         parser.print_speaker_stats(parsed)
         assert "%" in caplog.text
+
+
+# ─── Tests: unrecognized bracket directions filtered ───
+
+SCRIPT_ACTING_NOTE_IN_BRACKETS = """\
+THE 413 Season 1: Episode 1: Test
+
+===
+
+ACT ONE
+
+SCENE 1: THE DINER
+
+[drawn out]
+
+ADAM Hello.
+
+===
+
+END OF EPISODE 1
+"""
+
+SCRIPT_RECOGNIZED_SFX_BRACKET = """\
+THE 413 Season 1: Episode 1: Test
+
+===
+
+ACT ONE
+
+SCENE 1: THE DINER
+
+[SFX: PHONE RING]
+
+ADAM Hello.
+
+===
+
+END OF EPISODE 1
+"""
+
+SCRIPT_EMBEDDED_ACTING_NOTE_IN_SCENE_HEADER = """\
+THE 413 Season 1: Episode 1: Test
+
+===
+
+ACT ONE
+
+SCENE 1: THE DINER [quietly]
+
+ADAM Hello.
+
+===
+
+END OF EPISODE 1
+"""
+
+
+class TestUnrecognizedDirectionFilter:
+    """Acting notes in square brackets with unrecognized direction_type are filtered."""
+
+    def test_acting_note_in_brackets_skipped(self, tmp_path):
+        """[drawn out] produces no direction entry — it's an acting note, not a cue."""
+        f = tmp_path / "script.md"
+        f.write_text(SCRIPT_ACTING_NOTE_IN_BRACKETS, encoding="utf-8")
+        parsed = parser.parse_script(str(f))
+        directions = [e for e in parsed["entries"] if e["type"] == "direction"]
+        assert len(directions) == 0, f"Expected no direction entries, got: {directions}"
+
+    def test_recognized_sfx_bracket_still_emitted(self, tmp_path):
+        """[SFX: PHONE RING] still produces a direction entry with direction_type=SFX."""
+        f = tmp_path / "script.md"
+        f.write_text(SCRIPT_RECOGNIZED_SFX_BRACKET, encoding="utf-8")
+        parsed = parser.parse_script(str(f))
+        directions = [e for e in parsed["entries"] if e["type"] == "direction"]
+        assert len(directions) == 1
+        assert directions[0]["direction_type"] == "SFX"
+        assert directions[0]["text"] == "SFX: PHONE RING"
+
+    def test_embedded_acting_note_in_scene_header_skipped(self, tmp_path):
+        """Scene header with [quietly] embedded bracket doesn't emit an unknown direction."""
+        f = tmp_path / "script.md"
+        f.write_text(SCRIPT_EMBEDDED_ACTING_NOTE_IN_SCENE_HEADER, encoding="utf-8")
+        parsed = parser.parse_script(str(f))
+        directions = [e for e in parsed["entries"] if e["type"] == "direction"]
+        assert len(directions) == 0, f"Expected no direction entries, got: {directions}"
+        # Scene header itself should still be present
+        scene_headers = [e for e in parsed["entries"] if e["type"] == "scene_header"]
+        assert len(scene_headers) == 1
+
+    def test_no_direction_type_none_in_standard_script(self, tmp_path):
+        """Parsed entries never have direction_type=None for direction type entries."""
+        f = tmp_path / "script.md"
+        f.write_text(SCRIPT_SCENE_MULTI_BRACKETS, encoding="utf-8")
+        parsed = parser.parse_script(str(f))
+        bad = [e for e in parsed["entries"]
+               if e["type"] == "direction" and e["direction_type"] is None]
+        assert bad == [], f"Found direction entries with direction_type=None: {bad}"

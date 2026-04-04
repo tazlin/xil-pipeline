@@ -43,6 +43,17 @@ SKIP = "SKIP"       # no stem produced for this entry type
 STEM_TYPES = {"dialogue", "direction", "silence"}
 
 
+_SNIP = 55  # characters to display before truncating text snippets
+
+
+def _snip(text: str | None) -> str:
+    """Return a truncated text snippet for display in migration reports."""
+    if not text:
+        return ""
+    t = text.strip()
+    return t[:_SNIP] + "\u2026" if len(t) > _SNIP else t
+
+
 @dataclass
 class MigrationAction:
     """Describes what should happen to one new parsed entry."""
@@ -54,6 +65,8 @@ class MigrationAction:
     reason: str = ""
     entry_type: str = ""
     speaker: str | None = None
+    new_text: str = ""  # truncated text of the new entry (for dry-run display)
+    old_text: str = ""  # truncated text of the matched old entry (for dry-run display)
 
 
 def normalize_text(text: str | None, strict: bool = False) -> str:
@@ -186,12 +199,16 @@ def plan_migration(
                     old_seq=old_seq, old_stem=old_stem,
                     reason="old stem file not on disk",
                     entry_type=etype, speaker=new_speaker,
+                    new_text=_snip(entry.get("text")),
+                    old_text=_snip(old_entry.get("text")),
                 ))
             else:
                 actions.append(MigrationAction(
                     status=COPY, new_seq=new_seq, new_stem=new_stem,
                     old_seq=old_seq, old_stem=old_stem,
                     entry_type=etype, speaker=new_speaker,
+                    new_text=_snip(entry.get("text")),
+                    old_text=_snip(old_entry.get("text")),
                 ))
             continue
 
@@ -208,6 +225,8 @@ def plan_migration(
                         old_seq=old_entry["seq"], old_stem=text_match["old_stem"],
                         reason=f"speaker: {old_speaker} → {new_speaker}",
                         entry_type=etype, speaker=new_speaker,
+                        new_text=_snip(entry.get("text")),
+                        old_text=_snip(old_entry.get("text")),
                     ))
                     continue
 
@@ -216,6 +235,7 @@ def plan_migration(
             status=NEW, new_seq=new_seq, new_stem=new_stem,
             reason="no matching old entry",
             entry_type=etype, speaker=new_speaker,
+            new_text=_snip(entry.get("text")),
         ))
 
     return actions
@@ -259,12 +279,20 @@ def print_report(actions: list[MigrationAction], dry_run: bool) -> None:
                 logger.info(f"  COPY     {action.new_stem}  (seq unchanged)")
             else:
                 logger.info(f"  COPY     {action.new_stem}  ← {action.old_stem}")
+            if action.new_text:
+                logger.info(f"           \"{action.new_text}\"")
         elif action.status == SPEAKER:
             logger.info(f"  SPEAKER  {action.new_stem}  ({action.reason})")
+            if action.new_text:
+                logger.info(f"           \"{action.new_text}\"")
         elif action.status == MISSING:
             logger.info(f"  MISSING  {action.new_stem}  (matched seq {action.old_seq} but file absent)")
+            if action.new_text:
+                logger.info(f"           \"{action.new_text}\"")
         elif action.status == NEW:
             logger.info(f"  NEW      {action.new_stem}  ({action.reason})")
+            if action.new_text:
+                logger.info(f"           \"{action.new_text}\"")
 
 
 def print_summary(counts: dict[str, int], dry_run: bool) -> None:

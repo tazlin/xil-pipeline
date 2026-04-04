@@ -278,10 +278,12 @@ class TestGetBestModelForBudget:
         model = producer.get_best_model_for_budget()
         assert model == "eleven_v3"
 
-    def test_returns_flash_when_low(self):
+    def test_returns_v3_when_low(self):
+        # Low balance no longer falls back to flash — v3 is always used so that
+        # native audio tags like [pause] are honoured.
         self._set_quota(100)
         model = producer.get_best_model_for_budget()
-        assert model == "eleven_flash_v2_5"
+        assert model == "eleven_v3"
 
     def test_returns_fallback_on_exception(self):
         producer.client.user.get.side_effect = ApiError(status_code=500, body="fail")
@@ -306,15 +308,17 @@ class TestSelectModel:
         model = producer._select_model("Hello there, this is plain text.")
         assert model == "eleven_v3"
 
-    def test_uses_multilingual_v2_for_ssml_text(self):
+    def test_ssml_text_still_uses_v3(self):
+        # SSML fallback to eleven_multilingual_v2 is removed — v3 is always used.
+        # A warning is logged instead so the operator can replace SSML with [pause].
         self._set_quota(50000)
         model = producer._select_model('Hello <break time="1s"/> world.')
-        assert model == "eleven_multilingual_v2"
+        assert model == "eleven_v3"
 
-    def test_ssml_fallback_does_not_apply_on_low_budget(self):
+    def test_ssml_with_low_budget_still_uses_v3(self):
         self._set_quota(100)
         model = producer._select_model('Hello <break time="1s"/> world.')
-        assert model == "eleven_flash_v2_5"
+        assert model == "eleven_v3"
 
     def test_bare_less_than_does_not_trigger_ssml_fallback(self):
         self._set_quota(50000)
@@ -1237,3 +1241,85 @@ class TestPostambleHelpers:
     # mix_common foreground_override uses section field
     # ------------------------------------------------------------------
 
+
+
+# ── dry_run() per-speaker cost breakdown ──────────────────────────────────────
+
+def _make_config(*speakers):
+    """Minimal cast config dict with voice IDs assigned."""
+    return {spk: {"id": f"voice_{spk}", "full_name": spk.title()} for spk in speakers}
+
+
+def _make_entry(seq, speaker, text, section="act1"):
+    stem_name = f"{seq:03d}_{section}_{speaker}"
+    return {"seq": seq, "type": "dialogue", "section": section, "scene": None,
+            "speaker": speaker, "text": text, "direction": None, "stem_name": stem_name}
+
+
+class TestDryRunSpeakerTable:
+    """Per-speaker cost breakdown table is printed when stems need generating."""
+
+    def test_speaker_table_present_when_stems_missing(self, tmp_path, caplog):
+        """Table is printed when stems_dir has no pre-existing stems."""
+        entries = [
+            _make_entry(1, "adam", "Hello there.", "act1"),
+            _make_entry(2, "beth", "Hi.", "act1"),
+        ]
+        config = _make_config("adam", "beth")
+        with caplog.at_level("INFO", logger="xil_pipeline.XILP002_producer"):
+            producer.dry_run(config, entries, stems_dir=str(tmp_path))
+        assert "SPEAKER COST BREAKDOWN" in caplog.text
+        assert "adam" in caplog.text
+        assert "beth" in caplog.text
+
+    def test_speaker_table_absent_when_all_stems_exist(self, tmp_path, caplog):
+        """Table is omitted when all stems already exist on disk."""
+        entries = [
+            _make_entry(1, "adam", "Hello there.", "act1"),
+        ]
+        config = _make_config("adam")
+        # Pre-create the stem
+        stem = tmp_path / "001_act1_adam.mp3"
+        stem.write_bytes(b"audio")
+        with caplog.at_level("INFO", logger="xil_pipeline.XILP002_producer"):
+            producer.dry_run(config, entries, stems_dir=str(tmp_path))
+        assert "SPEAKER COST BREAKDOWN" not in caplog.text
+
+    def test_speaker_rows_sorted_by_chars_descending(self, tmp_path, caplog):
+        """Speaker with more chars to generate appears before speaker with fewer."""
+        entries = [
+            _make_entry(1, "adam", "Short.", "act1"),
+            _make_entry(2, "beth", "This is a much longer line with many more characters.", "act1"),
+        ]
+        config = _make_config("adam", "beth")
+        with caplog.at_level("INFO", logger="xil_pipeline.XILP002_producer"):
+            producer.dry_run(config, entries, stems_dir=str(tmp_path))
+        # Search only within the table section to avoid matching per-entry log lines
+        table_start = caplog.text.index("SPEAKER COST BREAKDOWN")
+        table_text = caplog.text[table_start:]
+        idx_adam = table_text.index("adam")
+        idx_beth = table_text.index("beth")
+        assert idx_beth < idx_adam  # beth has more chars, appears first
+
+    def test_skip_count_reflects_existing_stems(self, tmp_path, caplog):
+        """Skip column shows the count of stems already present on disk."""
+        entries = [
+            _make_entry(1, "adam", "Generate this.", "act1"),
+            _make_entry(2, "adam", "Skip this.", "act1"),
+        ]
+        config = _make_config("adam")
+        # Pre-create only the second stem
+        (tmp_path / "002_act1_adam.mp3").write_bytes(b"audio")
+        with caplog.at_level("INFO", logger="xil_pipeline.XILP002_producer"):
+            producer.dry_run(config, entries, stems_dir=str(tmp_path))
+        assert "SPEAKER COST BREAKDOWN" in caplog.text
+        # caplog lines include the logger prefix; find the TOTAL data row by content
+        total_line = next(
+            l for l in caplog.text.splitlines()
+            if "TOTAL" in l and "lines" not in l.lower() and "characters" not in l.lower()
+        )
+        # Format: "... TOTAL     1       14          1        10"
+        parts = total_line.split()
+        total_idx = parts.index("TOTAL")
+        assert parts[total_idx + 1] == "1"   # gen lines
+        assert parts[total_idx + 3] == "1"   # skip lines

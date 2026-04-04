@@ -397,7 +397,7 @@ def export_daw_layers(
         return
 
     logger.info(f"--- Building foreground timeline from {len(stem_plans)} stems ---")
-    foreground, timeline = build_foreground(
+    foreground, cue_timeline = build_foreground(
         stem_plans, config, apply_phone_filter, gap_ms=gap_ms
     )
 
@@ -415,7 +415,7 @@ def export_daw_layers(
     # --- Dialogue layer ---
     logger.info("--- Building dialogue layer ---")
     dlg, labels = build_dialogue_layer(
-        stem_plans, timeline, total_ms, config, apply_phone_filter
+        stem_plans, cue_timeline, total_ms, config, apply_phone_filter
     )
     fname = f"{tag}_layer_dialogue.wav"
     wav_path = os.path.join(output_dir, fname)
@@ -431,7 +431,16 @@ def export_daw_layers(
 
     # --- Ambience layer ---
     logger.info("--- Building ambience layer ---")
-    amb, amb_labels = build_ambience_layer(stem_plans, timeline, total_ms, level_db=0)
+    for plan in sorted(stem_plans, key=lambda p: p.seq):
+        if plan.direction_type != "AMBIENCE" or not plan.filepath:
+            continue
+        pd_str = f"{plan.play_duration:.1f}%" if plan.play_duration is not None else "100% (full)"
+        vol_str = f"{plan.volume_percentage:.0f}%" if plan.volume_percentage is not None else "unity"
+        ri_str = f"{plan.ramp_in_seconds:.1f}s" if plan.ramp_in_seconds is not None else "none"
+        ro_str = f"{plan.ramp_out_seconds:.1f}s" if plan.ramp_out_seconds is not None else "none"
+        logger.info("    seq %d: vol=%s  trim=%s  ramp_in=%s  ramp_out=%s  %s",
+                    plan.seq, vol_str, pd_str, ri_str, ro_str, os.path.basename(plan.filepath))
+    amb, amb_labels = build_ambience_layer(stem_plans, cue_timeline, total_ms, level_db=0)
     fname = f"{tag}_layer_ambience.wav"
     wav_path = os.path.join(output_dir, fname)
     amb.export(wav_path, format="wav")
@@ -444,7 +453,15 @@ def export_daw_layers(
 
     # --- Music layer ---
     logger.info("--- Building music layer ---")
-    mus, mus_labels = build_music_layer(stem_plans, timeline, total_ms, level_db=0)
+    for plan in sorted(stem_plans, key=lambda p: p.seq):
+        if plan.direction_type != "MUSIC" or not plan.filepath:
+            continue
+        pd_str = f"{plan.play_duration:.1f}%" if plan.play_duration is not None else "100% (full)"
+        vol_str = f"{plan.volume_percentage:.0f}%" if plan.volume_percentage is not None else "unity"
+        ro_str = f"{plan.ramp_out_seconds:.1f}s" if plan.ramp_out_seconds is not None else "none"
+        logger.info("    seq %d: vol=%s  trim=%s  ramp_out=%s  %s",
+                    plan.seq, vol_str, pd_str, ro_str, os.path.basename(plan.filepath))
+    mus, mus_labels = build_music_layer(stem_plans, cue_timeline, total_ms, level_db=0)
     fname = f"{tag}_layer_music.wav"
     wav_path = os.path.join(output_dir, fname)
     mus.export(wav_path, format="wav")
@@ -457,7 +474,7 @@ def export_daw_layers(
 
     # --- SFX layer ---
     logger.info("--- Building SFX layer ---")
-    sfx, sfx_labels = build_sfx_layer(stem_plans, timeline, total_ms)
+    sfx, sfx_labels = build_sfx_layer(stem_plans, cue_timeline, total_ms)
     fname = f"{tag}_layer_sfx.wav"
     wav_path = os.path.join(output_dir, fname)
     sfx.export(wav_path, format="wav")
@@ -490,7 +507,7 @@ def export_daw_layers(
 
     # --- Timeline visualization (optional) ---
     if timeline or timeline_html:
-        dlg_labels = compute_dialogue_labels(stem_plans, timeline)
+        dlg_labels = compute_dialogue_labels(stem_plans, cue_timeline)
         td = build_timeline_data(
             tag, total_ms / 1000.0,
             dlg_labels, amb_labels, mus_labels, sfx_labels,

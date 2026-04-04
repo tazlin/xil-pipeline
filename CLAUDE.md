@@ -108,6 +108,7 @@ python XILP001_script_parser.py "scripts/<script>.md" --episode S01E01 --preview
 - Two-pass normalization: `strip_markdown_escapes()` removes `\[`, `\]`, etc.; `strip_markdown_formatting()` removes `**`, `##`/`###` headings, trailing double-space line breaks
 - Handles both single-line dialogue (`SPEAKER (dir) Text`) and multi-line dialogue (speaker, direction, text on separate lines) via pending-speaker state machine
 - Standalone parenthetical acting notes like `(beat)` or `(pause)` within dialogue continuations are filtered from spoken text
+- Square-bracket stage directions with unrecognized `direction_type` (acting notes like `[drawn out]`, `[quietly]`) are silently skipped rather than emitted as `type: direction, direction_type: None` noise entries
 - Dividers: accepts both `===` (plain text) and `---` (markdown horizontal rules)
 - End markers: stops at `END OF EPISODE` or `END OF PRODUCTION SCRIPT`
 - Output: `parsed/parsed_<slug>_S01E01.json` — entries with seq, type, section, scene, speaker, direction, text, direction_type
@@ -159,7 +160,7 @@ python XILP002_producer.py --episode S01E01 --dry-run
 - **Postamble stems** (when cast config has a `postamble` block): `{max+1:03d}_postamble_{speaker}.mp3` (voice) and `{max+2:03d}_postamble_sfx.mp3` (outro music, source from `sfx_config.effects["OUTRO MUSIC"].source`); injected into parsed JSON with `section="postamble"` via `inject_postamble_entries()` — idempotent
 - Both `preamble` and `postamble` support multi-segment TTS: `segments` list with optional `shared_key` caches stock parts to `SFX/{shared_key}.mp3` (generated once, reused across episodes); episode-specific segments (no `shared_key`) are generated as temp files, concatenated with pydub, then cleaned up; legacy `text` field still works as a fallback
 - Supports `--start-from N` for resuming interrupted runs; `--stop-at N` to halt after a specific seq (useful for previewing a section without regenerating the full episode)
-- Supports `--dry-run` to preview lines and TTS character cost without API calls
+- Supports `--dry-run` to preview lines and TTS character cost without API calls; includes a per-speaker breakdown table (lines + chars to generate vs. already on disk) sorted by chars descending; per-entry marker: `[ ]` = will generate, `[=]` = stem exists/skip, `[x]` = out of range
 - Supports `--terse` to truncate each line to 3 words (minimizes TTS character cost)
 - Supports `--gen-sfx`, `--gen-music`, `--gen-ambience` to generate only the specified categories of stems (replaces deprecated `--sfx-music` which is kept as a shorthand for all three)
 - Supports `--local-only` (used with `--gen-sfx`/`--gen-music`/`--gen-ambience`) to skip any effect that would require an API call — only assets already in `SFX/` (CACHED) or silence entries are placed; no credits spent
@@ -257,7 +258,7 @@ python XILP007_stem_migrator.py \
 - `--dry-run` — shows the full plan without copying any files
 - `--strict` — exact text match only; default is **fuzzy** (normalises em-dash, ellipsis, curly quotes so punctuation-only edits don't force unnecessary regen)
 - `--quiet` — prints only the summary, not per-stem details
-- Status codes printed per stem: `COPY` (unchanged, will be/was copied), `SPEAKER` (text matches but speaker reassigned → regen), `NEW` (no old entry matches → generate), `MISSING` (match found but old file absent → generate)
+- Status codes printed per stem: `COPY` (unchanged, will be/was copied), `SPEAKER` (text matches but speaker reassigned → regen), `NEW` (no old entry matches → generate), `MISSING` (match found but old file absent → generate); each status line is followed by a truncated text snippet (first 55 chars) for visual content verification
 - Two-phase matching: phase 1 matches on (text, speaker); phase 2 (dialogue only) falls back to text-only to detect speaker reassignments
 - After running (without `--dry-run`), run `XILP002_producer.py --episode TAG` — it skips stems already on disk, so only SPEAKER/NEW/MISSING slots get API calls
 - No ElevenLabs API key required — no API calls made
@@ -333,7 +334,7 @@ python XILP011_master_export.py --episode S02E03 --show "Night Owls"
 Every script that calls the API includes three guard functions (duplicated per file, not shared):
 - `check_elevenlabs_quota()` — displays current character usage vs limit
 - `has_enough_characters(text)` — per-line quota check before each API call
-- `get_best_model_for_budget()` — switches from `eleven_v3` to `eleven_flash_v2_5` when balance is low
+- `get_best_model_for_budget()` — always returns `eleven_v3`; logs a warning when balance is low (no longer falls back to `eleven_flash_v2_5`, which does not support `[pause]` and other native audio tags)
 
 Always use `--dry-run` before running voice generation on a new script to verify TTS character budget.
 
@@ -353,7 +354,7 @@ All scripts live under `src/xil_pipeline/` and are installed as `xil-*` console 
 - `XILP004_*` — Studio project onboarding (ElevenLabs Studio Projects API)
 - `XILP005_*` — DAW layer export (stems → per-layer WAVs for Audacity)
 - `XILP006_*` — cues sheet ingester (cues markdown → SFX library + sfx config enrichment)
-- `XILP007_*` — stem migrator (diff old vs new parsed JSON, copy unchanged stems, report what needs regen)
+- `XILP007_*` — stem migrator (diff old vs new parsed JSON, copy unchanged stems, report what needs regen); `--dry-run` report shows truncated text snippets alongside COPY/NEW/SPEAKER/MISSING entries for visual content verification without cross-referencing JSON files
 - `XILP008_*` — stale stem cleanup (delete stems whose seq no longer matches the current parsed JSON)
 - `XILP009_*` — reverse script generator (parsed JSON → production script markdown)
 - `XILP010_*` — Studio export importer (ElevenLabs Studio ZIP → pipeline stems)
@@ -400,7 +401,7 @@ Optional `preamble` and `postamble` blocks (`intro_music_source` is **not** a fi
   }
 }
 ```
-Legacy single-string `"text"` field still works as a fallback for un-migrated episodes. `segments[].shared_key` caches stock parts to `SFX/{shared_key}.mp3` — generated once, reused across episodes. Supports SSML `<break time="1s"/>` pauses; segments containing SSML tags automatically use `eleven_multilingual_v2` via `_select_model()` — `eleven_v3` does not support SSML.
+Legacy single-string `"text"` field still works as a fallback for un-migrated episodes. `segments[].shared_key` caches stock parts to `SFX/{shared_key}.mp3` — generated once, reused across episodes. Use native v3 audio tags like `[pause]` for pauses — SSML (`<break time="1s"/>`) is no longer supported; `_select_model()` no longer falls back to `eleven_multilingual_v2` for SSML segments (it logs a warning instead). All TTS generation uses `eleven_v3` unconditionally.
 
 ## SFX Configuration
 

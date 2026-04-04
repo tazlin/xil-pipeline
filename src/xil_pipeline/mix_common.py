@@ -332,6 +332,20 @@ def collect_stem_plans(
                 plan.pre_trimmed = True
             if src_entry.loop is False:
                 plan.loop = False
+            # Derive play_duration from duration_seconds for source-based clips.
+            # duration_seconds controls API generation length for generated effects;
+            # for source= entries it has no effect unless we convert it here.
+            if (src_entry.source is not None
+                    and plan.play_duration is None
+                    and src_entry.duration_seconds > 0):
+                try:
+                    clip_ms = _mp3_duration_ms(filepath)
+                    if clip_ms > 0:
+                        target_ms = src_entry.duration_seconds * 1000
+                        plan.play_duration = min(100.0, target_ms / clip_ms * 100.0)
+                except Exception:
+                    logger.debug("Could not read duration for %s — duration_seconds ignored",
+                                 os.path.basename(filepath))
         plans.append(plan)
 
     # Deduplicate: if multiple stems share the same seq (e.g. old and new

@@ -107,12 +107,16 @@ def has_enough_characters(text_to_generate: str) -> bool:
 
 
 def get_best_model_for_budget() -> str:
-    """Select the best ElevenLabs TTS model based on remaining quota.
+    """Return the TTS model to use, always ``eleven_v3``.
+
+    Previously this function fell back to ``eleven_flash_v2_5`` when the
+    account balance was low.  That fallback is removed because flash-v2.5 does
+    not honour native audio tags like ``[pause]``, causing them to be spoken
+    aloud as text.  A low-balance warning is logged instead so the operator
+    can top up before continuing.
 
     Returns:
-        Model ID string: ``"eleven_v3"`` for healthy balance,
-        ``"eleven_flash_v2_5"`` when low, or ``"eleven_v3"``
-        as API-error fallback.
+        ``"eleven_v3"`` unconditionally (API-error fallback also returns v3).
     """
     SAFE_THRESHOLD = 5000
 
@@ -122,10 +126,13 @@ def get_best_model_for_budget() -> str:
 
         if remaining > SAFE_THRESHOLD:
             logger.info(" [Budget] Healthy Balance: %s left. Using 'eleven_v3'.", f"{remaining:,}")
-            return "eleven_v3"
         else:
-            logger.info(" [Budget] LOW BALANCE: %s left. Switching to 'eleven_flash_v2_5' (50%% cheaper).", f"{remaining:,}")
-            return "eleven_flash_v2_5"
+            logger.warning(
+                " [Budget] LOW BALANCE: %s left. Continuing with 'eleven_v3' — "
+                "audio tags like [pause] require v3 and cannot fall back to flash.",
+                f"{remaining:,}",
+            )
+        return "eleven_v3"
 
     except ApiError:
         logger.info(" [Budget] API Check Failed. Defaulting to 'eleven_v3'.")
@@ -136,14 +143,17 @@ _SSML_TAG_RE = re.compile(r"<(?:break|emphasis|prosody|say-as|phoneme|sub|speak|
 
 
 def _select_model(text: str) -> str:
-    """Select a TTS model, falling back to ``eleven_multilingual_v2`` for SSML text.
+    """Return the TTS model for this text segment, always ``eleven_v3``.
 
-    ``eleven_v3`` does not support SSML tags such as ``<break time="1s"/>``.
-    When the text contains a recognised SSML tag, this function overrides the
-    budget-based selection and returns ``"eleven_multilingual_v2"`` so that
-    SSML-bearing preamble/postamble segments continue to work without cast
-    config changes.  A bare ``<`` that is not part of an SSML tag (e.g. a
-    less-than sign in dialogue) does not trigger the fallback.
+    Previously this function fell back to ``eleven_multilingual_v2`` when SSML
+    tags (``<break>``, ``<emphasis>``, etc.) were detected, because ``eleven_v3``
+    does not honour SSML.  That fallback is removed: ``eleven_multilingual_v2``
+    does not honour native audio tags like ``[pause]``, causing them to be
+    spoken aloud as text.
+
+    If SSML tags are found a warning is logged prompting the operator to replace
+    them with native v3 audio tags (e.g. replace ``<break time="1s"/>`` with
+    ``[pause]``).
 
     Args:
         text: The TTS input text, possibly containing SSML markup.
@@ -151,10 +161,13 @@ def _select_model(text: str) -> str:
     Returns:
         A model ID string safe to pass to ``client.text_to_speech.convert()``.
     """
-    model = get_best_model_for_budget()
-    if _SSML_TAG_RE.search(text) and model == "eleven_v3":
-        return "eleven_multilingual_v2"
-    return model
+    if _SSML_TAG_RE.search(text):
+        logger.warning(
+            "   [!] SSML tag detected in TTS text — eleven_v3 does not honour SSML. "
+            "Replace <break> / <emphasis> etc. with native audio tags like [pause]. "
+            "Text: %.60s", text,
+        )
+    return get_best_model_for_budget()
 
 
 def truncate_to_words(text: str, n: int = 3) -> str:
@@ -280,18 +293,38 @@ def dry_run(
     total_chars = 0
     lines_to_generate = 0
 
+    # Per-speaker accumulators for the cost breakdown table
+    per_speaker_generate: dict[str, dict] = {}   # in-range, stem absent
+    per_speaker_skip: dict[str, dict] = {}        # stem already on disk
+
     for entry in dialogue_entries:
         char_count = len(entry["text"])
         total_chars += char_count
+        speaker = entry["speaker"]
         in_range = entry["seq"] >= start_from and (stop_at is None or entry["seq"] <= stop_at)
-        marker = " " if in_range else "x"
-        if in_range:
+
+        stem_exists = bool(
+            stems_dir and os.path.exists(os.path.join(stems_dir, entry["stem_name"] + ".mp3"))
+        )
+
+        if stem_exists:
+            bucket = per_speaker_skip.setdefault(speaker, {"lines": 0, "chars": 0})
+            bucket["lines"] += 1
+            bucket["chars"] += char_count
+            marker = "="
+        elif in_range:
+            bucket = per_speaker_generate.setdefault(speaker, {"lines": 0, "chars": 0})
+            bucket["lines"] += 1
+            bucket["chars"] += char_count
             lines_to_generate += 1
+            marker = " "
+        else:
+            marker = "x"
 
         direction_label = f" ({entry['direction']})" if entry["direction"] else ""
         text_preview = entry["text"][:75] + "..." if len(entry["text"]) > 75 else entry["text"]
 
-        cfg = config.get(entry["speaker"], {})
+        cfg = config.get(speaker, {})
         voice_id = cfg.get("id", "???")
         voice_status = "TBD" if voice_id == "TBD" else "OK"
 
@@ -306,7 +339,7 @@ def dry_run(
             vs_parts.append(f"lang={cfg['language_code']}")
         vs_note = f" [{', '.join(vs_parts)}]" if vs_parts else ""
 
-        logger.info(" [%s] %03d | %-14s | %4d chars | voice: %s%s%s", marker, entry['seq'], entry['speaker'], char_count, voice_status, vs_note, direction_label)
+        logger.info(" [%s] %03d | %-14s | %4d chars | voice: %s%s%s", marker, entry['seq'], speaker, char_count, voice_status, vs_note, direction_label)
         logger.info("          %s", text_preview)
         logger.info("          stem: %s.mp3", entry['stem_name'])
         logger.info("")
@@ -336,6 +369,41 @@ def dry_run(
         logger.warning("\n  %d voices still need voice_id assignment: %s", len(tbd_voices), ', '.join(tbd_voices))
         logger.info("  Use XILU001_discover_voices_T2S.py to browse voices, then update the cast config")
     logger.info("%s\n", "="*70)
+
+    # Per-speaker cost breakdown table (only when there are stems to generate)
+    if per_speaker_generate:
+        all_speakers = sorted(
+            per_speaker_generate.keys(),
+            key=lambda s: per_speaker_generate[s]["chars"],
+            reverse=True,
+        )
+        # Include skip-only speakers in the table too (at the bottom, sorted by chars)
+        skip_only = sorted(
+            [s for s in per_speaker_skip if s not in per_speaker_generate],
+            key=lambda s: per_speaker_skip[s]["chars"],
+            reverse=True,
+        )
+        all_rows = all_speakers + skip_only
+
+        sep = "-" * 16 + "  " + "-" * 5 + "  " + "-" * 8 + "      " + "-" * 5 + "  " + "-" * 8
+        logger.info("SPEAKER COST BREAKDOWN  ([ ]=generate  [=]=skip  [x]=out of range)")
+        logger.info("%-16s  %5s  %8s      %5s  %8s", "Speaker", "Lines", "Chars", "Lines", "Chars")
+        logger.info("%-16s  %5s  %8s      %5s  %8s", "", "gen", "gen", "skip", "skip")
+        logger.info("%s", sep)
+        for spk in all_rows:
+            g = per_speaker_generate.get(spk, {"lines": 0, "chars": 0})
+            sk = per_speaker_skip.get(spk, {"lines": 0, "chars": 0})
+            logger.info("%-16s  %5d  %8s      %5d  %8s",
+                        spk, g["lines"], f"{g['chars']:,}", sk["lines"], f"{sk['chars']:,}")
+        logger.info("%s", sep)
+        total_gen_lines = sum(v["lines"] for v in per_speaker_generate.values())
+        total_gen_chars = sum(v["chars"] for v in per_speaker_generate.values())
+        total_skip_lines = sum(v["lines"] for v in per_speaker_skip.values())
+        total_skip_chars = sum(v["chars"] for v in per_speaker_skip.values())
+        logger.info("%-16s  %5d  %8s      %5d  %8s",
+                    "TOTAL", total_gen_lines, f"{total_gen_chars:,}",
+                    total_skip_lines, f"{total_skip_chars:,}")
+        logger.info("")
 
 
 def generate_voices(

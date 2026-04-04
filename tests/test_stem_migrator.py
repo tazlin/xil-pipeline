@@ -305,3 +305,75 @@ class TestExecuteMigration:
         assert counts[m.SPEAKER] == 1
         assert counts[m.MISSING] == 1
         assert counts[m.SKIP] == 1
+
+
+# ── _snip + text snippets in MigrationAction ──────────────────────────────────
+
+class TestSnip:
+    def test_short_text_unchanged(self):
+        assert m._snip("Hello world") == "Hello world"
+
+    def test_long_text_truncated_with_ellipsis(self):
+        long = "A" * 60
+        result = m._snip(long)
+        assert result == "A" * 55 + "\u2026"
+        assert len(result) == 56
+
+    def test_none_returns_empty(self):
+        assert m._snip(None) == ""
+
+    def test_empty_returns_empty(self):
+        assert m._snip("") == ""
+
+    def test_exactly_55_chars_unchanged(self):
+        text = "B" * 55
+        assert m._snip(text) == text
+
+
+class TestMigrationTextSnippets:
+    """Text snippets are populated in plan_migration and displayed in print_report."""
+
+    def _run(self, old_entries, new_entries, tmp_path):
+        return m.plan_migration(old_entries, new_entries, str(tmp_path))
+
+    def test_copy_action_carries_text_snippet(self, tmp_path):
+        text = "Good morning, everyone."
+        old = [_dialogue(1, "act-one", None, "adam", text)]
+        new = [_dialogue(2, "act-one", None, "adam", text)]
+        # Create the old stem so it EXISTS
+        stem = tmp_path / m.make_stem_name(old[0])
+        stem.write_bytes(b"audio")
+        actions = self._run(old, new, tmp_path)
+        copy = [a for a in actions if a.status == m.COPY]
+        assert len(copy) == 1
+        assert copy[0].new_text == text
+        assert copy[0].old_text == text
+
+    def test_new_action_carries_text_snippet(self, tmp_path):
+        new = [_dialogue(1, "act-one", None, "adam", "Brand new line.")]
+        actions = self._run([], new, tmp_path)
+        new_actions = [a for a in actions if a.status == m.NEW]
+        assert len(new_actions) == 1
+        assert new_actions[0].new_text == "Brand new line."
+        assert new_actions[0].old_text == ""
+
+    def test_speaker_action_carries_text_snippet(self, tmp_path):
+        text = "Hello there."
+        old = [_dialogue(1, "act-one", None, "adam", text)]
+        new = [_dialogue(2, "act-one", None, "beth", text)]
+        stem = tmp_path / m.make_stem_name(old[0])
+        stem.write_bytes(b"audio")
+        actions = self._run(old, new, tmp_path)
+        speaker = [a for a in actions if a.status == m.SPEAKER]
+        assert len(speaker) == 1
+        assert speaker[0].new_text == text
+
+    def test_text_truncated_at_55_chars(self, tmp_path):
+        long_text = "W" * 80
+        old = [_dialogue(1, "act-one", None, "adam", long_text)]
+        new = [_dialogue(2, "act-one", None, "adam", long_text)]
+        stem = tmp_path / m.make_stem_name(old[0])
+        stem.write_bytes(b"audio")
+        actions = self._run(old, new, tmp_path)
+        copy = [a for a in actions if a.status == m.COPY]
+        assert copy[0].new_text == "W" * 55 + "\u2026"

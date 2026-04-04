@@ -448,3 +448,46 @@ class TestPreambleInDawExport:
         labels_path = os.path.join(output_dir, "S01E01_labels_dialogue.txt")
         content = open(labels_path).read()
         assert "tina" not in content
+
+
+# ─── Tests: timeline parameter shadow fix ───
+
+class TestExportDawLayersTimelineParam:
+    """Verify that the `timeline: bool` parameter is not shadowed by the cue dict.
+
+    Before the fix, `foreground, timeline = build_foreground(...)` overwrote the
+    bool parameter.  The cue dict is always truthy when non-empty, so
+    `if timeline:` would always be True and render_terminal_timeline() would be
+    printed to stdout on every non-dry-run export.
+    """
+
+    def test_no_stdout_without_timeline_flag(
+        self, config, stems_dir, parsed_file, tmp_path, capsys
+    ):
+        """export_daw_layers with timeline=False must not print to stdout."""
+        output_dir = str(tmp_path / "daw" / "S01E01")
+
+        daw.export_daw_layers(
+            config, stems_dir, parsed_file, output_dir, "S01E01",
+            timeline=False, timeline_html=False,
+        )
+
+        captured = capsys.readouterr()
+        assert captured.out == "", (
+            "ASCII timeline was printed to stdout even though timeline=False. "
+            "The 'timeline' bool parameter was likely shadowed by the cue dict."
+        )
+
+    def test_stdout_contains_timeline_when_flag_set(
+        self, config, stems_dir, parsed_file, tmp_path, capsys
+    ):
+        """export_daw_layers with timeline=True must print something to stdout."""
+        output_dir = str(tmp_path / "daw" / "S01E01")
+
+        daw.export_daw_layers(
+            config, stems_dir, parsed_file, output_dir, "S01E01",
+            timeline=True, timeline_html=False,
+        )
+
+        captured = capsys.readouterr()
+        assert len(captured.out) > 0, "Expected ASCII timeline on stdout when timeline=True"
