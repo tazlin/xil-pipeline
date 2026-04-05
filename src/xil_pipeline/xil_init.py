@@ -130,7 +130,7 @@ def scaffold(directory: str, show_name: str) -> None:
     project_path = os.path.join(directory, "project.json")
     if not os.path.exists(project_path):
         with open(project_path, "w", encoding="utf-8") as f:
-            json.dump({"show": show_name, "season_title": None}, f, indent=2)
+            json.dump({"show": show_name, "season": None, "season_title": None}, f, indent=2)
             f.write("\n")
         logger.info(f"  Created {project_path}")
     else:

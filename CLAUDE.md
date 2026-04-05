@@ -50,6 +50,7 @@ All internal imports use the package namespace: `from xil_pipeline.models import
 ```json
 {
     "show": "THE 413",
+    "season": 3,
     "season_title": "The Holiday Shift"
 }
 ```
@@ -57,6 +58,8 @@ All internal imports use the package namespace: `from xil_pipeline.models import
 All scripts accept a `--show` CLI flag to override the show name. Resolution order: `--show` arg > `project.json` > hardcoded fallback `"sample"`.
 
 The `season_title` key in `project.json` is the workspace-level default for the season/arc title. When a script header contains `Arc: "…"`, that value takes precedence; when absent, `project.json` `season_title` fills in. Resolution order: script header `Arc:` > `project.json` `season_title` > `None`. The `{season_title}` placeholder in preamble/postamble segment text resolves from this value.
+
+The `season` key in `project.json` is the workspace-level default season number. When a script header contains `Season N:`, that value takes precedence; when absent, `project.json` `season` fills in. Resolution order: script header `Season N:` > `project.json` `season` > `None`.
 
 File paths are derived dynamically: `cast_<slug>_<TAG>.json`, `sfx_<slug>_<TAG>.json`, `parsed/parsed_<slug>_<TAG>.json`, etc. The slug is the show name lowercased with all non-alphanumeric characters removed (e.g., `"THE 413"` → `"the413"`, `"Night Owls"` → `"nightowls"`).
 

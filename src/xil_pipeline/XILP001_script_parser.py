@@ -27,6 +27,7 @@ from xil_pipeline.models import (
     ScriptStats,
     derive_paths,
     episode_tag,
+    resolve_season,
     resolve_season_title,
     resolve_slug,
     show_slug,
@@ -541,7 +542,8 @@ def parse_script(
     else:
         show, season, episode, title, season_title = "Unknown Show", None, 1, "", None
 
-    # Apply project.json fallback when the script header has no Arc: declaration
+    # Apply project.json fallbacks when the script header omits Season/Arc declarations
+    season = resolve_season(season)
     season_title = resolve_season_title(season_title)
 
     # Skip CAST section

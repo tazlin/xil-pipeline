@@ -1025,3 +1025,35 @@ class TestResolveSeasonTitle:
         pj.write_text(json.dumps({"season_title": ""}))
         result = models.resolve_season_title(None, project_path=str(pj))
         assert result is None
+
+
+class TestResolveSeason:
+    """Tests for resolve_season() resolution order."""
+
+    def test_explicit_arg_returned_directly(self):
+        assert models.resolve_season(3) == 3
+
+    def test_falls_back_to_project_json(self, tmp_path):
+        pj = tmp_path / "project.json"
+        pj.write_text(json.dumps({"show": "THE 413", "season": 2}))
+        assert models.resolve_season(None, project_path=str(pj)) == 2
+
+    def test_returns_none_when_absent_everywhere(self, tmp_path):
+        pj = tmp_path / "project.json"
+        pj.write_text(json.dumps({"show": "THE 413"}))
+        assert models.resolve_season(None, project_path=str(pj)) is None
+
+    def test_explicit_wins_over_project_json(self, tmp_path):
+        pj = tmp_path / "project.json"
+        pj.write_text(json.dumps({"season": 1}))
+        assert models.resolve_season(3, project_path=str(pj)) == 3
+
+    def test_no_project_json_returns_none(self, tmp_path):
+        missing = tmp_path / "nonexistent.json"
+        assert models.resolve_season(None, project_path=str(missing)) is None
+
+    def test_zero_is_not_a_valid_season(self, tmp_path):
+        pj = tmp_path / "project.json"
+        pj.write_text(json.dumps({"season": 0}))
+        # 0 is falsy but technically a valid JSON value — resolver returns it as-is
+        assert models.resolve_season(None, project_path=str(pj)) == 0

@@ -488,12 +488,14 @@ END OF EPISODE 2
 
 class TestParseScriptNoSeason:
     @pytest.fixture
-    def parsed(self, tmp_path):
+    def parsed(self, tmp_path, monkeypatch):
+        # monkeypatch CWD so resolve_season() finds no project.json
+        monkeypatch.chdir(tmp_path)
         script_file = tmp_path / "no_season.md"
         script_file.write_text(SCRIPT_WITHOUT_SEASON, encoding="utf-8")
         return parser.parse_script(str(script_file))
 
-    def test_season_is_none_when_not_in_header(self, parsed):
+    def test_season_is_none_when_not_in_header_and_no_project_json(self, parsed):
         assert parsed["season"] is None
 
     def test_episode_still_extracted(self, parsed):

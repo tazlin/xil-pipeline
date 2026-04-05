@@ -114,6 +114,31 @@ def resolve_season_title(
     return data.get("season_title") or None
 
 
+def resolve_season(
+    season_arg: int | None = None,
+    project_path: str = "project.json",
+) -> int | None:
+    """Resolve the season number from an explicit value or project.json.
+
+    Resolution order:
+    1. Explicit *season_arg* (e.g. parsed from the script header ``Season N:`` token).
+    2. ``project.json`` ``"season"`` field (if the file exists and the key is present).
+    3. ``None`` — no season number is available.
+
+    Args:
+        season_arg: Season number already known (e.g. from the script header), or ``None``.
+        project_path: Path to the project config file.
+
+    Returns:
+        Season number as an integer, or ``None`` when not available from any source.
+    """
+    if season_arg is not None:
+        return season_arg
+    data = _read_project(project_path)
+    val = data.get("season")
+    return int(val) if val is not None else None
+
+
 def episode_tag(season: int | None, episode: int) -> str:
     """Format season/episode as a compact tag like ``S01E01`` or ``E01``.
 
