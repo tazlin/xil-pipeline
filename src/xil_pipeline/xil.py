@@ -84,6 +84,12 @@ XIL_SCRIPT_COMMANDS: dict[str, CommandSpec] = {
         _UTILITY,
         "(advanced)",
     ),
+    "mp3-hash": CommandSpec(
+        "xil_pipeline.XILU007_mp3_hash",
+        "recursive MP3 SHA-256 hash log",
+        _UTILITY,
+        "(integrity / audit)",
+    ),
 }
 """Subcommand registry. Insertion order defines display order within each group."""
 

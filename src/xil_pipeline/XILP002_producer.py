@@ -43,8 +43,17 @@ from xil_pipeline.sfx_common import (
 from xil_pipeline.sfx_common import (
     generate_sfx as generate_sfx_stems,
 )
+from xil_pipeline.XILU007_mp3_hash import hash_file as _hash_file
 
 logger = get_logger(__name__)
+
+
+def _log_stem_hash(path: str) -> None:
+    """Log the SHA-256 hash of a freshly written stem file."""
+    try:
+        logger.info("   SHA256: %s", _hash_file(path))
+    except Exception as exc:
+        logger.debug("Could not hash %s: %s", path, exc)
 
 # Setup ElevenLabs Client
 client = ElevenLabs(api_key=os.environ.get("ELEVENLABS_API_KEY"))
@@ -541,6 +550,7 @@ def generate_voices(
             lyrics=text,
         )
         logger.info("   Saved: %s", stem_file)
+        _log_stem_hash(stem_file)
         generated_count += 1
 
     stem_count = len([f for f in os.listdir(stems_dir) if f.endswith(".mp3")])
@@ -807,6 +817,7 @@ def _generate_voice_block(block, cast_cfg, config: dict, voice_stem: str,
             if os.path.exists(f):
                 os.remove(f)
         logger.info("   Saved: %s", voice_stem)
+        _log_stem_hash(voice_stem)
     else:
         resolved = block.text.format(**kwargs)
         if not has_enough_characters(resolved):
@@ -815,6 +826,7 @@ def _generate_voice_block(block, cast_cfg, config: dict, voice_stem: str,
         logger.info(" > [%s] %s (%d chars)...", label, spk, len(resolved))
         _tts_segment(resolved, voice_stem, voice_id, block.speed)
         logger.info("   Saved: %s", voice_stem)
+        _log_stem_hash(voice_stem)
 
 
 def _generate_preamble_voice(cast_cfg, config: dict, preamble_voice_stem: str,
@@ -988,6 +1000,7 @@ def main() -> None:
                                 logger.info("   Trimmed intro music to %.1fs (%s%%)", trim_ms/1000, intro_entry.play_duration)
                             clip.export(preamble_music_stem, format="mp3")
                             logger.info("   Saved: %s", preamble_music_stem)
+                            _log_stem_hash(preamble_music_stem)
                         else:
                             logger.warning("INTRO MUSIC entry has no 'source' — skipping music stem")
                     else:
@@ -1022,6 +1035,7 @@ def main() -> None:
                                 logger.info("   Trimmed outro music to %.1fs (%s%%)", trim_ms/1000, outro_entry.play_duration)
                             clip.export(postamble_music_stem, format="mp3")
                             logger.info("   Saved: %s", postamble_music_stem)
+                            _log_stem_hash(postamble_music_stem)
                         else:
                             logger.warning("OUTRO MUSIC entry has no 'source' — skipping outro music stem")
                 _generate_postamble_voice(cast_cfg, config, postamble_voice_stem)

@@ -71,6 +71,7 @@ xil-csv-join   = "xil_pipeline.XILU003_csv_sfx_join:main"
 xil-sample     = "xil_pipeline.XILU004_sample_voices_T2S:main"
 xil-sfx-lib    = "xil_pipeline.XILU005_discover_SFX:main"
 xil-splice     = "xil_pipeline.XILU006_splice_parsed:main"
+xil-mp3-hash   = "xil_pipeline.XILU007_mp3_hash:main"
 xil-init       = "xil_pipeline.xil_init:main"
 
 [tool.hatch.build.targets.wheel]

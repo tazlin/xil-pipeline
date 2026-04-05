@@ -16,6 +16,7 @@ Module Attributes:
 
 import contextlib
 import datetime
+import hashlib
 import json
 import os
 import re
@@ -93,6 +94,15 @@ def slugify_effect_key(text: str) -> str:
     slug = re.sub(r"-{2,}", "-", slug)
     slug = slug.strip("-")
     return slug
+
+
+def _sha256_file(path: str) -> str:
+    """Return the hex-encoded SHA-256 digest of *path*, read in 64 KiB chunks."""
+    h = hashlib.sha256()
+    with open(path, "rb") as f:
+        for chunk in iter(lambda: f.read(65536), b""):
+            h.update(chunk)
+    return h.hexdigest()
 
 
 def file_nonempty(path: str) -> bool:
@@ -495,6 +505,7 @@ def generate_sfx(
         shared_path = shared_paths[entry["text"]]
         if place_episode_stem(shared_path, stem_file):
             logger.info("   Placed: %s", stem_file)
+            logger.info("   SHA256: %s", _sha256_file(stem_file))
             copied_count += 1
         else:
             logger.info("   Exists: %s — skipping", stem_file)
