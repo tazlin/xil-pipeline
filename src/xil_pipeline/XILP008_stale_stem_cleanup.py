@@ -168,7 +168,7 @@ def main() -> None:
             slug = resolve_slug(args.show)
             p = derive_paths(slug, tag)
             parsed_path = args.parsed or p["parsed"]
-            stems_dir = args.stems or f"stems/{tag}"
+            stems_dir = args.stems or f"stems/{slug}/{tag}"
         else:
             if not (args.parsed and args.stems):
                 parser.error(

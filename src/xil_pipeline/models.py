@@ -56,6 +56,7 @@ def derive_paths(slug: str, tag: str) -> dict[str, str]:
         "cues_manifest": f"cues/cues_manifest_{tag}.json",
         "orig_parsed": f"parsed/orig_parsed_{slug}_{tag}.json",
         "revised_script": f"scripts/revised_{slug}_{tag}.md",
+        "stems": f"stems/{slug}/{tag}",
     }
 
 

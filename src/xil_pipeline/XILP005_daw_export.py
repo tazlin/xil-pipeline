@@ -325,7 +325,7 @@ def _make_audacity_script(
     return script
 
 
-def dry_run_daw(tag: str, stem_plans, entries_index: dict, output_dir: str) -> None:
+def dry_run_daw(tag: str, stem_plans, entries_index: dict, output_dir: str, stems_dir: str = "") -> None:
     """Print a DAW export summary without writing any files.
 
     Args:
@@ -333,6 +333,7 @@ def dry_run_daw(tag: str, stem_plans, entries_index: dict, output_dir: str) -> N
         stem_plans: Classified stem list.
         entries_index: Parsed entry index.
         output_dir: Target directory (shown in summary).
+        stems_dir: Stems source directory (shown in summary).
     """
     bg_plans = [p for p in stem_plans if p.is_background]
     ambience = [p for p in bg_plans if p.direction_type == "AMBIENCE"]
@@ -341,7 +342,7 @@ def dry_run_daw(tag: str, stem_plans, entries_index: dict, output_dir: str) -> N
     dialogue = [p for p in stem_plans if p.entry_type == "dialogue"]
 
     logger.info(f"\n--- DAW Export Dry Run: {tag} ---")
-    logger.info(f"   Stems directory : stems/{tag}/")
+    logger.info(f"   Stems directory : {stems_dir or f'stems/{tag}'}")
     logger.info(f"   Output directory: {output_dir}/")
     logger.info("")
     logger.info("   Layer             Stems")
@@ -607,7 +608,7 @@ def main() -> None:
             for key, member in cast_cfg.cast.items()
         }
 
-        stems_dir = os.path.join(STEMS_DIR, tag)
+        stems_dir = os.path.join(STEMS_DIR, slug, tag)
         parsed_path = args.parsed or p["parsed"]
         output_dir = args.output_dir or os.path.join(DAW_DIR, tag)
 
@@ -625,7 +626,7 @@ def main() -> None:
         stem_plans = collect_stem_plans(stems_dir, entries_index, sfx_config=sfx_config)
 
         if args.dry_run:
-            dry_run_daw(tag, stem_plans, entries_index, output_dir)
+            dry_run_daw(tag, stem_plans, entries_index, output_dir, stems_dir)
             if args.timeline or args.timeline_html:
                 total_ms, timeline = build_foreground_timeline_only(
                     stem_plans, gap_ms=args.gap_ms

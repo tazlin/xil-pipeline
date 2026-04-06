@@ -119,7 +119,7 @@ class TestLoadSfxPlan:
         )
         assert isinstance(entries, list)
         assert len(entries) == 4  # AMBIENCE + BEAT + SFX + MUSIC
-        assert "S01E01" in stems_dir
+        assert os.path.join("testshow", "S01E01") in stems_dir
 
     def test_max_duration_filters_long_effects(self, sample_script, sample_sfx, sample_cast):
         entries, _ = generate_sfx.load_sfx_plan(
@@ -141,7 +141,7 @@ class TestLoadSfxPlan:
         _, stems_dir = generate_sfx.load_sfx_plan(
             sample_script, sample_sfx, sample_cast,
         )
-        assert stems_dir.endswith(os.path.join("stems", "S01E01"))
+        assert stems_dir.endswith(os.path.join("stems", "testshow", "S01E01"))
 
 
 # ─── Tests: main() CLI wiring ───
@@ -202,4 +202,4 @@ class TestMainCli:
             generate_sfx.STEMS_DIR = original
             os.chdir(original_cwd)
         # BEAT (1.0s) is the only effect ≤ 1.0s — silence, no API
-        assert (tmp_path / "stems" / "S01E01" / "004_cold-open_sfx.mp3").exists()
+        assert (tmp_path / "stems" / "testshow" / "S01E01" / "004_cold-open_sfx.mp3").exists()

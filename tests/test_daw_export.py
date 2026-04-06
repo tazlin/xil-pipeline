@@ -162,7 +162,7 @@ class TestDryRunDaw:
         from xil_pipeline.mix_common import collect_stem_plans, load_entries_index
         idx = load_entries_index(parsed_file)
         plans = collect_stem_plans(stems_dir, idx)
-        daw.dry_run_daw("S01E01", plans, idx, "daw/S01E01")
+        daw.dry_run_daw("S01E01", plans, idx, "daw/S01E01", "stems/sample/S01E01")
         assert "S01E01" in caplog.text
         assert "dialogue" in caplog.text.lower()
         assert "ambience" in caplog.text.lower()

@@ -216,7 +216,7 @@ def main() -> None:
             for key, member in cast_cfg.cast.items()
         }
 
-        stems_dir = os.path.join(STEMS_DIR, tag)
+        stems_dir = os.path.join(STEMS_DIR, slug, tag)
         output = args.output or p["master"]
 
         parsed_path = args.parsed or p["parsed"]

@@ -370,7 +370,7 @@ def main() -> None:
             p = derive_paths(slug, tag)
             old_path = args.old or f"parsed/{args.orig_prefix}parsed_{slug}_{tag}.json"
             new_path = args.new or p["parsed"]
-            stems_dir = args.stems or f"stems/{tag}"
+            stems_dir = args.stems or f"stems/{slug}/{tag}"
         else:
             if not (args.old and args.new and args.stems):
                 parser.error("Provide --episode, or all three of --old, --new, and --stems.")

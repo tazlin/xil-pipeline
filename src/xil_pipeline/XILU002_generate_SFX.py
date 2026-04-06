@@ -36,7 +36,7 @@ import sys
 from elevenlabs.client import ElevenLabs
 
 from xil_pipeline.log_config import configure_logging, get_logger
-from xil_pipeline.models import CastConfiguration, derive_paths, resolve_slug
+from xil_pipeline.models import CastConfiguration, derive_paths, resolve_slug, show_slug
 from xil_pipeline.sfx_common import dry_run_sfx, generate_sfx, load_sfx_entries, run_banner
 
 logger = get_logger(__name__)
@@ -81,7 +81,7 @@ def load_sfx_plan(
     with open(cast_json_path, encoding="utf-8") as f:
         cast_data = json.load(f)
     cast_cfg = CastConfiguration(**cast_data)
-    stems_dir = os.path.join(STEMS_DIR, cast_cfg.tag)
+    stems_dir = os.path.join(STEMS_DIR, show_slug(cast_cfg.show), cast_cfg.tag)
 
     sfx_entries = load_sfx_entries(
         script_json_path, sfx_json_path,

@@ -661,6 +661,8 @@ def inject_postamble_entries(parsed_path: str, postamble_text: str, speaker: str
 
 def _episode_kwargs(cast_cfg) -> dict:
     return dict(
+        show=cast_cfg.show or "",
+        season=cast_cfg.season or "",
         season_title=cast_cfg.season_title or "",
         episode=cast_cfg.episode,
         title=cast_cfg.title or "",
@@ -906,7 +908,7 @@ def main() -> None:
             args.script = paths["parsed"]
 
         config, dialogue_entries, tag = load_production(args.script, cast_path)
-        stems_dir = os.path.join(STEMS_DIR, tag)
+        stems_dir = os.path.join(STEMS_DIR, slug, tag)
 
         if args.terse:
             dialogue_entries = [
@@ -993,23 +995,22 @@ def main() -> None:
             if cast_cfg.preamble:
                 os.makedirs(stems_dir, exist_ok=True)
                 _generate_preamble_voice(cast_cfg, config, preamble_voice_stem)
-                # Copy intro music from sfx config 'INTRO MUSIC' source
-                if not os.path.exists(preamble_music_stem):
-                    if sfx_config_model and "INTRO MUSIC" in sfx_config_model.effects:
-                        intro_entry = sfx_config_model.effects["INTRO MUSIC"]
-                        if intro_entry.source:
-                            clip = AudioSegment.from_file(intro_entry.source)
-                            if intro_entry.play_duration is not None:
-                                trim_ms = int(len(clip) * intro_entry.play_duration / 100.0)
-                                clip = clip[:trim_ms]
-                                logger.info("   Trimmed intro music to %.1fs (%s%%)", trim_ms/1000, intro_entry.play_duration)
-                            clip.export(preamble_music_stem, format="mp3")
-                            logger.info("   Saved: %s", preamble_music_stem)
-                            _log_stem_hash(preamble_music_stem)
-                        else:
-                            logger.warning("INTRO MUSIC entry has no 'source' — skipping music stem")
+                # Copy intro music from sfx config 'INTRO MUSIC' source (always regenerate — free local copy)
+                if sfx_config_model and "INTRO MUSIC" in sfx_config_model.effects:
+                    intro_entry = sfx_config_model.effects["INTRO MUSIC"]
+                    if intro_entry.source:
+                        clip = AudioSegment.from_file(intro_entry.source)
+                        if intro_entry.play_duration is not None:
+                            trim_ms = int(len(clip) * intro_entry.play_duration / 100.0)
+                            clip = clip[:trim_ms]
+                            logger.info("   Trimmed intro music to %.1fs (%s%%)", trim_ms/1000, intro_entry.play_duration)
+                        clip.export(preamble_music_stem, format="mp3")
+                        logger.info("   Saved: %s", preamble_music_stem)
+                        _log_stem_hash(preamble_music_stem)
                     else:
-                        logger.warning("No 'INTRO MUSIC' entry in sfx config — skipping music stem")
+                        logger.warning("INTRO MUSIC entry has no 'source' — skipping music stem")
+                else:
+                    logger.warning("No 'INTRO MUSIC' entry in sfx config — skipping music stem")
             generate_voices(config, dialogue_entries, stems_dir,
                             start_from=args.start_from, stop_at=args.stop_at,
                             show=cast_cfg.show)
@@ -1028,21 +1029,20 @@ def main() -> None:
                 spk_post = cast_cfg.postamble.speaker
                 postamble_music_stem = os.path.join(stems_dir, f"{music_seq:03d}_postamble_sfx.mp3")
                 postamble_voice_stem = os.path.join(stems_dir, f"{voice_seq:03d}_postamble_{spk_post}.mp3")
-                # Copy outro music from sfx config 'OUTRO MUSIC' source (optional)
-                if not os.path.exists(postamble_music_stem):
-                    if sfx_config_model and "OUTRO MUSIC" in sfx_config_model.effects:
-                        outro_entry = sfx_config_model.effects["OUTRO MUSIC"]
-                        if outro_entry.source:
-                            clip = AudioSegment.from_file(outro_entry.source)
-                            if outro_entry.play_duration is not None:
-                                trim_ms = int(len(clip) * outro_entry.play_duration / 100.0)
-                                clip = clip[:trim_ms]
-                                logger.info("   Trimmed outro music to %.1fs (%s%%)", trim_ms/1000, outro_entry.play_duration)
-                            clip.export(postamble_music_stem, format="mp3")
-                            logger.info("   Saved: %s", postamble_music_stem)
-                            _log_stem_hash(postamble_music_stem)
-                        else:
-                            logger.warning("OUTRO MUSIC entry has no 'source' — skipping outro music stem")
+                # Copy outro music from sfx config 'OUTRO MUSIC' source (always regenerate — free local copy)
+                if sfx_config_model and "OUTRO MUSIC" in sfx_config_model.effects:
+                    outro_entry = sfx_config_model.effects["OUTRO MUSIC"]
+                    if outro_entry.source:
+                        clip = AudioSegment.from_file(outro_entry.source)
+                        if outro_entry.play_duration is not None:
+                            trim_ms = int(len(clip) * outro_entry.play_duration / 100.0)
+                            clip = clip[:trim_ms]
+                            logger.info("   Trimmed outro music to %.1fs (%s%%)", trim_ms/1000, outro_entry.play_duration)
+                        clip.export(postamble_music_stem, format="mp3")
+                        logger.info("   Saved: %s", postamble_music_stem)
+                        _log_stem_hash(postamble_music_stem)
+                    else:
+                        logger.warning("OUTRO MUSIC entry has no 'source' — skipping outro music stem")
                 _generate_postamble_voice(cast_cfg, config, postamble_voice_stem)
 
 
