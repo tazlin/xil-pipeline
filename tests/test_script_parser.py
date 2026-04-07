@@ -1894,3 +1894,67 @@ class TestTagOverride:
             config = json.load(f)
         cc = models.CastConfiguration(**config)
         assert cc.tag == "V01C03"
+
+
+# ─── Tests: --show flag overrides script-header show name ───
+
+class TestShowOverride:
+    """--show must win over any show name extracted from the script header."""
+
+    UNRECOGNIZED_HEADER_SCRIPT = (
+        '# Audiobook Sample: "Signals" Chapter 1: "The Signal"\n\n'
+        "CAST:\n\nNARRATOR — measured narrator\n\n"
+        "===\nCHAPTER ONE\n\nNARRATOR\nThe station had been silent.\n\n===\n"
+    )
+
+    @pytest.fixture
+    def script_file(self, tmp_path):
+        f = tmp_path / "audiobook.md"
+        f.write_text(self.UNRECOGNIZED_HEADER_SCRIPT, encoding="utf-8")
+        return str(f)
+
+    def test_show_override_sets_slug_in_output_path(self, script_file, tmp_path):
+        """`--show Signals` must produce parsed_signals_V01C01.json, not parsed_unknownshow_*.json."""
+        original_cwd = os.getcwd()
+        os.chdir(str(tmp_path))
+        try:
+            with unittest.mock.patch("sys.argv", [
+                "XILP001", script_file, "--show", "Signals", "--tag", "V01C01", "--quiet",
+            ]):
+                parser.main()
+        finally:
+            os.chdir(original_cwd)
+        assert (tmp_path / "parsed" / "parsed_signals_V01C01.json").exists()
+        assert not (tmp_path / "parsed" / "parsed_unknownshow_V01C01.json").exists()
+
+    def test_show_override_stored_in_parsed_json(self, script_file, tmp_path):
+        """`parsed["show"]` must reflect the --show override, not "Unknown Show"."""
+        original_cwd = os.getcwd()
+        os.chdir(str(tmp_path))
+        try:
+            with unittest.mock.patch("sys.argv", [
+                "XILP001", script_file, "--show", "Signals", "--tag", "V01C01", "--quiet",
+            ]):
+                parser.main()
+        finally:
+            os.chdir(original_cwd)
+        with open(tmp_path / "parsed" / "parsed_signals_V01C01.json", encoding="utf-8") as f:
+            data = json.load(f)
+        assert data["show"] == "Signals"
+
+    def test_show_override_with_debug_flag(self, script_file, tmp_path):
+        """`--show` must persist through the --debug re-parse path."""
+        original_cwd = os.getcwd()
+        os.chdir(str(tmp_path))
+        try:
+            with unittest.mock.patch("sys.argv", [
+                "XILP001", script_file, "--show", "Signals", "--tag", "V01C01",
+                "--debug", "--quiet",
+            ]):
+                parser.main()
+        finally:
+            os.chdir(original_cwd)
+        with open(tmp_path / "parsed" / "parsed_signals_V01C01.json", encoding="utf-8") as f:
+            data = json.load(f)
+        assert data["show"] == "Signals"
+        assert (tmp_path / "parsed" / "parsed_signals_V01C01.csv").exists()

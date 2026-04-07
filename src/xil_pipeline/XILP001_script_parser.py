@@ -1164,19 +1164,26 @@ def main() -> None:
                 sys.exit(1)
 
         # Derive default output path from parsed season/episode
+        # --show overrides the show name extracted from the script header
+        if args.show:
+            parsed["show"] = args.show
         slug = show_slug(parsed.get("show", "")) or resolve_slug(args.show)
         paths = derive_paths(slug, tag)
         if args.output is None:
             args.output = paths["parsed"]
+
+        # Ensure output directory exists before any file writes (including debug CSV)
+        os.makedirs(os.path.dirname(args.output) or ".", exist_ok=True)
 
         # Write debug CSV if requested (must happen after output path is resolved)
         if args.debug:
             debug_csv_path = os.path.splitext(args.output)[0] + ".csv"
             # Re-parse with debug output enabled
             parsed = parse_script(args.script, debug_output=debug_csv_path)
+            if args.show:
+                parsed["show"] = args.show
 
         # Write JSON output
-        os.makedirs(os.path.dirname(args.output) or ".", exist_ok=True)
         with open(args.output, "w", encoding="utf-8") as f:
             json.dump(parsed, f, indent=2, ensure_ascii=False)
 
