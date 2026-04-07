@@ -202,10 +202,11 @@ def get_parser() -> argparse.ArgumentParser:
         prog="xil-csv-join",
         description="Annotate a parsed episode CSV with SFX and cast config data.",
     )
-    parser.add_argument(
-        "--episode", required=True,
-        help="Episode tag (e.g. S02E03) — derives default input/output paths",
-    )
+    tag_group = parser.add_mutually_exclusive_group(required=True)
+    tag_group.add_argument("--episode",
+                           help="Episode tag (e.g. S02E03) — derives default input/output paths")
+    tag_group.add_argument("--tag",
+                           help="Raw tag for non-episodic content (e.g. V01C03, D01)")
     parser.add_argument("--show", default=None, help="Show name override (default: from project.json)")
     parser.add_argument("--csv", dest="csv_path", help="Override input CSV path")
     parser.add_argument("--sfx", dest="sfx_path", help="Override SFX JSON path")
@@ -219,7 +220,8 @@ def main() -> None:
     with run_banner():
         args = get_parser().parse_args()
 
-        csv_def, sfx_def, cast_def, out_def = derive_paths(args.episode, show=args.show)
+        tag = args.episode or args.tag
+        csv_def, sfx_def, cast_def, out_def = derive_paths(tag, show=args.show)
         csv_path = args.csv_path or csv_def
         sfx_path = args.sfx_path or sfx_def
         cast_path = args.cast_path or cast_def

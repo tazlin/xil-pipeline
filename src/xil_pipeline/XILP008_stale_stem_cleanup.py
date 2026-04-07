@@ -139,6 +139,10 @@ def get_parser() -> argparse.ArgumentParser:
         "--episode", metavar="TAG",
         help="Episode tag (e.g. S02E03); derives --parsed and --stems",
     )
+    parser.add_argument(
+        "--tag", metavar="TAG",
+        help="Raw tag for non-episodic content (e.g. V01C03, D01); same as --episode",
+    )
     parser.add_argument("--show", default=None, help="Show name override (default: from project.json)")
     parser.add_argument(
         "--parsed", metavar="PATH",
@@ -163,8 +167,8 @@ def main() -> None:
         args = parser.parse_args()
 
         # Resolve paths
-        if args.episode:
-            tag = args.episode
+        if args.episode or args.tag:
+            tag = args.episode or args.tag
             slug = resolve_slug(args.show)
             p = derive_paths(slug, tag)
             parsed_path = args.parsed or p["parsed"]

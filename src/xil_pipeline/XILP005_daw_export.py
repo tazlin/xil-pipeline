@@ -537,10 +537,11 @@ def get_parser() -> argparse.ArgumentParser:
         prog="xil-daw",
         description="DAW Export — export episode as layered WAV files for Audacity",
     )
-    parser.add_argument(
-        "--episode", required=True,
-        help="Episode tag (e.g. S01E02) — derives cast config, stems, and parsed JSON paths"
-    )
+    tag_group = parser.add_mutually_exclusive_group(required=True)
+    tag_group.add_argument("--episode",
+                           help="Episode tag (e.g. S01E02) — derives cast config, stems, and parsed JSON paths")
+    tag_group.add_argument("--tag",
+                           help="Raw tag for non-episodic content (e.g. V01C03, D01)")
     parser.add_argument(
         "--show", default=None,
         help="Show name override (default: from project.json)"
@@ -591,8 +592,9 @@ def main() -> None:
     with run_banner():
         args = get_parser().parse_args()
 
+        tag = args.episode or args.tag
         slug = resolve_slug(args.show)
-        p = derive_paths(slug, args.episode)
+        p = derive_paths(slug, tag)
         cast_path = p["cast"]
         if not os.path.exists(cast_path):
             logger.error(f"Cast config not found: {cast_path}")

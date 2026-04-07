@@ -160,8 +160,9 @@ def get_parser() -> argparse.ArgumentParser:
         prog="xil-regen",
         description="Regenerate a production script markdown from parsed JSON.",
     )
-    parser.add_argument("--episode", required=True,
-                        help="Episode tag (e.g. S02E03)")
+    tag_group = parser.add_mutually_exclusive_group(required=True)
+    tag_group.add_argument("--episode", help="Episode tag (e.g. S02E03)")
+    tag_group.add_argument("--tag", help="Raw tag for non-episodic content (e.g. V01C03, D01)")
     parser.add_argument("--parsed", default=None,
                         help="Override parsed JSON path")
     parser.add_argument("--cast", default=None,
@@ -178,7 +179,7 @@ def get_parser() -> argparse.ArgumentParser:
 def main():
     configure_logging()
     args = get_parser().parse_args()
-    tag = args.episode
+    tag = args.episode or args.tag
 
     with run_banner(SCRIPT_NAME):
         # Load speakers and rebuild reverse mappings

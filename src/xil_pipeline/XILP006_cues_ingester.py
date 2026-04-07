@@ -510,10 +510,11 @@ def get_parser() -> argparse.ArgumentParser:
             "assets or enrich the episode sfx config."
         ),
     )
-    parser.add_argument(
-        "--episode", required=True,
-        help="Episode tag (e.g. S02E03) — derives sfx config path",
-    )
+    tag_group = parser.add_mutually_exclusive_group(required=True)
+    tag_group.add_argument("--episode",
+                           help="Episode tag (e.g. S02E03) — derives sfx config path")
+    tag_group.add_argument("--tag",
+                           help="Raw tag for non-episodic content (e.g. V01C03, D01)")
     parser.add_argument(
         "--show", default=None,
         help="Show name override (default: from project.json)",
@@ -548,12 +549,13 @@ def main() -> None:
         args = parser.parse_args()
 
         # Resolve cues file
+        tag = args.episode or args.tag
         slug = resolve_slug(args.show)
-        p = derive_paths(slug, args.episode)
-        cues_path = args.cues or find_cues_file(args.episode, slug=slug)
+        p = derive_paths(slug, tag)
+        cues_path = args.cues or find_cues_file(tag, slug=slug)
         if cues_path is None:
             parser.error(
-                f"No cues file found for {args.episode}. "
+                f"No cues file found for {tag}. "
                 f"Pass --cues PATH or name your file {p['cues']}"
             )
 
@@ -567,7 +569,7 @@ def main() -> None:
         logger.info(f"Found {len(assets)} assets ({new_count} new, {reuse_count} reuse)")
 
         # Always write manifest and show audit report
-        write_manifest(assets, args.episode, cues_path)
+        write_manifest(assets, tag, cues_path)
         dry_run_report(assets, SFX_DIR)
 
         # Generate new assets

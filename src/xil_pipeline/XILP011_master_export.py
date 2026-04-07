@@ -114,10 +114,11 @@ def get_parser() -> argparse.ArgumentParser:
         prog="xil-master",
         description="Final Master MP3 Export — mix DAW layers into a single podcast-ready MP3",
     )
-    parser.add_argument(
-        "--episode", required=True,
-        help="Episode tag (e.g. S02E03) — derives DAW layer paths",
-    )
+    tag_group = parser.add_mutually_exclusive_group(required=True)
+    tag_group.add_argument("--episode",
+                           help="Episode tag (e.g. S02E03) — derives DAW layer paths")
+    tag_group.add_argument("--tag",
+                           help="Raw tag for non-episodic content (e.g. V01C03, D01)")
     parser.add_argument(
         "--show", default=None,
         help="Show name override (default: from project.json)",
@@ -144,7 +145,7 @@ def main() -> None:
         args = get_parser().parse_args()
 
         slug = resolve_slug(args.show)
-        tag = args.episode
+        tag = args.episode or args.tag
         daw_dir = args.daw_dir or os.path.join(DAW_DIR, tag)
 
         # Load cast config for metadata (title, artist)

@@ -273,10 +273,9 @@ def main():
         parser = argparse.ArgumentParser(
             description="Onboard an episode to an ElevenLabs Studio project."
         )
-        parser.add_argument(
-            "--episode", required=True,
-            help="Episode tag (e.g. S01E02)"
-        )
+        tag_group = parser.add_mutually_exclusive_group(required=True)
+        tag_group.add_argument("--episode", help="Episode tag (e.g. S01E02)")
+        tag_group.add_argument("--tag", help="Raw tag for non-episodic content (e.g. V01C03, D01)")
         parser.add_argument(
             "--show", default=None,
             help="Show name override (default: from project.json)"
@@ -300,8 +299,9 @@ def main():
         if not args.dry_run and not os.environ.get("ELEVENLABS_API_KEY"):
             sys.exit("Error: ELEVENLABS_API_KEY environment variable is not set.")
 
+        tag = args.episode or args.tag
         slug = resolve_slug(args.show)
-        parsed, cast = load_episode(args.episode, slug=slug)
+        parsed, cast = load_episode(tag, slug=slug)
         chapters = build_content_json(parsed, cast)
 
         if args.dry_run:
@@ -318,8 +318,8 @@ def main():
             narrator_voice = next(iter(cast["cast"].values()))["voice_id"]
 
         show = parsed.get("show", "Unknown Show")
-        title = parsed.get("title", args.episode)
-        project_name = f"XILP004 - {show} — {title} ({args.episode})"
+        title = parsed.get("title", tag)
+        project_name = f"XILP004 - {show} — {title} ({tag})"
 
         logger.info("Creating Studio project: %s", project_name)
         check_elevenlabs_quota()

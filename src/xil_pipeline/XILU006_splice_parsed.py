@@ -256,8 +256,11 @@ def get_parser() -> argparse.ArgumentParser:
         prog="xil-splice",
         description="Splice Parsed JSON — insert/delete entries with automatic renumbering",
     )
-    parser.add_argument("--episode", required=True,
-                        help="Episode tag (e.g. S02E03) — derives target parsed JSON path")
+    tag_group = parser.add_mutually_exclusive_group(required=True)
+    tag_group.add_argument("--episode",
+                           help="Episode tag (e.g. S02E03) — derives target parsed JSON path")
+    tag_group.add_argument("--tag",
+                           help="Raw tag for non-episodic content (e.g. V01C03, D01)")
     parser.add_argument("--show", default=None,
                         help="Show name override (default: from project.json)")
     parser.add_argument("--parsed", default=None,
@@ -298,8 +301,9 @@ def main() -> None:
         args = get_parser().parse_args()
 
         # Resolve paths
+        tag = args.episode or args.tag
         slug = resolve_slug(args.show)
-        paths = derive_paths(slug, args.episode)
+        paths = derive_paths(slug, tag)
         target_path = args.parsed or paths["parsed"]
 
         if not os.path.exists(target_path):
@@ -341,7 +345,7 @@ def main() -> None:
         backup_path = None
         if not args.no_backup and not args.dry_run:
             parsed_dir = os.path.dirname(target_path)
-            backup_name = f"pre_splice_parsed_{slug}_{args.episode}.json"
+            backup_name = f"pre_splice_parsed_{slug}_{tag}.json"
             backup_path = os.path.join(parsed_dir, backup_name) if parsed_dir else backup_name
 
         # Run
@@ -361,8 +365,8 @@ def main() -> None:
         if not args.dry_run:
             orig_prefix = "pre_splice_"
             logger.info("\n  Next steps:")
-            logger.info(f"    1. python XILP007_stem_migrator.py --episode {args.episode} --orig-prefix {orig_prefix}")
-            logger.info(f"    2. python XILP002_producer.py --episode {args.episode}")
+            logger.info(f"    1. python XILP007_stem_migrator.py --episode {tag} --orig-prefix {orig_prefix}")
+            logger.info(f"    2. python XILP002_producer.py --episode {tag}")
 
 
 if __name__ == "__main__":

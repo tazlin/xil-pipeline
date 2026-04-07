@@ -144,7 +144,7 @@ python XILP006_cues_ingester.py --episode S02E03 --cues "cues/<file>.md" --gener
 python XILP006_cues_ingester.py --episode S02E03 --cues "cues/<file>.md" --generate --enrich-sfx-config
 ```
 
-- `--episode` (required) derives the sfx config path (`sfx_<slug>_S02E03.json`)
+- `--episode` or `--tag` (one required) derives the sfx config path (`sfx_<slug>_S02E03.json`)
 - `--show` overrides the show name used for slug derivation (see Project Configuration)
 - `--cues PATH` explicit path to the cues markdown file; auto-detected from `cues/` if omitted and exactly one `.md` exists there (canonical name: `cues/cues_<slug>_S02E03.md`)
 - Always writes `cues/cues_manifest_<TAG>.json` — structured JSON catalog of all parsed assets
@@ -163,7 +163,7 @@ python XILP006_cues_ingester.py --episode S02E03 --cues "cues/<file>.md" --gener
 python XILP002_producer.py --episode S01E01 --dry-run
 ```
 
-- `--episode` (required) derives `cast_<slug>_S01E01.json` and `sfx_<slug>_S01E01.json`
+- `--episode` or `--tag` (one required) derives `cast_<slug>_S01E01.json` and `sfx_<slug>_S01E01.json`
 - `--show` overrides the show name used for slug derivation (see Project Configuration)
 - Reads: parsed JSON + cast config; always loads SFX config (for preamble music lookup and `--sfx-music`)
 - Outputs: `stems/<slug>/<TAG>/{seq:03d}_{section}[-{scene}]_{speaker}.mp3` (e.g. `stems/the413/S01E01/003_cold-open_adam.mp3`)
@@ -211,7 +211,7 @@ python XILP004_studio_onboard.py --episode S01E02
 python XILP004_studio_onboard.py --episode S01E02 --quality high
 ```
 
-- `--episode` (required) derives `parsed_<slug>_S01E02.json` and `cast_<slug>_S01E02.json`
+- `--episode` or `--tag` (one required) derives `parsed_<slug>_S01E02.json` and `cast_<slug>_S01E02.json`
 - `--show` overrides the show name used for slug derivation (see Project Configuration)
 - Builds `from_content_json` payload for the Studio Projects API with per-node `voice_id` assignments
 - Solves the speaker-name problem: voice assignments are embedded directly — no speaker names in TTS text
@@ -235,7 +235,7 @@ python XILP005_daw_export.py --episode S01E01 --dry-run --timeline
 python XILP005_daw_export.py --episode S01E01 --timeline --timeline-html
 ```
 
-- `--episode` (required) derives `cast_<slug>_S01E01.json` and `parsed/parsed_<slug>_S01E01.json`
+- `--episode` or `--tag` (one required) derives `cast_<slug>_S01E01.json` and `parsed/parsed_<slug>_S01E01.json`
 - `--show` overrides the show name used for slug derivation (see Project Configuration)
 - Outputs four WAV files to `daw/{TAG}/` — all identical duration, all aligned at t=0:
   - `{TAG}_layer_dialogue.wav` — spoken dialogue (phone filter + pan applied)
@@ -337,7 +337,7 @@ python XILP011_master_export.py --episode S02E03
 python XILP011_master_export.py --episode S02E03 --show "Night Owls"
 ```
 
-- `--episode` (required) derives DAW layer paths and cast config
+- `--episode` or `--tag` (one required) derives DAW layer paths and cast config
 - `--show` overrides the show name (default: from `project.json`)
 - `--daw-dir` overrides the DAW layer directory (default: `daw/<TAG>/`)
 - `--output` overrides the output MP3 path (default: `masters/<TAG>_<slug>_<YYYY-MM-DD>.mp3`)
@@ -478,7 +478,7 @@ python XILU002_generate_SFX.py --episode S01E01 --local-only
 python XILU002_generate_SFX.py --episode S01E01
 ```
 
-- `--episode` (required) derives `cast_<slug>_S01E01.json` and `sfx_<slug>_S01E01.json`
+- `--episode` or `--tag` (one required) derives `cast_<slug>_S01E01.json` and `sfx_<slug>_S01E01.json`
 - `--show` overrides the show name used for slug derivation (see Project Configuration)
 - Reads: parsed script JSON + SFX config + cast config (for episode tag)
 - Outputs: shared assets to `SFX/`, episode stems to `stems/<slug>/<TAG>/`
@@ -499,7 +499,7 @@ python XILU003_csv_sfx_join.py --episode S02E03
 python XILU003_csv_sfx_join.py --episode S02E03 --output my_review.csv
 ```
 
-- `--episode` (required) derives `parsed/parsed_<slug>_{TAG}.csv`, `sfx_<slug>_{TAG}.json`, and `cast_<slug>_{TAG}.json`
+- `--episode` or `--tag` (one required) derives `parsed/parsed_<slug>_{TAG}.csv`, `sfx_<slug>_{TAG}.json`, and `cast_<slug>_{TAG}.json`
 - `--show` overrides the show name used for slug derivation (see Project Configuration)
 - `--csv`, `--sfx`, `--cast` override individual input paths
 - `--output` overrides the output CSV path (default: `parsed/annotated_<slug>_{TAG}.csv`)
@@ -515,7 +515,7 @@ python XILU004_sample_voices_T2S.py --episode S02E03
 python XILU004_sample_voices_T2S.py --episode S02E03 --force
 ```
 
-- `--episode` (required) or `--cast PATH` to specify the cast config
+- `--episode` or `--tag` (one required) or `--cast PATH` to specify the cast config
 - `--show` overrides the show name used for slug derivation (see Project Configuration)
 - Sample text: `"I am {full_name} not yo momma"` using `cast_member.full_name`
 - Output: `voice_samples/{TAG}/{actor}.mp3` (e.g. `voice_samples/S02E03/adam.mp3`)
@@ -559,7 +559,7 @@ python XILU006_splice_parsed.py --episode S02E03 --insert-after 322 \
     --from-json new_entries.json
 ```
 
-- `--episode` (required) derives target parsed JSON path
+- `--episode` or `--tag` (one required) derives target parsed JSON path
 - `--show` overrides the show name used for slug derivation (see Project Configuration)
 - `--parsed PATH` overrides target parsed JSON path
 - `--insert-after N` — seq number to insert after

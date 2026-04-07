@@ -97,8 +97,11 @@ def get_parser() -> argparse.ArgumentParser:
         prog="xil-sfx",
         description="Generate SFX stems from an SFX config (standalone utility)",
     )
-    parser.add_argument("--episode", required=True,
-                        help="Episode tag (e.g. S01E01) — derives cast and SFX config paths")
+    tag_group = parser.add_mutually_exclusive_group(required=True)
+    tag_group.add_argument("--episode",
+                           help="Episode tag (e.g. S01E01) — derives cast and SFX config paths")
+    tag_group.add_argument("--tag",
+                           help="Raw tag for non-episodic content (e.g. V01C03, D01)")
     parser.add_argument("--show", default=None,
                         help="Show name override (default: from project.json)")
     parser.add_argument("--script", default=None,
@@ -129,9 +132,10 @@ def main() -> None:
         if not args.dry_run and not os.environ.get("ELEVENLABS_API_KEY"):
             sys.exit("Error: ELEVENLABS_API_KEY environment variable is not set.")
 
-        # Derive config paths from --episode
+        # Derive config paths from --episode / --tag
+        tag = args.episode or args.tag
         slug = resolve_slug(args.show)
-        p = derive_paths(slug, args.episode)
+        p = derive_paths(slug, tag)
         cast_path = p["cast"]
         sfx_path = p["sfx"]
 

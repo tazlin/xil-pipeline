@@ -182,11 +182,11 @@ def get_parser() -> argparse.ArgumentParser:
         prog="xil-import",
         description="Import ElevenLabs Studio export ZIP into pipeline stems.",
     )
-    parser.add_argument(
-        "--episode",
-        required=True,
-        help="Episode tag (e.g. S02E02) — derives parsed JSON and stems dir",
-    )
+    tag_group = parser.add_mutually_exclusive_group(required=True)
+    tag_group.add_argument("--episode",
+                           help="Episode tag (e.g. S02E02) — derives parsed JSON and stems dir")
+    tag_group.add_argument("--tag",
+                           help="Raw tag for non-episodic content (e.g. V01C03, D01)")
     parser.add_argument("--show", default=None, help="Show name override (default: from project.json)")
     parser.add_argument(
         "--zip",
@@ -251,7 +251,7 @@ def main():
     if args.all_types:
         include_dtypes.add("AMBIENCE")
 
-    tag = args.episode
+    tag = args.episode or args.tag
     slug = resolve_slug(args.show)
     p = derive_paths(slug, tag)
     parsed_path = args.parsed or p["parsed"]
