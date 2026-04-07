@@ -311,14 +311,24 @@ def export_kit(records: list[dict], output_dir: str = ".") -> tuple[str, str]:
     # Copy the scriptwriter reference doc
     ref_src = os.path.join(os.path.dirname(__file__), "..", "..", "docs", "claude-scriptwriter-reference.md")
     ref_src = os.path.normpath(ref_src)
-    md_path = os.path.join(output_dir, "claude-scriptwriter-reference.md")
+    md_path = os.path.normpath(os.path.join(output_dir, "claude-scriptwriter-reference.md"))
+    def _same(a: str, b: str) -> bool:
+        try:
+            return os.path.exists(a) and os.path.exists(b) and os.path.samefile(a, b)
+        except OSError:
+            return False
+
     if os.path.exists(ref_src):
-        shutil.copy2(ref_src, md_path)
+        if not _same(ref_src, md_path):
+            shutil.copy2(ref_src, md_path)
     else:
         # Fallback: check relative to CWD (for editable installs)
-        cwd_ref = os.path.join("docs", "claude-scriptwriter-reference.md")
+        cwd_ref = os.path.normpath(os.path.join("docs", "claude-scriptwriter-reference.md"))
         if os.path.exists(cwd_ref):
-            shutil.copy2(cwd_ref, md_path)
+            if not _same(cwd_ref, md_path):
+                shutil.copy2(cwd_ref, md_path)
+            else:
+                md_path = cwd_ref  # already in place
         else:
             logger.warning(f"Reference doc not found at {ref_src} or {cwd_ref}")
             md_path = ""
