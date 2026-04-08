@@ -416,10 +416,14 @@ class TestPreambleInDawExport:
         first_label = content.strip().splitlines()[0]
         assert "tina" in first_label
 
-    def test_preamble_music_appears_in_music_layer(
+    def test_preamble_music_not_in_music_layer(
         self, config, stems_dir, parsed_file, tmp_path
     ):
-        """n001_preamble_sfx.mp3 is placed in the music layer with INTRO MUSIC label."""
+        """n001_preamble_sfx.mp3 must NOT appear in the music overlay layer.
+
+        foreground_override=True routes preamble/postamble music through the
+        foreground (sequential) path, preventing double-playback.
+        """
         _write_mp3(os.path.join(stems_dir, "n002_preamble_tina.mp3"), duration_ms=300)
         _write_mp3(os.path.join(stems_dir, "n001_preamble_sfx.mp3"), duration_ms=500)
         self._inject_preamble(parsed_file)
@@ -429,9 +433,8 @@ class TestPreambleInDawExport:
             config, stems_dir, parsed_file, output_dir, "S01E01",
         )
 
-        labels_path = os.path.join(output_dir, "S01E01_labels_music.txt")
-        content = open(labels_path).read()
-        assert "INTRO MUSIC" in content
+        music_labels = open(os.path.join(output_dir, "S01E01_labels_music.txt")).read()
+        assert "INTRO MUSIC" not in music_labels
 
     def test_old_preamble_filenames_silently_ignored(
         self, config, stems_dir, parsed_file, tmp_path

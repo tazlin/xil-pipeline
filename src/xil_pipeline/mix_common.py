@@ -591,6 +591,8 @@ def build_music_layer(
     for plan in sorted(stem_plans, key=lambda p: p.seq):
         if plan.direction_type != "MUSIC":
             continue
+        if plan.foreground_override:
+            continue  # preamble/postamble music plays in foreground, not here
         start_ms = timeline.get(plan.seq, 0)
         if start_ms >= total_ms:
             continue
@@ -816,6 +818,8 @@ def compute_music_labels(
     for plan in sorted(stem_plans, key=lambda p: p.seq):
         if plan.direction_type != "MUSIC":
             continue
+        if plan.foreground_override:
+            continue  # preamble/postamble music plays in foreground, not here
         start_ms = timeline.get(plan.seq, 0)
         if start_ms >= total_ms:
             continue
