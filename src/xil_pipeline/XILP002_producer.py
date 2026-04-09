@@ -669,6 +669,17 @@ def _episode_kwargs(cast_cfg) -> dict:
     )
 
 
+def _format_block_text(template: str, kwargs: dict, context: str) -> str:
+    """Format *template* with *kwargs*, raising a clear error on unknown placeholders."""
+    try:
+        return template.format(**kwargs)
+    except KeyError as e:
+        raise ValueError(
+            f"Unknown placeholder {e} in {context}: {template!r}. "
+            f"Valid keys: {sorted(kwargs)}"
+        ) from e
+
+
 def _resolve_voice_block_text(block, cast_cfg) -> str:
     """Resolve a Preamble/postamble block to its full spoken text string.
 
@@ -676,8 +687,11 @@ def _resolve_voice_block_text(block, cast_cfg) -> str:
     """
     kwargs = _episode_kwargs(cast_cfg)
     if block.segments:
-        return "".join(seg.text.format(**kwargs) for seg in block.segments)
-    return block.text.format(**kwargs)
+        return "".join(
+            _format_block_text(seg.text, kwargs, "preamble/postamble segment")
+            for seg in block.segments
+        )
+    return _format_block_text(block.text, kwargs, "preamble/postamble text")
 
 
 def _resolve_preamble_text(cast_cfg) -> str:
@@ -735,7 +749,7 @@ def _dry_run_voice_block(block, cast_cfg, stem_path: str, label: str) -> None:
         logger.info("   stem: %s\n", os.path.basename(stem_path))
     else:
         kwargs = _episode_kwargs(cast_cfg)
-        resolved = block.text.format(**kwargs)
+        resolved = _format_block_text(block.text, kwargs, "preamble/postamble text")
         logger.info(" [%s] %s | %d chars", label, spk, len(resolved))
         logger.info("   stem: %s\n", os.path.basename(stem_path))
 
@@ -771,7 +785,7 @@ def _generate_voice_block(block, cast_cfg, config: dict, voice_stem: str,
         resolved = _resolve_voice_block_text(block, cast_cfg)
     else:
         kwargs = _episode_kwargs(cast_cfg)
-        resolved = block.text.format(**kwargs)
+        resolved = _format_block_text(block.text, kwargs, "preamble/postamble text")
 
     if not has_enough_characters(resolved):
         logger.warning("Insufficient quota for %s — skipping", label.lower())

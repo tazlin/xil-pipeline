@@ -830,3 +830,128 @@ class TestDryRunSfx:
         )
         # Should show summary with counts
         assert "5 total" in caplog.text or "5 entries" in caplog.text or "SUMMARY" in caplog.text
+
+
+# ─── Security tests ───
+
+
+class TestEnsureSharedAssetPathTraversal:
+    """H1: ensure_shared_asset must reject path-traversal in effect.source."""
+
+    def _make_effect(self, source: str):
+        from xil_pipeline.models import SfxEntry
+        return SfxEntry(type="sfx", source=source, prompt=None, duration_seconds=1.0)
+
+    def test_normal_source_path_is_accepted(self, tmp_path):
+        """A legitimate source file inside the project is copied without error."""
+        src = tmp_path / "SFX" / "legit.mp3"
+        src.parent.mkdir(parents=True)
+        src.write_bytes(b"\xff\xfb" + b"\x00" * 64)
+
+        effect = self._make_effect(str(src))
+        out_dir = str(tmp_path / "out_SFX")
+
+        # Should not raise and should produce the output file
+        sfx_common.ensure_shared_sfx(
+            effect_key="LEGIT SOUND",
+            effect=effect,
+            defaults={},
+            client=None,
+            sfx_dir=out_dir,
+        )
+        assert os.path.isfile(os.path.join(out_dir, "legit-sound.mp3"))
+
+    def test_traversal_source_raises_when_target_missing(self, tmp_path):
+        """A source path pointing outside the project (via ..) raises FileNotFoundError."""
+        effect = self._make_effect("../../../etc/passwd")
+
+        with pytest.raises((FileNotFoundError, ValueError)):
+            sfx_common.ensure_shared_sfx(
+                effect_key="EVIL SOUND",
+                effect=effect,
+                defaults={},
+                client=None,
+                sfx_dir=str(tmp_path / "SFX"),
+            )
+
+    def test_symlink_source_is_resolved(self, tmp_path):
+        """A symlink source is resolved to its real path before copy."""
+        real_file = tmp_path / "real.mp3"
+        real_file.write_bytes(b"\xff\xfb" + b"\x00" * 64)
+        link = tmp_path / "link.mp3"
+        link.symlink_to(real_file)
+
+        effect = self._make_effect(str(link))
+        out_dir = str(tmp_path / "SFX")
+
+        sfx_common.ensure_shared_sfx(
+            effect_key="LINK SOUND",
+            effect=effect,
+            defaults={},
+            client=None,
+            sfx_dir=out_dir,
+        )
+        assert os.path.isfile(os.path.join(out_dir, "link-sound.mp3"))
+
+
+class TestDawExportTagValidation:
+    """H2: export_daw_layers and dry_run_daw must reject unsafe tags."""
+
+    def test_safe_tag_passes(self):
+        from xil_pipeline.XILP005_daw_export import _validate_tag_for_script
+        assert _validate_tag_for_script("S03E02") == "S03E02"
+        assert _validate_tag_for_script("V01C03") == "V01C03"
+        assert _validate_tag_for_script("BONUS-99") == "BONUS-99"
+
+    def test_tag_with_quotes_raises(self):
+        from xil_pipeline.XILP005_daw_export import _validate_tag_for_script
+        with pytest.raises(ValueError, match="not safe"):
+            _validate_tag_for_script('S01E01"; import os  #')
+
+    def test_tag_with_semicolon_raises(self):
+        from xil_pipeline.XILP005_daw_export import _validate_tag_for_script
+        with pytest.raises(ValueError, match="not safe"):
+            _validate_tag_for_script("S01E01; rm -rf /")
+
+    def test_tag_with_slash_raises(self):
+        from xil_pipeline.XILP005_daw_export import _validate_tag_for_script
+        with pytest.raises(ValueError, match="not safe"):
+            _validate_tag_for_script("../evil")
+
+
+class TestPreambleFormatKeyError:
+    """M1: unknown placeholders in preamble/postamble text give a clear ValueError."""
+
+    def _make_cast_cfg(self, preamble_dict):
+        from xil_pipeline.models import CastConfiguration
+        return CastConfiguration.model_validate({
+            "show": "Test Show", "season": 1, "episode": 1, "title": "Ep1",
+            "cast": {"host": {"full_name": "Host", "voice_id": "abc123", "pan": 0.0, "filter": False, "role": "Host"}},
+            "preamble": preamble_dict,
+        })
+
+    def test_unknown_placeholder_raises_value_error(self):
+        from xil_pipeline import XILP002_producer as producer
+        cfg = self._make_cast_cfg({"speaker": "host", "text": "Hello {undefined_key}."})
+        with pytest.raises(ValueError, match="undefined_key"):
+            producer._resolve_preamble_text(cfg)
+
+    def test_unknown_placeholder_in_segment_raises_value_error(self):
+        from xil_pipeline import XILP002_producer as producer
+        cfg = self._make_cast_cfg({
+            "speaker": "host",
+            "segments": [{"text": "Hello {bad_key}.", "shared_key": None}],
+        })
+        with pytest.raises(ValueError, match="bad_key"):
+            producer._resolve_preamble_text(cfg)
+
+    def test_valid_placeholders_do_not_raise(self):
+        from xil_pipeline import XILP002_producer as producer
+        cfg = self._make_cast_cfg({
+            "speaker": "host",
+            "text": "{show} Episode {episode} — {title} ({season_title})",
+        })
+        # season_title defaults to None → empty string in _episode_kwargs
+        result = producer._resolve_preamble_text(cfg)
+        assert "Test Show" in result
+        assert "Episode 1" in result

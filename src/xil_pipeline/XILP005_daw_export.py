@@ -35,8 +35,22 @@ import argparse
 import datetime
 import json
 import os
+import re
 import subprocess
 import textwrap
+
+# Tags are used verbatim inside generated Python source — restrict to safe chars.
+_SAFE_TAG_RE = re.compile(r'^[A-Za-z0-9_\-]+$')
+
+
+def _validate_tag_for_script(tag: str) -> str:
+    """Raise ValueError if *tag* contains characters that could escape a generated script."""
+    if not _SAFE_TAG_RE.match(tag):
+        raise ValueError(
+            f"Tag {tag!r} contains characters that are not safe for script generation. "
+            "Tags must match ^[A-Za-z0-9_-]+$ (letters, digits, hyphens, underscores only)."
+        )
+    return tag
 
 from xil_pipeline.log_config import configure_logging, get_logger
 from xil_pipeline.mix_common import (
@@ -335,6 +349,7 @@ def dry_run_daw(tag: str, stem_plans, entries_index: dict, output_dir: str, stem
         output_dir: Target directory (shown in summary).
         stems_dir: Stems source directory (shown in summary).
     """
+    _validate_tag_for_script(tag)
     bg_plans = [p for p in stem_plans if p.is_background]
     ambience = [p for p in bg_plans if p.direction_type == "AMBIENCE"]
     music = [p for p in bg_plans if p.direction_type == "MUSIC"]
@@ -390,6 +405,7 @@ def export_daw_layers(
         season_title: Season title for metadata artist field.
         episode_title: Episode title for metadata.
     """
+    _validate_tag_for_script(tag)
     entries_index = load_entries_index(parsed_path)
     stem_plans = collect_stem_plans(stems_dir, entries_index, sfx_config=sfx_config)
 
