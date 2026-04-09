@@ -478,7 +478,10 @@ def export_daw_layers(
         ro_str = f"{plan.ramp_out_seconds:.1f}s" if plan.ramp_out_seconds is not None else "none"
         logger.info("    seq %d: vol=%s  trim=%s  ramp_out=%s  %s",
                     plan.seq, vol_str, pd_str, ro_str, os.path.basename(plan.filepath))
-    mus, mus_labels = build_music_layer(stem_plans, cue_timeline, total_ms, level_db=0)
+    mus, mus_labels = build_music_layer(
+        stem_plans, cue_timeline, total_ms, level_db=0,
+        include_foreground_override=True,  # show preamble/postamble music in DAW layer
+    )
     fname = f"{tag}_layer_music.wav"
     wav_path = os.path.join(output_dir, fname)
     mus.export(wav_path, format="wav")
@@ -651,7 +654,10 @@ def main() -> None:
                 )
                 dlg_labels = compute_dialogue_labels(stem_plans, timeline)
                 amb_labels = compute_ambience_labels(stem_plans, timeline, total_ms)
-                mus_labels = compute_music_labels(stem_plans, timeline, total_ms)
+                mus_labels = compute_music_labels(
+                    stem_plans, timeline, total_ms,
+                    include_foreground_override=True,
+                )
                 sfx_labels = compute_sfx_labels(stem_plans, timeline, total_ms)
                 td = build_timeline_data(
                     tag, total_ms / 1000.0,

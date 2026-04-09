@@ -568,6 +568,7 @@ def build_music_layer(
     timeline: dict[int, int],
     total_ms: int,
     level_db: float = MUSIC_LEVEL_DB,
+    include_foreground_override: bool = False,
 ) -> AudioSegment:
     """Build the music/sting background layer.
 
@@ -579,6 +580,12 @@ def build_music_layer(
         timeline: Cue-point timestamps from :func:`build_foreground`.
         total_ms: Total foreground track length in milliseconds.
         level_db: Volume adjustment applied before overlaying.
+        include_foreground_override: When ``True``, preamble/postamble
+            MUSIC stems (``foreground_override=True``) are placed at
+            their timeline position in this layer.  Used by DAW export
+            so the operator can see and mix them; set to ``False``
+            (default) for the integrated mix where they play
+            sequentially via :func:`build_foreground` instead.
 
     Returns:
         Tuple of ``(layer, labels)`` where *layer* is a full-length
@@ -591,7 +598,7 @@ def build_music_layer(
     for plan in sorted(stem_plans, key=lambda p: p.seq):
         if plan.direction_type != "MUSIC":
             continue
-        if plan.foreground_override:
+        if plan.foreground_override and not include_foreground_override:
             continue  # preamble/postamble music plays in foreground, not here
         start_ms = timeline.get(plan.seq, 0)
         if start_ms >= total_ms:
@@ -803,6 +810,7 @@ def compute_music_labels(
     stem_plans: list[StemPlan],
     timeline: dict[int, int],
     total_ms: int,
+    include_foreground_override: bool = False,
 ) -> list[tuple[float, float, str]]:
     """Compute music label tuples without loading audio.
 
@@ -810,6 +818,9 @@ def compute_music_labels(
         stem_plans: Classified stem list.
         timeline: Cue-point timestamps.
         total_ms: Total episode duration in ms.
+        include_foreground_override: When ``True``, include preamble/
+            postamble MUSIC stems.  Mirror of the same flag on
+            :func:`build_music_layer`.
 
     Returns:
         List of ``(start_s, end_s, text)`` tuples.
@@ -818,7 +829,7 @@ def compute_music_labels(
     for plan in sorted(stem_plans, key=lambda p: p.seq):
         if plan.direction_type != "MUSIC":
             continue
-        if plan.foreground_override:
+        if plan.foreground_override and not include_foreground_override:
             continue  # preamble/postamble music plays in foreground, not here
         start_ms = timeline.get(plan.seq, 0)
         if start_ms >= total_ms:

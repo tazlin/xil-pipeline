@@ -416,13 +416,15 @@ class TestPreambleInDawExport:
         first_label = content.strip().splitlines()[0]
         assert "tina" in first_label
 
-    def test_preamble_music_not_in_music_layer(
+    def test_preamble_music_in_music_layer(
         self, config, stems_dir, parsed_file, tmp_path
     ):
-        """n001_preamble_sfx.mp3 must NOT appear in the music overlay layer.
+        """n001_preamble_sfx.mp3 MUST appear in the DAW music layer.
 
-        foreground_override=True routes preamble/postamble music through the
-        foreground (sequential) path, preventing double-playback.
+        DAW export passes include_foreground_override=True so the operator
+        can see and mix the preamble/postamble music in Audacity.  The
+        integrated mix (XILP003) still routes it through the foreground
+        path (build_foreground) to avoid double-playback there.
         """
         _write_mp3(os.path.join(stems_dir, "n002_preamble_tina.mp3"), duration_ms=300)
         _write_mp3(os.path.join(stems_dir, "n001_preamble_sfx.mp3"), duration_ms=500)
@@ -434,7 +436,7 @@ class TestPreambleInDawExport:
         )
 
         music_labels = open(os.path.join(output_dir, "S01E01_labels_music.txt")).read()
-        assert "INTRO MUSIC" not in music_labels
+        assert "INTRO MUSIC" in music_labels
 
     def test_old_preamble_filenames_silently_ignored(
         self, config, stems_dir, parsed_file, tmp_path
