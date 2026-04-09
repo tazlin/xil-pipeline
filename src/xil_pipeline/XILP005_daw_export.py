@@ -39,19 +39,6 @@ import re
 import subprocess
 import textwrap
 
-# Tags are used verbatim inside generated Python source — restrict to safe chars.
-_SAFE_TAG_RE = re.compile(r'^[A-Za-z0-9_\-]+$')
-
-
-def _validate_tag_for_script(tag: str) -> str:
-    """Raise ValueError if *tag* contains characters that could escape a generated script."""
-    if not _SAFE_TAG_RE.match(tag):
-        raise ValueError(
-            f"Tag {tag!r} contains characters that are not safe for script generation. "
-            "Tags must match ^[A-Za-z0-9_-]+$ (letters, digits, hyphens, underscores only)."
-        )
-    return tag
-
 from xil_pipeline.log_config import configure_logging, get_logger
 from xil_pipeline.mix_common import (
     apply_phone_filter,
@@ -73,6 +60,19 @@ from xil_pipeline.sfx_common import run_banner, tag_wav
 from xil_pipeline.timeline_viz import build_timeline_data, render_html_timeline, render_terminal_timeline
 
 logger = get_logger(__name__)
+
+# Tags are used verbatim inside generated Python source — restrict to safe chars.
+_SAFE_TAG_RE = re.compile(r'^[A-Za-z0-9_\-]+$')
+
+
+def _validate_tag_for_script(tag: str) -> str:
+    """Raise ValueError if *tag* contains characters that could escape a generated script."""
+    if not _SAFE_TAG_RE.match(tag):
+        raise ValueError(
+            f"Tag {tag!r} contains characters that are not safe for script generation. "
+            "Tags must match ^[A-Za-z0-9_-]+$ (letters, digits, hyphens, underscores only)."
+        )
+    return tag
 
 STEMS_DIR = "stems"
 DAW_DIR = "daw"
