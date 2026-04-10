@@ -86,18 +86,16 @@ class TestCollectStemPlans:
         assert plans[0].seq == 5
         assert plans[0].direction_type == "SFX"
 
-    def test_unknown_seq_stem_is_kept(self, tmp_path, caplog):
-        """A stem whose seq is not in the index must pass through without warnings."""
+    def test_unknown_seq_stem_is_skipped(self, tmp_path, caplog):
+        """A stem whose seq is not in the index is stale and must be skipped with a warning."""
         stem = tmp_path / "099_act-two_sfx.mp3"
         _write_mp3(str(stem))
         index = {}  # seq 99 not present
 
         plans = collect_stem_plans(str(tmp_path), index)
 
-        assert len(plans) == 1
-        assert plans[0].seq == 99
-        assert plans[0].entry_type is None
-        assert "WARNING" not in caplog.text
+        assert len(plans) == 0
+        assert "not in parsed JSON" in caplog.text
 
     def test_old_preamble_filenames_are_silently_skipped(self, tmp_path, caplog):
         """Legacy preamble_tina.mp3 / preamble_music.mp3 have no numeric prefix — silently skipped."""

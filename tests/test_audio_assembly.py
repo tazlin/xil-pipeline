@@ -200,12 +200,12 @@ class TestCollectStemPlans:
         plan_by_seq = {p.seq: p for p in plans}
         assert plan_by_seq[3].is_background is False
 
-    def test_unknown_seq_treated_as_foreground(self, tmp_path):
+    def test_unknown_seq_stem_is_skipped(self, tmp_path):
         stems_dir = tmp_path / "stems"
         stems_dir.mkdir()
         _write_mp3(str(stems_dir / "099_act1_adam.mp3"))
         plans = mix_common.collect_stem_plans(str(stems_dir), {})  # empty index
-        assert plans[0].is_background is False
+        assert plans == []
 
 
 # ─── Tests: mix_common.build_foreground ───

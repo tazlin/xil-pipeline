@@ -254,8 +254,7 @@ def collect_stem_plans(
 
     Uses the entries index to look up each stem's ``direction_type``
     and ``entry_type`` by sequence number. Stems whose seq is not in
-    the index are treated as foreground (dialogue) to ensure they are
-    always included in the output.
+    the index are logged as stale and skipped.
 
     Args:
         stems_dir: Directory containing episode stem MP3 files.
@@ -285,8 +284,15 @@ def collect_stem_plans(
         suffix = basename.rsplit("_", 1)[-1]
         is_sfx_stem = suffix == "sfx"
 
+        # Seq not in parsed JSON at all — stale stem from a prior run (e.g. postamble
+        # injected before a new section was appended to the script).
+        if not entry:
+            logger.warning("Stale stem skipped: %s (seq %d not in parsed JSON)",
+                           os.path.basename(filepath), seq)
+            continue
+
         # Header entries (section_header, scene_header) never have stems
-        if entry_type not in ("dialogue", "direction", None):
+        if entry_type not in ("dialogue", "direction"):
             logger.warning("Stale stem skipped: %s (seq %d is now a %s entry)",
                            os.path.basename(filepath), seq, entry_type)
             continue
