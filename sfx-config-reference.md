@@ -22,7 +22,7 @@ source and playback parameters. One file covers an entire episode; it is read by
 ```
 
 | Field | Type | Description |
-|-------|------|-------------|
+|:-------|:------ |:------------- |
 | `show` | string | Show name (informational; slug is derived from `project.json`) |
 | `season` | int | Season number |
 | `episode` | int | Episode number |
@@ -47,7 +47,7 @@ All keys are optional. Per-entry values override these.
 }
 ```
 
-| Key | Type | Description |
+| Key | Type | Description|
 |-----|------|-------------|
 | `prompt_influence` | float 0–1 | How closely the API follows the prompt vs. free creativity. Default `0.3`. |
 | `volume_percentage` | float | Playback volume for SFX and MUSIC entries. `100` = unity gain. |

@@ -9,7 +9,7 @@ You are helping write production scripts and sound cues sheets for an audio dram
 The pipeline parser expects this exact markdown format:
 
 ```
-Show Name Season N: Episode N: "Episode Title"
+Show Name Season N: Episode N: "Episode Title" Arc: "Season Arc Title"
 
 CAST:
 * CHARACTER_NAME — brief description
@@ -52,16 +52,63 @@ END OF EPISODE
 
 ### Key format rules
 
-- **Header line**: `Show Name Season N: Episode N: "Title"` (first line, no markup)
+- **Header line**: `Show Name Season N: Episode N: "Title" Arc: "Season Arc Title"` (first line, no markup; `Arc:` is optional but enables `{season_title}` in preamble/postamble)
 - **Cast block**: `* NAME — description` (one per line, before first `===`)
 - **Section dividers**: `===` on its own line
-- **Section headers**: `COLD OPEN`, `ACT ONE`, `ACT TWO`, `MID-EPISODE BREAK`, `OPENING CREDITS`, `CLOSING` (on own line, no brackets)
+- **Section headers** (on own line, no brackets) — must be one of the recognised names below; unrecognised headers are silently ignored (run `xil scan <script.md>` to catch them):
+
+  | Header | Notes |
+  |--------|-------|
+  | `COLD OPEN` | |
+  | `OPENING CREDITS` | |
+  | `ACT ONE` / `ACT 1` | Numeral variants accepted |
+  | `ACT TWO` / `ACT 2` | |
+  | `ACT THREE` / `ACT 3` | |
+  | `ACT FOUR` / `ACT 4` | |
+  | `MID-EPISODE BREAK` | |
+  | `CLOSING` | Variants: `CLOSING — RADIO STATION`, `CLOSING — ADAM'S SIGN-OFF` |
+  | `POST-INTERVIEW` | Bonus commentary after the episode closes |
+  | `POST-CREDITS SCENE` | |
+  | `PRODUCTION NOTES` | Internal notes; included in parsed output |
+  | `CHAPTER ONE` / `CHAPTER 1` | Audiobook format |
+  | `CHAPTER TWO` / `CHAPTER 2` | Audiobook format |
+  | `CHAPTER THREE` / `CHAPTER 3` | Audiobook format |
+
 - **Scene headers**: `SCENE N: LOCATION NAME` (on own line)
 - **Dialogue**: Speaker name on one line, dialogue text on the next
 - **Acting directions**: In parentheses after speaker name: `CHARACTER (whispering)`
 - **Directions**: In square brackets: `[SFX: ...]`, `[AMBIENCE: ...]`, `[MUSIC: ...]`, `[BEAT]`, `[BEAT — N SECONDS]`
 - **End marker**: `END OF EPISODE` (stops parsing)
 - **Ambience stop**: `[AMBIENCE: STOP]` or `[AMBIENCE: description FADES OUT]` to end a looping ambience
+
+## Direction Text Is an SFX Config Key
+
+Every `[SFX: ...]`, `[MUSIC: ...]`, `[AMBIENCE: ...]`, and `[BEAT]` direction becomes
+the exact key in `sfx_<slug>_TAG.json`. Matching is case-sensitive, punctuation-sensitive,
+and Unicode-sensitive.
+
+**Rules:**
+
+- **Reuse text verbatim across episodes.** If `[SFX: DINER DOOR OPENS, BELL CHIMES]`
+  appeared in S02E01, use that exact string in every subsequent episode — the shared
+  asset in `SFX/` is reused automatically, costing zero API credits.
+- **Use commas, not em dashes, as separators in MUSIC/AMBIENCE descriptions.**
+  Write `[MUSIC: SHOW THEME, FADES UNDER ADAM]` — not `[MUSIC: SHOW THEME — FADES UNDER ADAM]`.
+  Em dashes (—) and hyphens (-) look similar in many editors but produce different config
+  keys, silently orphaning the stem so the old file is never regenerated.
+- **Avoid trailing punctuation differences** — `[SFX: DOOR OPENS]` and `[SFX: DOOR OPENS.]`
+  are different keys.
+- **Capitalisation matters** — `[SFX: PHONE BUZZ]` ≠ `[SFX: phone buzz]`.
+
+**Audit after writing a new episode:**
+
+```bash
+xil csv-join --episode S03E02
+```
+
+The annotated CSV shows which direction entries matched an SFX config key and which
+did not. Blank SFX prompt columns indicate a key mismatch — fix the script text or the
+config before running `xil produce`.
 
 ## eleven_v3 Audio Tags (Inline Dialogue Modifiers)
 
@@ -287,6 +334,24 @@ These categories of sounds are well-represented in the existing library. Always 
 ### Utility
 - `beat.mp3` — standard 1-second silence/transition
 - `long-beat.mp3` — extended silence
+
+## Preamble and Postamble
+
+The episode open and close announcements (e.g. Tina's "This is the Berkshire Talking
+Chronicle…" intro) are **not written in the production script**. They are configured in
+`cast_<slug>_TAG.json` under `preamble` and `postamble` blocks using template placeholders:
+
+- `{episode}` — episode number (e.g. `2`)
+- `{title}` — episode title from the cast config
+- `{season_title}` — filled from the `Arc: "..."` field in the script header, or from
+  `project.json` `season_title` when the header omits it
+
+The production script starts at `COLD OPEN` and ends at `END OF EPISODE`. The pipeline
+automatically prepends preamble audio (Tina's intro + intro music) and appends postamble
+audio (Tina's outro + outro music) when those blocks are present in the cast config.
+
+Use native v3 audio tags (`[pause]`, `[long pause]`) inside preamble/postamble text in
+the cast config. SSML (`<break time="1s"/>`) is not supported in `eleven_v3`.
 
 ## Consistency Guidelines
 
