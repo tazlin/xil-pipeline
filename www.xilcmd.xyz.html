@@ -1,8 +1,10 @@
-<html lang="en"><head>
+<!DOCTYPE html>
+<html lang="en">
+<head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>xil-pipeline — AI-Powered Podcast &amp; Audiobook Production Pipeline</title>
-  <meta name="description" content="xil-pipeline is an open source pipeline that transforms AI-generated scripts into fully produced podcasts and audiobooks using ElevenLabs TTS, sound effects, music, and ambient audio.">
+  <title>xil-pipeline — AI-Powered Podcast & Audiobook Production Pipeline</title>
+  <meta name="description" content="xil-pipeline is an AGPL-3.0 open source pipeline that transforms AI-generated scripts into fully produced podcasts and audiobooks using ElevenLabs TTS, sound effects, music, and ambient audio.">
   <meta name="keywords" content="xil-pipeline, podcast automation, audiobook generator, ElevenLabs TTS, AI script, open source audio pipeline, text to speech">
   <meta name="robots" content="index, follow">
 
@@ -27,11 +29,11 @@
     "@context": "https://schema.org",
     "@type": "SoftwareApplication",
     "name": "xil-pipeline",
-    "description": "An open source pipeline that transforms AI-generated scripts into fully produced podcasts and audiobooks using ElevenLabs TTS.",
+    "description": "An AGPL-3.0 open source pipeline that transforms AI-generated scripts into fully produced podcasts and audiobooks using ElevenLabs TTS.",
     "applicationCategory": "DeveloperApplication",
     "operatingSystem": "Linux, macOS, Windows",
     "url": "https://xilcmd.xyz",
-    "license": "https://opensource.org/licenses/AGPL-3.0",
+    "license": "https://www.gnu.org/licenses/agpl-3.0.html",
     "codeRepository": "https://github.com/xilcmd/xil-pipeline",
     "programmingLanguage": "Python"
   }
@@ -62,7 +64,6 @@
     }
 
     *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
-
     html { scroll-behavior: smooth; }
 
     body {
@@ -74,7 +75,6 @@
       overflow-x: hidden;
     }
 
-    /* === CIRCUIT BOARD BACKGROUND === */
     body::before {
       content: '';
       position: fixed;
@@ -89,7 +89,6 @@
       z-index: 0;
     }
 
-    /* Trace lines overlay */
     body::after {
       content: '';
       position: fixed;
@@ -104,7 +103,7 @@
 
     * { position: relative; z-index: 1; }
 
-    /* === HEADER === */
+    /* HEADER */
     header {
       background: rgba(6,15,6,0.95);
       border-bottom: 1px solid var(--border);
@@ -158,16 +157,6 @@
       text-shadow: 0 0 8px rgba(57,255,20,0.4);
     }
 
-    .version-badge {
-      background: var(--green-faint);
-      border: 1px solid var(--green-dim);
-      color: var(--green);
-      font-family: var(--mono);
-      font-size: 11px;
-      padding: 2px 8px;
-      border-radius: 20px;
-    }
-
     nav { display: flex; align-items: center; gap: 4px; flex-wrap: wrap; }
 
     nav a {
@@ -195,7 +184,7 @@
 
     .nav-github:hover { border-color: var(--green) !important; box-shadow: var(--glow); }
 
-    /* === HERO === */
+    /* HERO */
     .hero {
       max-width: 1200px;
       margin: 0 auto;
@@ -329,9 +318,8 @@
     .t-copper { color: var(--copper-light); }
     .t-blank { display: block; height: 6px; }
 
-    /* === SECTION COMMON === */
+    /* SECTION COMMON */
     section { padding: 60px 24px; }
-
     .section-inner { max-width: 1200px; margin: 0 auto; }
 
     .section-label {
@@ -357,7 +345,7 @@
       margin-bottom: 40px;
     }
 
-    /* === PIPELINE DIAGRAM === */
+    /* PIPELINE */
     .pipeline-section { background: var(--bg2); border-top: 1px solid var(--border); border-bottom: 1px solid var(--border); }
 
     .pipeline-flow {
@@ -376,35 +364,17 @@
       border-radius: var(--radius);
       padding: 16px 12px;
       text-align: center;
+      transition: all 0.2s;
     }
 
     .pipe-step:hover { border-color: var(--green-dim); box-shadow: var(--glow); }
-
     .pipe-icon { font-size: 24px; margin-bottom: 8px; display: block; }
-
-    .pipe-label {
-      font-family: var(--mono);
-      font-size: 12px;
-      color: var(--green);
-      font-weight: bold;
-      margin-bottom: 4px;
-    }
-
+    .pipe-label { font-family: var(--mono); font-size: 12px; color: var(--green); font-weight: bold; margin-bottom: 4px; }
     .pipe-desc { font-size: 11px; color: var(--text-muted); line-height: 1.4; }
+    .pipe-arrow { color: var(--copper); font-size: 20px; padding: 0 8px; flex-shrink: 0; }
 
-    .pipe-arrow {
-      color: var(--copper);
-      font-size: 20px;
-      padding: 0 8px;
-      flex-shrink: 0;
-    }
-
-    /* === DEMO SECTION === */
-    .demo-grid {
-      display: grid;
-      grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
-      gap: 20px;
-    }
+    /* DEMO */
+    .demo-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 20px; }
 
     .demo-card {
       background: var(--panel);
@@ -444,19 +414,9 @@
     }
 
     .demo-play:hover { background: rgba(57,255,20,0.3); transform: scale(1.1); }
-
     .demo-info { padding: 16px; }
-
-    .demo-title {
-      font-family: var(--mono);
-      font-size: 14px;
-      color: var(--text);
-      font-weight: bold;
-      margin-bottom: 6px;
-    }
-
+    .demo-title { font-family: var(--mono); font-size: 14px; color: var(--text); font-weight: bold; margin-bottom: 6px; }
     .demo-meta { font-size: 12px; color: var(--text-muted); margin-bottom: 10px; }
-
     .demo-tags { display: flex; gap: 6px; flex-wrap: wrap; }
 
     .tag {
@@ -471,12 +431,8 @@
     .tag-copper { color: var(--copper-light); border-color: rgba(184,115,51,0.3); background: rgba(184,115,51,0.05); }
     .tag-amber { color: var(--amber); border-color: rgba(255,183,0,0.3); background: rgba(255,183,0,0.05); }
 
-    /* === DOC CARDS === */
-    .doc-grid {
-      display: grid;
-      grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
-      gap: 16px;
-    }
+    /* DOC CARDS */
+    .doc-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 16px; }
 
     .doc-card {
       background: var(--panel);
@@ -489,39 +445,12 @@
     }
 
     .doc-card:hover { border-color: var(--green-dim); box-shadow: var(--glow); transform: translateY(-2px); }
-
-    .doc-card-icon {
-      font-size: 28px;
-      margin-bottom: 12px;
-      display: block;
-    }
-
-    .doc-card-title {
-      font-family: var(--mono);
-      font-size: 15px;
-      color: var(--green);
-      font-weight: bold;
-      margin-bottom: 8px;
-    }
-
+    .doc-card-icon { font-size: 28px; margin-bottom: 12px; display: block; }
+    .doc-card-title { font-family: var(--mono); font-size: 15px; color: var(--green); font-weight: bold; margin-bottom: 8px; }
     .doc-card-desc { font-size: 13px; color: var(--text-dim); line-height: 1.5; }
 
-    /* === CODE BLOCK === */
+    /* CODE BLOCK */
     .code-section { background: var(--bg2); border-top: 1px solid var(--border); border-bottom: 1px solid var(--border); }
-
-    .code-tabs { display: flex; gap: 0; border-bottom: 1px solid var(--border); margin-bottom: 0; }
-
-    .code-tab {
-      font-family: var(--mono);
-      font-size: 12px;
-      padding: 10px 20px;
-      color: var(--text-muted);
-      cursor: pointer;
-      border-bottom: 2px solid transparent;
-      transition: all 0.2s;
-    }
-
-    .code-tab.active { color: var(--green); border-bottom-color: var(--green); }
 
     .code-block {
       background: var(--code-bg);
@@ -572,12 +501,8 @@
     .key { color: var(--copper-light); }
     .val { color: #50fa7b; }
 
-    /* === FEATURES === */
-    .features-grid {
-      display: grid;
-      grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
-      gap: 20px;
-    }
+    /* FEATURES */
+    .features-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 20px; }
 
     .feature-card {
       background: var(--panel);
@@ -602,25 +527,13 @@
       margin-bottom: 16px;
     }
 
-    .feature-title {
-      font-family: var(--mono);
-      font-size: 14px;
-      color: var(--text);
-      font-weight: bold;
-      margin-bottom: 8px;
-    }
-
+    .feature-title { font-family: var(--mono); font-size: 14px; color: var(--text); font-weight: bold; margin-bottom: 8px; }
     .feature-desc { font-size: 13px; color: var(--text-dim); line-height: 1.6; }
 
-    /* === CONTRIBUTE === */
+    /* CONTRIBUTE */
     .contribute-section { background: var(--bg2); border-top: 1px solid var(--border); }
 
-    .contribute-grid {
-      display: grid;
-      grid-template-columns: 1fr 1fr;
-      gap: 40px;
-      align-items: start;
-    }
+    .contribute-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 40px; align-items: start; }
 
     .contribute-steps { list-style: none; }
 
@@ -652,11 +565,7 @@
     .step-content h4 { font-size: 14px; color: var(--text); margin-bottom: 4px; }
     .step-content p { font-size: 13px; color: var(--text-dim); }
 
-    .stats-grid {
-      display: grid;
-      grid-template-columns: 1fr 1fr;
-      gap: 12px;
-    }
+    .stats-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
 
     .stat-card {
       background: var(--panel);
@@ -685,12 +594,7 @@
       margin-top: 20px;
     }
 
-    .good-first h4 {
-      font-family: var(--mono);
-      font-size: 13px;
-      color: var(--amber);
-      margin-bottom: 12px;
-    }
+    .good-first h4 { font-family: var(--mono); font-size: 13px; color: var(--amber); margin-bottom: 12px; }
 
     .issue-item {
       display: flex;
@@ -705,17 +609,14 @@
     .issue-item:last-child { border-bottom: none; }
     .issue-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--green); flex-shrink: 0; }
 
-    /* === FOOTER === */
+    /* FOOTER */
     footer {
       background: var(--bg2);
       border-top: 1px solid var(--border);
       padding: 40px 24px;
     }
 
-    .footer-inner {
-      max-width: 1200px;
-      margin: 0 auto;
-    }
+    .footer-inner { max-width: 1200px; margin: 0 auto; }
 
     .footer-top {
       display: grid;
@@ -772,7 +673,7 @@
     .badge-copper { color: var(--copper-light); border-color: rgba(184,115,51,0.3); }
     .badge-amber { color: var(--amber); border-color: rgba(255,183,0,0.3); }
 
-    /* === RESPONSIVE === */
+    /* RESPONSIVE */
     @media (max-width: 900px) {
       .hero { grid-template-columns: 1fr; gap: 40px; padding: 50px 24px 40px; }
       .contribute-grid { grid-template-columns: 1fr; }
@@ -787,7 +688,6 @@
       nav a:not(.nav-github) { display: none; }
     }
 
-    /* LED pulse animation */
     @keyframes pulse {
       0%, 100% { opacity: 1; }
       50% { opacity: 0.4; }
@@ -806,13 +706,13 @@
 
     .led-amber { background: var(--amber); box-shadow: 0 0 6px var(--amber); }
   </style>
-<style id="_goober"> .go1475592160{height:0;}.go1671063245{height:auto;}.go1888806478{display:flex;flex-wrap:wrap;flex-grow:1;}@media (min-width:600px){.go1888806478{flex-grow:initial;min-width:288px;}}.go167266335{background-color:#313131;font-size:0.875rem;line-height:1.43;letter-spacing:0.01071em;color:#fff;align-items:center;padding:6px 16px;border-radius:4px;box-shadow:0px 3px 5px -1px rgba(0,0,0,0.2),0px 6px 10px 0px rgba(0,0,0,0.14),0px 1px 18px 0px rgba(0,0,0,0.12);}.go3162094071{padding-left:20px;}.go3844575157{background-color:#313131;}.go1725278324{background-color:#43a047;}.go3651055292{background-color:#d32f2f;}.go4215275574{background-color:#ff9800;}.go1930647212{background-color:#2196f3;}.go946087465{display:flex;align-items:center;padding:8px 0;}.go703367398{display:flex;align-items:center;margin-left:auto;padding-left:16px;margin-right:-8px;}.go3963613292{width:100%;position:relative;transform:translateX(0);top:0;right:0;bottom:0;left:0;min-width:288px;}.go1141946668{box-sizing:border-box;display:flex;max-height:100%;position:fixed;z-index:1400;height:auto;width:auto;transition:top 300ms ease 0ms,right 300ms ease 0ms,bottom 300ms ease 0ms,left 300ms ease 0ms,max-width 300ms ease 0ms;pointer-events:none;max-width:calc(100% - 40px);}.go1141946668 .notistack-CollapseWrapper{padding:6px 0px;transition:padding 300ms ease 0ms;}@media (max-width:599.95px){.go1141946668{width:100%;max-width:calc(100% - 32px);}}.go3868796639 .notistack-CollapseWrapper{padding:2px 0px;}.go3118922589{top:14px;flex-direction:column;}.go1453831412{bottom:14px;flex-direction:column-reverse;}.go4027089540{left:20px;}@media (min-width:600px){.go4027089540{align-items:flex-start;}}@media (max-width:599.95px){.go4027089540{left:16px;}}.go2989568495{right:20px;}@media (min-width:600px){.go2989568495{align-items:flex-end;}}@media (max-width:599.95px){.go2989568495{right:16px;}}.go4034260886{left:50%;transform:translateX(-50%);}@media (min-width:600px){.go4034260886{align-items:center;}}</style></head>
+</head>
 <body>
 
 <!-- HEADER -->
 <header>
   <div class="header-inner">
-    <a href="#" class="logo">
+    <a href="index.html" class="logo">
       <div class="logo-icon">|&gt;</div>
       <span class="logo-text">xil-pipeline</span>
     </a>
@@ -821,9 +721,7 @@
       <a href="#quickstart">Quick Start</a>
       <a href="#demos">Demos</a>
       <a href="#contribute">Contribute</a>
-      <a href="https://github.com/xilcmd/xil-pipeline" class="btn nav-github" target="_blank" rel="noopener">
-        ⭐ GitHub
-      </a>
+      <a href="https://github.com/xilcmd/xil-pipeline" class="btn nav-github" target="_blank" rel="noopener">⭐ GitHub</a>
     </nav>
   </div>
 </header>
@@ -844,7 +742,7 @@
         all orchestrated from a single structured script format.
       </p>
       <div class="hero-actions">
-        <a href="#quickstart" class="btn btn-primary">⚡ Get Started</a>
+        <a href="getting-started.html" class="btn btn-primary">⚡ Get Started</a>
         <a href="https://github.com/xilcmd/xil-pipeline" class="btn btn-secondary" target="_blank" rel="noopener">⭐ Star on GitHub</a>
         <a href="#demos" class="btn btn-copper">🎧 Hear Demos</a>
       </div>
@@ -857,24 +755,28 @@
         <span class="terminal-title">xil-pipeline — terminal</span>
       </div>
       <div class="terminal-body">
+        <span class="t-comment"># Install</span><br>
+        <span class="t-prompt">$ </span><span class="t-cmd">pip install xil-pipeline</span><br>
+        <span class="t-blank"></span>
         <span class="t-comment"># Scaffold a new project workspace</span><br>
-        <span class="t-prompt">$ </span><span class="t-cmd">xil-init my-show --show <span class="t-copper">"My Podcast"</span></span><br>
+        <span class="t-prompt">$ </span><span class="t-cmd">xil-init my-show <span class="t-copper">--show "My Podcast"</span></span><br>
         <span class="t-prompt">$ </span><span class="t-cmd">cd my-show</span><br>
         <span class="t-blank"></span>
-        <span class="t-comment"># Scan the sample script (pre-flight check)</span><br>
+        <span class="t-comment"># Pre-flight check</span><br>
         <span class="t-prompt">$ </span><span class="t-cmd">xil-scan scripts/sample_S01E01.md</span><br>
         <span class="t-blank"></span>
-        <span class="t-comment"># Parse into structured JSON</span><br>
-        <span class="t-prompt">$ </span><span class="t-cmd">xil-parse scripts/sample_S01E01.md --episode S01E01</span><br>
+        <span class="t-comment"># Parse &amp; produce</span><br>
+        <span class="t-prompt">$ </span><span class="t-cmd">xil-parse scripts/sample_S01E01.md <span class="t-copper">--episode S01E01</span></span><br>
+        <span class="t-prompt">$ </span><span class="t-cmd">xil-produce --episode S01E01 <span class="t-copper">--dry-run</span></span><br>
+        <span class="t-prompt">$ </span><span class="t-cmd">xil-produce --episode S01E01</span><br>
         <span class="t-blank"></span>
-        <span class="t-comment"># Preview TTS cost (no API calls)</span><br>
-        <span class="t-prompt">$ </span><span class="t-cmd">xil-produce --episode S01E01 --dry-run</span><br>
+        <span class="t-comment"># Mix &amp; master</span><br>
+        <span class="t-prompt">$ </span><span class="t-cmd">xil-daw --episode S01E01</span><br>
+        <span class="t-prompt">$ </span><span class="t-cmd">xil-master --episode S01E01</span><br>
         <span class="t-blank"></span>
-        <span class="t-output">⠿ Parsing voices...       </span><span class="t-success">✓ done</span><br>
-        <span class="t-output">⠿ Mixing audio layers...  </span><span class="t-success">✓ done</span><br>
-        <span class="t-output">⠿ Exporting master...     </span><span class="t-success">✓ episode.mp3</span><br>
-        <span class="t-blank"></span>
-        <span class="t-warn">🎙 Runtime: 12m 34s · 48kHz stereo · VBR MP3</span>
+        <span class="t-output">⠿ Synthesizing voices...  </span><span class="t-success">✓ stems</span><br>
+        <span class="t-output">⠿ Exporting DAW layers... </span><span class="t-success">✓ xil-daw</span><br>
+        <span class="t-output">⠿ Mastering final MP3...  </span><span class="t-success">✓ master.mp3</span><br>
       </div>
     </div>
   </div>
@@ -930,16 +832,17 @@
       <div class="demo-card">
         <div class="demo-thumb">
           🎙
-          <div class="demo-play">▶</div>
+          <div class="demo-play" id="play-techdeepdive" onclick="playDemo('techdeepdive')" title="Play Tech Deep Dive demo" role="button" aria-label="Play Tech Deep Dive audio demo">▶</div>
         </div>
         <div class="demo-info">
           <div class="demo-title">Tech Deep Dive — "The Rise of Open Source AI"</div>
-          <div class="demo-meta"><span class="led"></span> &nbsp;2 voices · 8m 42s · Podcast format</div>
+          <div class="demo-meta"><span class="led" id="led-techdeepdive"></span> &nbsp;2 voices · 8m 42s · Podcast format</div>
           <div class="demo-tags">
             <span class="tag tag-green">podcast</span>
             <span class="tag tag-copper">elevenlabs</span>
             <span class="tag tag-amber">music-bed</span>
           </div>
+          <audio id="audio-techdeepdive" src="https://raw.githubusercontent.com/xilcmd/xil-pipeline/main/samples/S01E04_techdeepdive_2026-04-02.mp3" preload="none"></audio>
         </div>
       </div>
       <div class="demo-card">
@@ -974,10 +877,15 @@
       </div>
     </div>
     <p style="margin-top: 20px; font-size: 13px; color: var(--text-muted); font-family: var(--mono);">
-      // Demo audio coming soon — <a href="https://github.com/xilcmd/xil-pipeline" style="color: var(--green);">watch the repo</a> for release announcements.
+      // Demo audio coming soon — <a href="https://github.com/xilcmd/xil-pipeline" style="color: var(--green);" target="_blank" rel="noopener">watch the repo</a> for release announcements.
     </p>
   </div>
 </section>
+
+<style>
+  .demo-play.playing { background: rgba(57,255,20,0.3); }
+  .demo-play.loading { opacity: 0.6; cursor: wait; }
+</style>
 
 <!-- QUICK START CODE -->
 <section class="code-section" id="quickstart">
@@ -986,32 +894,77 @@
     <h2 class="section-title">Up and Running in Minutes</h2>
     <p class="section-sub">Install, write a script, render audio. That's the whole loop.</p>
 
+    <div class="code-block" style="margin-bottom: 24px;">
+      <div class="code-header">
+        <span class="code-filename">script.xil.yaml</span>
+        <button class="code-copy" onclick="this.textContent='✓ copied'">copy</button>
+      </div>
+      <pre><code><span class="cm"># xil-pipeline script format</span>
+<span class="key">meta</span>:
+  <span class="key">title</span>: <span class="str">"The History of Silicon"</span>
+  <span class="key">format</span>: <span class="val">podcast</span>
+  <span class="key">output</span>: <span class="str">"episode-01.mp3"</span>
+
+<span class="key">voices</span>:
+  - <span class="key">id</span>: <span class="val">host</span>
+    <span class="key">name</span>: <span class="str">"Alex"</span>
+    <span class="key">elevenlabs_voice_id</span>: <span class="str">"21m00Tcm4TlvDq8ikWAM"</span>
+    <span class="key">stability</span>: <span class="num">0.75</span>
+  - <span class="key">id</span>: <span class="val">guest</span>
+    <span class="key">name</span>: <span class="str">"Dr. Rivera"</span>
+    <span class="key">elevenlabs_voice_id</span>: <span class="str">"AZnzlk1XvdvUeBnXmlld"</span>
+
+<span class="key">audio_layers</span>:
+  <span class="key">music</span>: <span class="str">"assets/intro-theme.mp3"</span>
+  <span class="key">ambient</span>: <span class="str">"assets/studio-hum.mp3"</span>
+
+<span class="key">script</span>:
+  - <span class="key">voice</span>: <span class="val">host</span>
+    <span class="key">text</span>: <span class="str">"Welcome to the show. Today we're diving into silicon."</span>
+    <span class="key">sfx</span>: <span class="str">"assets/intro-sting.mp3"</span>
+  - <span class="key">voice</span>: <span class="val">guest</span>
+    <span class="key">text</span>: <span class="str">"Thanks for having me. It's a fascinating story."</span>
+  - <span class="key">voice</span>: <span class="val">host</span>
+    <span class="key">text</span>: <span class="str">"Let's start at the very beginning..."</span>
+    <span class="key">pause_after</span>: <span class="num">1.5</span></code></pre>
+    </div>
+
     <div class="code-block">
       <div class="code-header">
         <span class="code-filename">terminal</span>
         <button class="code-copy" onclick="this.textContent='✓ copied'">copy</button>
       </div>
-      <pre><code><span class="cm"># Scaffold a new project workspace (creates a copy of the sample script)</span>
-<span class="t-prompt" style="color:var(--green)">$</span> xil-init my-show --show <span class="str">"My Podcast"</span>
-<span class="t-prompt" style="color:var(--green)">$</span> cd my-show
+      <pre><code><span class="cm"># 1. Install</span>
+<span class="t-prompt" style="color:var(--green)">$</span> pip install xil-pipeline
 
-<span class="cm"># Scan the sample script (pre-flight check)</span>
+<span class="cm"># 2. Scaffold a new project workspace (creates a copy of the sample script)</span>
+<span class="t-prompt" style="color:var(--green)">$</span> xil-init my-show --show <span class="str">"My Podcast"</span>
+<span class="t-prompt" style="color:var(--green)">$</span> <span class="kw">cd</span> my-show
+
+<span class="cm"># 3. Scan the sample script (pre-flight check)</span>
 <span class="t-prompt" style="color:var(--green)">$</span> xil-scan scripts/sample_S01E01.md
 
-<span class="cm"># Parse into structured JSON</span>
+<span class="cm"># 4. Parse into structured JSON</span>
 <span class="t-prompt" style="color:var(--green)">$</span> xil-parse scripts/sample_S01E01.md --episode S01E01
 
-<span class="cm"># Preview TTS character cost (no API calls)</span>
+<span class="cm"># 5. Preview TTS character cost (no API calls)</span>
 <span class="t-prompt" style="color:var(--green)">$</span> xil-produce --episode S01E01 --dry-run
 
-<span class="cm"># Generate voice and SFX stems (requires ELEVENLABS_API_KEY — see Environment below)</span>
+<span class="cm"># 6. Generate voice and SFX stems (requires ELEVENLABS_API_KEY)</span>
+<span class="t-prompt" style="color:var(--green)">$</span> <span class="kw">export</span> ELEVENLABS_API_KEY=<span class="str">"your_key_here"</span>
 <span class="t-prompt" style="color:var(--green)">$</span> xil-produce --episode S01E01
 
-<span class="cm"># Export DAW layers for mixing in Audacity</span>
+<span class="cm"># 7. Export DAW layers for mixing in Audacity</span>
 <span class="t-prompt" style="color:var(--green)">$</span> xil-daw --episode S01E01
 
-<span class="cm"># Produce final master MP3</span>
-<span class="t-prompt" style="color:var(--green)">$</span> xil-master --episode S01E01</code></pre>
+<span class="cm"># 8. Produce final master MP3</span>
+<span class="t-prompt" style="color:var(--green)">$</span> xil-master --episode S01E01
+
+<span class="cm"># Output: master.mp3 ✓</span></code></pre>
+    </div>
+
+    <div style="margin-top: 20px;">
+      <a href="getting-started.html" class="btn btn-primary">📖 Full Getting Started Guide</a>
     </div>
   </div>
 </section>
@@ -1023,32 +976,32 @@
     <h2 class="section-title">Explore the Docs</h2>
     <p class="section-sub">Everything you need to build, extend, and contribute to xil-pipeline.</p>
     <div class="doc-grid">
-      <a href="#" class="doc-card">
+      <a href="getting-started.html" class="doc-card">
         <span class="doc-card-icon">🚀</span>
         <div class="doc-card-title">Getting Started</div>
         <div class="doc-card-desc">Install xil-pipeline, configure your API keys, and render your first audio file in under 5 minutes.</div>
       </a>
-      <a href="#" class="doc-card">
+      <a href="script-format.html" class="doc-card">
         <span class="doc-card-icon">📄</span>
         <div class="doc-card-title">Script Format</div>
         <div class="doc-card-desc">The .xil.yaml schema — voices, cues, SFX, music layers, timing, and AI generation prompts.</div>
       </a>
-      <a href="#" class="doc-card">
+      <a href="elevenlabs.html" class="doc-card">
         <span class="doc-card-icon">🎙</span>
         <div class="doc-card-title">ElevenLabs Integration</div>
         <div class="doc-card-desc">Configure voice IDs, stability, similarity boost, and streaming settings for TTS rendering.</div>
       </a>
-      <a href="#" class="doc-card">
+      <a href="audio-layering.html" class="doc-card">
         <span class="doc-card-icon">🎵</span>
         <div class="doc-card-title">Audio Layering</div>
         <div class="doc-card-desc">Mix music beds, ambient tracks, and sound effects with per-layer volume, fade, and timing control.</div>
       </a>
-      <a href="#" class="doc-card">
+      <a href="cli-reference.html" class="doc-card">
         <span class="doc-card-icon">⚙️</span>
         <div class="doc-card-title">CLI Reference</div>
-        <div class="doc-card-desc">Full reference for all xil commands: render, generate, validate, export, and config management.</div>
+        <div class="doc-card-desc">Full reference for all xil commands: xil-init, xil-scan, xil-parse, xil-produce, xil-daw, xil-master.</div>
       </a>
-      <a href="#" class="doc-card">
+      <a href="api-plugins.html" class="doc-card">
         <span class="doc-card-icon">🔌</span>
         <div class="doc-card-title">API &amp; Plugins</div>
         <div class="doc-card-desc">Extend xil-pipeline with custom TTS providers, audio processors, and script generators via the plugin API.</div>
@@ -1144,8 +1097,8 @@
       <div>
         <div class="stats-grid">
           <div class="stat-card">
-            <span class="stat-num">AGPL-3.0</span>
-            <div class="stat-label">License</div>
+            <span class="stat-num">AGPL</span>
+            <div class="stat-label">AGPL-3.0 License</div>
           </div>
           <div class="stat-card">
             <span class="stat-num">🟢</span>
@@ -1154,6 +1107,10 @@
           <div class="stat-card">
             <span class="stat-num">∞</span>
             <div class="stat-label">PRs Welcome</div>
+          </div>
+          <div class="stat-card">
+            <span class="stat-num">🐍</span>
+            <div class="stat-label">Python</div>
           </div>
         </div>
         <div class="good-first">
@@ -1169,34 +1126,49 @@
   </div>
 </section>
 
+<!-- DOMAIN NOTE -->
+<section style="background: var(--bg); border-top: 1px solid var(--border); padding: 20px 24px;">
+  <div class="section-inner" style="display:flex; gap: 24px; flex-wrap: wrap; align-items: center; font-family: var(--mono); font-size: 12px; color: var(--text-muted);">
+    <span>🌐 <strong style="color:var(--green)">xilcmd.xyz</strong> — Web2 · this site</span>
+    <span style="color: var(--border)">|</span>
+    <span>⬡ <strong style="color:var(--copper-light)">xilcmd.hub</strong> — Web3 · Unstoppable Domain</span>
+    <span style="color: var(--border)">|</span>
+    <span>📄 Licensed under <a href="https://www.gnu.org/licenses/agpl-3.0.html" style="color:var(--green)" target="_blank" rel="noopener">AGPL-3.0</a></span>
+  </div>
+</section>
+
 <!-- FOOTER -->
 <footer>
   <div class="footer-inner">
     <div class="footer-top">
       <div class="footer-brand">
-        <a href="#" class="logo" style="text-decoration:none;">
+        <a href="index.html" class="logo" style="text-decoration:none;">
           <div class="logo-icon">|&gt;</div>
           <span class="logo-text">xil-pipeline</span>
         </a>
-        <p>An open source audio production pipeline. Transform AI-generated scripts into fully produced podcasts and audiobooks using ElevenLabs TTS.</p>
+        <p>An AGPL-3.0 open source audio production pipeline. Transform AI-generated scripts into fully produced podcasts and audiobooks using ElevenLabs TTS.</p>
         <div style="margin-top: 12px; display: flex; gap: 8px; flex-wrap: wrap;">
-          <span class="badge badge-copper">AGPL-3.0 License</span>
+          <span class="badge badge-copper">AGPL-3.0</span>
           <span class="badge badge-amber">ElevenLabs Powered</span>
+          <span class="badge badge-green">xilcmd.xyz · Web2</span>
+          <span class="badge badge-copper">xilcmd.hub · Web3</span>
         </div>
       </div>
       <div class="footer-col">
         <h5>Docs</h5>
-        <a href="#">Getting Started</a>
-        <a href="#">Script Format</a>
-        <a href="#">CLI Reference</a>
-        <a href="#">API &amp; Plugins</a>
+        <a href="getting-started.html">Getting Started</a>
+        <a href="script-format.html">Script Format</a>
+        <a href="elevenlabs.html">ElevenLabs Integration</a>
+        <a href="audio-layering.html">Audio Layering</a>
+        <a href="cli-reference.html">CLI Reference</a>
+        <a href="api-plugins.html">API &amp; Plugins</a>
       </div>
       <div class="footer-col">
         <h5>Project</h5>
         <a href="https://github.com/xilcmd/xil-pipeline" target="_blank" rel="noopener">GitHub Repo</a>
         <a href="https://github.com/xilcmd/xil-pipeline/issues" target="_blank" rel="noopener">Issues</a>
         <a href="https://github.com/xilcmd/xil-pipeline/releases" target="_blank" rel="noopener">Releases</a>
-        <a href="#">Changelog</a>
+        <a href="https://github.com/xilcmd/xil-pipeline/blob/main/CHANGELOG.md" target="_blank" rel="noopener">Changelog</a>
       </div>
       <div class="footer-col">
         <h5>Community</h5>
@@ -1207,11 +1179,45 @@
       </div>
     </div>
     <div class="footer-bottom">
-      <p>© 2025 xil-pipeline · <a href="https://xilcmd.xyz" style="color:var(--text-dim)">xilcmd.xyz</a> (Web2) · <span style="color:var(--text-muted)">xilcmd.hub (Web3)</span> · Open Source under AGPL-3.0 License</p>
+      <p>© 2025 xil-pipeline · <a href="https://xilcmd.xyz" style="color:var(--green-dim)">xilcmd.xyz</a> (Web2) · <span style="color:var(--copper-light)" title="Web3 Unstoppable Domain">xilcmd.hub ⬡</span> (Web3) · AGPL-3.0</p>
       <p style="color: var(--text-muted);">Built with <span style="color:var(--green)">♥</span> by the community · Powered by ElevenLabs TTS</p>
     </div>
   </div>
 </footer>
 
+</body>
+<script type="text/javascript">
+(function() {
+  var players = {};
 
-</body></html>
+  window.playDemo = function(id) {
+    var audio = document.getElementById('audio-' + id);
+    var btn   = document.getElementById('play-' + id);
+    var led   = document.getElementById('led-' + id);
+    if (!audio) return;
+
+    // Stop any other playing demos
+    Object.keys(players).forEach(function(k) {
+      if (k !== id && players[k]) {
+        players[k].pause();
+        players[k].currentTime = 0;
+        var ob = document.getElementById('play-' + k);
+        if (ob) { ob.textContent = '▶'; ob.classList.remove('playing'); }
+      }
+    });
+    players[id] = audio;
+
+    if (audio.paused) {
+      audio.play();
+      btn.textContent = '⏸';
+      btn.classList.add('playing');
+      audio.onended = function() { btn.textContent = '▶'; btn.classList.remove('playing'); };
+    } else {
+      audio.pause();
+      btn.textContent = '▶';
+      btn.classList.remove('playing');
+    }
+  };
+})();
+</script>
+</html>
