@@ -70,6 +70,9 @@ def run_banner(script_name: str | None = None):
         print(f"{_BAR}\n")
 
 
+_MAX_SLUG_LEN = 180  # filesystem max is 255 bytes; leave room for .mp3 + collision suffix
+
+
 def slugify_effect_key(text: str) -> str:
     """Convert direction text to a filesystem-safe slug.
 
@@ -79,6 +82,8 @@ def slugify_effect_key(text: str) -> str:
         3. Replace remaining non-alphanumeric characters with ``'-'``.
         4. Collapse multiple consecutive hyphens.
         5. Strip leading/trailing hyphens.
+        6. Truncate to ``_MAX_SLUG_LEN`` chars; append an 8-char SHA-256 suffix
+           when truncated to avoid collisions between long similar keys.
 
     Examples:
         >>> slugify_effect_key("BEAT")
@@ -93,6 +98,9 @@ def slugify_effect_key(text: str) -> str:
     slug = re.sub(r"[^a-z0-9_]+", "-", slug)
     slug = re.sub(r"-{2,}", "-", slug)
     slug = slug.strip("-")
+    if len(slug) > _MAX_SLUG_LEN:
+        h = hashlib.sha256(slug.encode()).hexdigest()[:8]
+        slug = slug[:_MAX_SLUG_LEN].rstrip("-") + "_" + h
     return slug
 
 
@@ -565,6 +573,8 @@ def dry_run_sfx(
     new_count = 0
     cached_count = 0
     exists_count = 0
+    missing_count = 0
+    missing_sources: list[str] = []
 
     for entry in sfx_entries:
         effect = sfx_cfg.effects.get(entry["text"])
@@ -578,6 +588,10 @@ def dry_run_sfx(
         if os.path.exists(stem_file):
             status = "EXISTS"
             exists_count += 1
+        elif is_source and not os.path.exists(shared_file):
+            status = "MISSING"
+            missing_count += 1
+            missing_sources.append(f"  '{entry['text']}' → {shared_file}")
         elif os.path.exists(shared_file):
             status = "CACHED"
             cached_count += 1
@@ -623,8 +637,8 @@ def dry_run_sfx(
     total_credits = int(total_new_dur * 40)
     logger.info("%s", "=" * 70)
     logger.info(
-        "SUMMARY: %d total — %d new, %d cached, %d on disk",
-        len(sfx_entries), new_count, cached_count, exists_count,
+        "SUMMARY: %d total — %d new, %d cached, %d on disk, %d MISSING",
+        len(sfx_entries), new_count, cached_count, exists_count, missing_count,
     )
     for cat in ("MUSIC", "AMBIENCE", "SFX"):
         b = buckets[cat]
@@ -640,4 +654,8 @@ def dry_run_sfx(
         "  %-9s: %3d,  %.1fs, ~%d credits  (silence & cached are free)",
         "TOTAL NEW", new_count, total_new_dur, total_credits,
     )
+    if missing_sources:
+        logger.error("%d source file(s) declared but not found:", len(missing_sources))
+        for msg in missing_sources:
+            logger.error(msg)
     logger.info("%s\n", "=" * 70)

@@ -125,19 +125,9 @@ def scan_script(
         if line.startswith("END OF"):
             break
 
-        if not is_all_caps_candidate(line):
-            continue
-
-        # Try section header first
-        if is_section_header(line):
-            sections.append({
-                "text": line,
-                "slug": SECTION_MAP[line.strip()],
-                "line": lineno,
-            })
-            continue
-
-        # Try speaker match
+        # Try speaker match first — handles both multi-line format (bare "ADAM") and
+        # single-line format ("ADAM (direction) dialogue text"). try_match_speaker
+        # matches on the leading all-caps speaker prefix regardless of what follows.
         match = try_match_speaker(line, known_speakers, speaker_keys)
         if match:
             speaker_key, _direction, _spoken = match
@@ -150,6 +140,20 @@ def scan_script(
                 }
             speakers[speaker_key]["count"] += 1
             speakers[speaker_key]["lines"].append(lineno)
+            continue
+
+        # For section headers and unrecognized candidates, the line must be
+        # all-caps (no trailing lowercase dialogue text).
+        if not is_all_caps_candidate(line):
+            continue
+
+        # Try section header
+        if is_section_header(line):
+            sections.append({
+                "text": line,
+                "slug": SECTION_MAP[line.strip()],
+                "line": lineno,
+            })
             continue
 
         # Unrecognized candidate

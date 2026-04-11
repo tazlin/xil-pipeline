@@ -8,7 +8,7 @@ You are helping write production scripts and sound cues sheets for an audio dram
 
 The pipeline parser expects this exact markdown format:
 
-```
+```text
 Show Name Season N: Episode N: "Episode Title" Arc: "Season Arc Title"
 
 CAST:

@@ -27,5 +27,9 @@
   { "display": "GUEST", "key": "guest" },
   { "display": "DARIUS", "key": "darius" },
   { "display": "NARRATOR", "key": "narrator" },
-  { "display": "ELARA", "key": "elara" }
+  { "display": "ELARA", "key": "elara" },
+  { "display": "EVE", "key": "eve" },
+  { "display": "JAMES", "key": "james" },
+  { "display": "A.I. VOICE 1", "key": "aivoice1" },
+  { "display": "A.I. VOICE 2", "key": "aivoice2" }
 ]

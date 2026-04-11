@@ -176,6 +176,7 @@ python XILP002_producer.py --episode S01E01 --dry-run
 - Supports `--terse` to truncate each line to 3 words (minimizes TTS character cost)
 - Supports `--gen-sfx`, `--gen-music`, `--gen-ambience` to generate only the specified categories of stems (replaces deprecated `--sfx-music` which is kept as a shorthand for all three)
 - Supports `--local-only` (used with `--gen-sfx`/`--gen-music`/`--gen-ambience`) to skip any effect that would require an API call — only assets already in `SFX/` (CACHED) or silence entries are placed; no credits spent
+- Supports `--backend elevenlabs|gtts` (default: `elevenlabs`): `gtts` routes all dialogue voice stems through Google Translate TTS at no cost — all characters use the same flat voice, useful for checking episode duration before spending ElevenLabs credits; requires `pip install xil-pipeline[tts-alt]`; SFX/music/ambience generation is unaffected by `--backend`; eleven_v3 inline tags are stripped before the gTTS call
 - Intro music (`INTRO MUSIC` source entry): trimmed at copy time using `play_duration` percentage from sfx config, so the stem file reflects the actual playback length
 - Skips stems that already exist on disk
 

@@ -24,6 +24,12 @@ from elevenlabs.client import ElevenLabs
 from elevenlabs.core.api_error import ApiError
 from pydub import AudioSegment
 
+try:
+    from gtts import gTTS as _gTTS
+    HAS_GTTS = True
+except ImportError:
+    HAS_GTTS = False
+
 from xil_pipeline.log_config import configure_logging, get_logger
 from xil_pipeline.models import (
     CastConfiguration,
@@ -418,13 +424,13 @@ def dry_run(
 def generate_voices(
     config: dict[str, dict], dialogue_entries: list[dict],
     stems_dir: str, start_from: int = 1, stop_at: int | None = None,
-    show: str = "Sample Show",
+    show: str = "Sample Show", backend: str = "elevenlabs",
 ) -> None:
-    """Generate individual voice stem MP3s via the ElevenLabs TTS API.
+    """Generate individual voice stem MP3s via the configured TTS backend.
 
     Iterates through dialogue entries, skipping stems that already exist
     on disk or have unassigned voice IDs. Halts if the character quota
-    is exhausted.
+    is exhausted (ElevenLabs backend only).
 
     Args:
         config: Speaker-to-voice mapping from ``load_production()``.
@@ -433,22 +439,25 @@ def generate_voices(
         start_from: Sequence number to resume generation from.
         stop_at: Sequence number to stop at, inclusive. ``None`` means
             process all entries from ``start_from`` onward.
+        backend: TTS backend — ``"elevenlabs"`` (default) or ``"gtts"`` for
+            a free flat-voice draft pass.
     """
     os.makedirs(stems_dir, exist_ok=True)
 
-    # Block if any cast member in the range has an unassigned voice_id
-    speakers_needed = {
-        e["speaker"] for e in dialogue_entries
-        if e["seq"] >= start_from and (stop_at is None or e["seq"] <= stop_at)
-    }
-    tbd_needed = [sp for sp in speakers_needed if config.get(sp, {}).get("id") == "TBD"]
-    if tbd_needed:
-        logger.error(
-            "Cannot generate: %d speaker(s) in range have no voice_id: %s\n"
-            "  Assign voice IDs in the cast config, then re-run.",
-            len(tbd_needed), ", ".join(sorted(tbd_needed)),
-        )
-        return
+    # Block if any cast member in the range has an unassigned voice_id (ElevenLabs only)
+    if backend == "elevenlabs":
+        speakers_needed = {
+            e["speaker"] for e in dialogue_entries
+            if e["seq"] >= start_from and (stop_at is None or e["seq"] <= stop_at)
+        }
+        tbd_needed = [sp for sp in speakers_needed if config.get(sp, {}).get("id") == "TBD"]
+        if tbd_needed:
+            logger.error(
+                "Cannot generate: %d speaker(s) in range have no voice_id: %s\n"
+                "  Assign voice IDs in the cast config, then re-run.",
+                len(tbd_needed), ", ".join(sorted(tbd_needed)),
+            )
+            return
 
     # Filter to entries in the requested range
     entries_to_process = [
@@ -481,13 +490,13 @@ def generate_voices(
             logger.info("   Exists: %s — skipping", stem_file)
             continue
 
-        # Check voice_id is assigned
-        if config.get(speaker, {}).get("id") == "TBD":
+        # Check voice_id is assigned (ElevenLabs only — gTTS uses a single flat voice)
+        if backend == "elevenlabs" and config.get(speaker, {}).get("id") == "TBD":
             logger.warning("No voice_id for %s — skipping %s", speaker, stem_name)
             continue
 
-        # Check quota
-        if not has_enough_characters(text):
+        # Check quota (ElevenLabs only)
+        if backend == "elevenlabs" and not has_enough_characters(text):
             logger.info(" !!! Production halted at seq %d to save credits.", entry['seq'])
             break
 
@@ -525,20 +534,23 @@ def generate_voices(
         if next_text and current_model != "eleven_v3":
             extra_kwargs["next_text"] = next_text
 
-        logger.info(" > [%03d] %s with %s (%d chars)...", entry['seq'], speaker, current_model, len(text))
-        audio_stream = client.text_to_speech.convert(
-            text=text,
-            voice_id=config[speaker]["id"],
-            model_id=current_model,
-            output_format="mp3_44100_128",
-            voice_settings=voice_settings,
-            **extra_kwargs,
-        )
-
-        with open(stem_file, "wb") as f:
-            for chunk in audio_stream:
-                if chunk:
-                    f.write(chunk)
+        if backend == "gtts":
+            logger.info(" > [%03d] %s via gTTS (%d chars)...", entry['seq'], speaker, len(text))
+            _gtts_generate(text, stem_file)
+        else:
+            logger.info(" > [%03d] %s with %s (%d chars)...", entry['seq'], speaker, current_model, len(text))
+            audio_stream = client.text_to_speech.convert(
+                text=text,
+                voice_id=config[speaker]["id"],
+                model_id=current_model,
+                output_format="mp3_44100_128",
+                voice_settings=voice_settings,
+                **extra_kwargs,
+            )
+            with open(stem_file, "wb") as f:
+                for chunk in audio_stream:
+                    if chunk:
+                        f.write(chunk)
 
         full_name = config.get(speaker, {}).get("full_name", speaker.title())
         first_five = " ".join(text.split()[:5])
@@ -702,12 +714,44 @@ def _resolve_postamble_text(cast_cfg) -> str:
     return _resolve_voice_block_text(cast_cfg.postamble, cast_cfg)
 
 
-def _tts_segment(text: str, out_path: str, voice_id: str, speed: float | None) -> None:
-    """Call ElevenLabs TTS and write the result to *out_path*.
+def _gtts_generate(text: str, out_path: str) -> None:
+    """Draft TTS via gTTS (Google Translate TTS). Strips eleven_v3 tags; flat single voice.
+
+    Useful for free timing/pacing passes before committing ElevenLabs credits.
+    Requires the ``tts-alt`` optional dependency: ``pip install xil-pipeline[tts-alt]``.
+    """
+    if not HAS_GTTS:
+        raise RuntimeError(
+            "gTTS not installed. Run: pip install xil-pipeline[tts-alt]"
+        )
+    cleaned = re.sub(r'\[[^\]]*\]', '', text).strip()
+    if not cleaned:
+        return
+    tmp_fd, tmp_path = tempfile.mkstemp(
+        dir=os.path.dirname(out_path) or ".", suffix=".tmp"
+    )
+    os.close(tmp_fd)
+    try:
+        logger.info("   > gTTS (%d chars) → %s", len(cleaned), os.path.basename(out_path))
+        _gTTS(text=cleaned, lang="en").save(tmp_path)
+        os.replace(tmp_path, out_path)
+        tmp_path = None
+    finally:
+        if tmp_path is not None:
+            with contextlib.suppress(FileNotFoundError):
+                os.unlink(tmp_path)
+
+
+def _tts_segment(text: str, out_path: str, voice_id: str, speed: float | None,
+                 backend: str = "elevenlabs") -> None:
+    """Call TTS backend and write the result to *out_path*.
 
     Uses a unique ``.tmp`` staging file so a partial write is never mistaken
     for a complete asset and concurrent runs cannot collide on the same path.
     """
+    if backend == "gtts":
+        _gtts_generate(text, out_path)
+        return
     tmp_fd, tmp_path = tempfile.mkstemp(
         dir=os.path.dirname(out_path) or ".", suffix=".tmp"
     )
@@ -763,11 +807,12 @@ def _dry_run_postamble(cast_cfg, postamble_voice_stem: str) -> None:
 
 
 def _generate_voice_block(block, cast_cfg, config: dict, voice_stem: str,
-                           label: str, sfx_dir: str = "SFX") -> None:
+                           label: str, sfx_dir: str = "SFX",
+                           backend: str = "elevenlabs") -> None:
     """Generate a voice stem from a preamble or postamble block.
 
     All segment texts (when ``block.segments`` is present) are resolved and
-    joined into a single string, then sent to ElevenLabs as one TTS call.
+    joined into a single string, then sent to the TTS backend as one call.
     This produces natural prosody across the whole block without audible seams.
     The legacy single ``text`` field is also supported.
     """
@@ -777,7 +822,7 @@ def _generate_voice_block(block, cast_cfg, config: dict, voice_stem: str,
 
     spk = block.speaker
     voice_id = config.get(spk, {}).get("id", "TBD")
-    if voice_id == "TBD":
+    if backend == "elevenlabs" and voice_id == "TBD":
         logger.warning("No voice_id for %s — skipping %s", spk, os.path.basename(voice_stem))
         return
 
@@ -787,25 +832,25 @@ def _generate_voice_block(block, cast_cfg, config: dict, voice_stem: str,
         kwargs = _episode_kwargs(cast_cfg)
         resolved = _format_block_text(block.text, kwargs, "preamble/postamble text")
 
-    if not has_enough_characters(resolved):
+    if backend == "elevenlabs" and not has_enough_characters(resolved):
         logger.warning("Insufficient quota for %s — skipping", label.lower())
         return
     logger.info(" > [%s] %s (%d chars)...", label, spk, len(resolved))
-    _tts_segment(resolved, voice_stem, voice_id, block.speed)
+    _tts_segment(resolved, voice_stem, voice_id, block.speed, backend=backend)
     logger.info("   Saved: %s", voice_stem)
     _log_stem_hash(voice_stem)
 
 
 def _generate_preamble_voice(cast_cfg, config: dict, preamble_voice_stem: str,
-                              sfx_dir: str = "SFX") -> None:
+                              sfx_dir: str = "SFX", backend: str = "elevenlabs") -> None:
     _generate_voice_block(cast_cfg.preamble, cast_cfg, config,
-                          preamble_voice_stem, "PREAMBLE", sfx_dir)
+                          preamble_voice_stem, "PREAMBLE", sfx_dir, backend=backend)
 
 
 def _generate_postamble_voice(cast_cfg, config: dict, postamble_voice_stem: str,
-                               sfx_dir: str = "SFX") -> None:
+                               sfx_dir: str = "SFX", backend: str = "elevenlabs") -> None:
     _generate_voice_block(cast_cfg.postamble, cast_cfg, config,
-                          postamble_voice_stem, "POSTAMBLE", sfx_dir)
+                          postamble_voice_stem, "POSTAMBLE", sfx_dir, backend=backend)
 
 
 def get_parser() -> argparse.ArgumentParser:
@@ -840,6 +885,15 @@ def get_parser() -> argparse.ArgumentParser:
                         help="(deprecated) shorthand for --gen-sfx --gen-music --gen-ambience")
     parser.add_argument("--local-only", action="store_true",
                         help="Only place stems for effects already present in SFX/; skip API generation")
+    parser.add_argument("--backend", choices=["elevenlabs", "gtts"], default="elevenlabs",
+                        metavar="BACKEND",
+                        help=(
+                            "TTS backend for dialogue voice stems. 'elevenlabs' (default) calls "
+                            "the ElevenLabs API. 'gtts' generates a flat-voice draft via Google "
+                            "Translate TTS at no cost — all characters sound the same, useful for "
+                            "checking episode duration before spending API credits. "
+                            "Requires: pip install xil-pipeline[tts-alt]"
+                        ))
     return parser
 
 
@@ -855,7 +909,7 @@ def main() -> None:
     with run_banner():
         args = get_parser().parse_args()
 
-        if not args.dry_run and not os.environ.get("ELEVENLABS_API_KEY"):
+        if not args.dry_run and args.backend == "elevenlabs" and not os.environ.get("ELEVENLABS_API_KEY"):
             sys.exit("Error: ELEVENLABS_API_KEY environment variable is not set.")
 
         # Derive config paths from --episode / --tag
@@ -960,10 +1014,28 @@ def main() -> None:
             if cast_cfg.postamble and postamble_voice_stem:
                 _dry_run_postamble(cast_cfg, postamble_voice_stem)
         else:
-            check_elevenlabs_quota()
+            if args.backend == "elevenlabs":
+                check_elevenlabs_quota()
+            # --- Pre-flight: validate all SFX source files exist before spending any credits ---
+            if sfx_entries and sfx_config_data:
+                _sfx_cfg_pf = SfxConfiguration(**sfx_config_data)
+                _missing = []
+                for _entry in sfx_entries:
+                    _effect = _sfx_cfg_pf.effects.get(_entry["text"])
+                    if _effect and _effect.source is not None and not os.path.exists(_effect.source):
+                        _missing.append(f"  '{_entry['text']}' → {_effect.source}")
+                if _missing:
+                    logger.error(
+                        "%d SFX source file(s) declared but missing — fix sfx config before generating:",
+                        len(_missing),
+                    )
+                    for _msg in _missing:
+                        logger.error(_msg)
+                    sys.exit(1)
             if cast_cfg.preamble:
                 os.makedirs(stems_dir, exist_ok=True)
-                _generate_preamble_voice(cast_cfg, config, preamble_voice_stem)
+                _generate_preamble_voice(cast_cfg, config, preamble_voice_stem,
+                                         backend=args.backend)
                 # Copy intro music from sfx config 'INTRO MUSIC' source (always regenerate — free local copy)
                 if sfx_config_model and "INTRO MUSIC" in sfx_config_model.effects:
                     intro_entry = sfx_config_model.effects["INTRO MUSIC"]
@@ -982,7 +1054,7 @@ def main() -> None:
                     logger.warning("No 'INTRO MUSIC' entry in sfx config — skipping music stem")
             generate_voices(config, dialogue_entries, stems_dir,
                             start_from=args.start_from, stop_at=args.stop_at,
-                            show=cast_cfg.show)
+                            show=cast_cfg.show, backend=args.backend)
             if sfx_entries and sfx_config_data:
                 generate_sfx_stems(sfx_entries, sfx_config_data, stems_dir,
                                    client=client, start_from=args.start_from)
@@ -1012,7 +1084,8 @@ def main() -> None:
                         _log_stem_hash(postamble_music_stem)
                     else:
                         logger.warning("OUTRO MUSIC entry has no 'source' — skipping outro music stem")
-                _generate_postamble_voice(cast_cfg, config, postamble_voice_stem)
+                _generate_postamble_voice(cast_cfg, config, postamble_voice_stem,
+                                         backend=args.backend)
 
 
 if __name__ == "__main__":

@@ -305,6 +305,11 @@ sequenceDiagram
 > `--stop-at N` halts after seq N (inclusive). Combine them (`--start-from 50 --stop-at 80`) to
 > regenerate a specific scene without touching the rest of the episode.
 
+> **Draft mode:** `--backend gtts` routes all dialogue voice stems through Google Translate TTS
+> at no cost — all characters use the same flat voice, useful for checking episode duration before
+> spending ElevenLabs credits. No API key required. eleven_v3 inline tags are stripped automatically.
+> SFX/music/ambience generation is unaffected. Requires: `pip install xil-pipeline[tts-alt]`
+
 ---
 
 ## 4. XILP003 — Audio Assembly (Two-Pass Multi-Track Mix)
