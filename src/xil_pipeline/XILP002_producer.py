@@ -793,13 +793,26 @@ class _ChatterboxClient:
             text=True,
             bufsize=1,
         )
-        # Drain startup noise on stderr in background thread
-        raw = self._proc.stdout.readline()
-        if not raw:
-            raise RuntimeError("Chatterbox worker exited before sending ready signal.")
-        msg = json.loads(raw)
-        if not msg.get("ready"):
-            raise RuntimeError(f"Chatterbox worker start failed: {msg}")
+        # Chatterbox prints non-JSON startup noise to stdout (e.g. "loaded PerthNet …")
+        # before emitting the ready signal. Loop until we find a valid JSON ready line.
+        while True:
+            raw = self._proc.stdout.readline()
+            if not raw:
+                raise RuntimeError(
+                    "Chatterbox worker exited before sending ready signal. "
+                    "Check that venv-chatterbox is correctly set up and the model is downloaded."
+                )
+            raw = raw.strip()
+            if not raw:
+                continue
+            try:
+                msg = json.loads(raw)
+            except json.JSONDecodeError:
+                logger.debug("Chatterbox worker startup: %s", raw)
+                continue
+            if msg.get("ready"):
+                break
+            logger.debug("Chatterbox worker startup: %s", raw)
         logger.info("Chatterbox worker ready (sample_rate=%d)", msg["sr"])
 
     def _ref_for(self, speaker_key: str) -> str | None:
