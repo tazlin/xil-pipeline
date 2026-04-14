@@ -15,6 +15,7 @@ src/xil_pipeline/          # Python package (24 modules)
   __init__.py              # version + key re-exports
   xil.py                   # Unified `xil` command dispatcher
   models.py                # Pydantic data models, slug/path resolution
+  tts_providers.py         # TTSProvider Protocol + ElevenLabs/gTTS/Chatterbox implementations
   mix_common.py            # Shared mixing utilities
   sfx_common.py            # SFX library management, ID3 tagging
   timeline_viz.py          # Timeline visualization
@@ -32,6 +33,35 @@ cast_*.json, sfx_*.json    # Episode configs (workspace data, stays at root)
 Install for development: `pip install -e ".[all,dev]"`
 
 All internal imports use the package namespace: `from xil_pipeline.models import ...`
+
+## TTS Provider Architecture
+
+`tts_providers.py` defines a pluggable `TTSProvider` Protocol (PEP 544 structural subtyping) with three concrete implementations. The `--backend` CLI flag selects which provider to construct in `main()`; the provider instance is threaded through `generate_voices()` → `_generate_voice_block()` and preamble/postamble helpers. No backend-specific `if` branches exist in the producer pipeline itself.
+
+### Protocol: `TTSProvider`
+
+```python
+class TTSProvider(Protocol):
+    name: str                    # human-readable backend label
+    requires_voice_id: bool      # True for ElevenLabs; False for gTTS/Chatterbox
+    def generate(self, text: str, out_path: str, **kwargs) -> None: ...
+    def check_quota(self) -> int | None: ...
+    def has_enough_quota(self, text: str) -> bool: ...
+    def get_model(self) -> str: ...
+    def close(self) -> None: ...
+```
+
+### Implementations
+
+- `ElevenLabsProvider` — Wraps the ElevenLabs SDK with lazy client init (no API key needed at import time). Exposes `.client` for SFX passthrough to `sfx_common.py`. Contains `_select_model()`, quota checks, SSML detection, atomic temp-file writes. Accepts `voice_id`, `voice_settings`, `previous_text`, `next_text`, `language_code`, `speed` kwargs.
+- `GttsProvider` — Routes through Google Translate TTS (free, flat voice). Strips `[tag]` patterns before synthesis. All quota methods return True/None.
+- `ChatterboxProvider` — Manages the `chatterbox_worker.py` subprocess lifecycle (JSON-over-stdin/stdout protocol). Supports per-speaker voice cloning via `voice_refs/<key>.wav`. Accepts `speaker` and `exaggeration` kwargs.
+
+### Adding a new backend
+
+1. Create a class satisfying `TTSProvider` in `tts_providers.py`
+2. Add a mapping entry in `XILP002_producer.py:main()` under the `--backend` flag
+3. Add the backend string to the `argparse` choices list
 
 ## Environment
 
@@ -383,6 +413,7 @@ All scripts live under `src/xil_pipeline/` and are installed as `xil-*` console 
 - `XILP010_*` — Studio export importer (ElevenLabs Studio ZIP → pipeline stems)
 - `XILP011_*` — final master MP3 export (overlay 4 DAW layer WAVs → single stereo 48 kHz VBR MP3)
 - `mix_common.py` — shared mixing utilities (timeline, layer builders, fast label helpers) used by XILP003 and XILP005; `StemPlan.loop` field: `True` (default) tiles audio, `False` plays once up to scene boundary; `StemPlan.pre_trimmed` flag: skips play_duration trim for source-based stems already trimmed at copy time; `StemPlan.volume_percentage` (float|None): volume as a percentage (100 = unity, None = no change); `StemPlan.ramp_in_seconds` / `StemPlan.ramp_out_seconds`: fade durations in seconds (None = no fade); `_resolve_audio_params()` resolves volume/ramp from per-effect config or category defaults for MUSIC, AMBIENCE, SFX, and BEAT direction types; `volume_percentage`, `ramp_in_seconds`, and `ramp_out_seconds` each fall back to the global key when no category-specific key exists (e.g. SFX/MUSIC when `sfx_volume_percentage`/`music_ramp_in_seconds` are absent from the config defaults); `collect_stem_plans()` skips stale stems (header entries, type mismatch, speaker mismatch), deduplicates by seq number, and injects synthetic stop-marker `StemPlan` entries (filepath="") for `AMBIENCE: STOP` and `AMBIENCE: * FADES OUT` directives found in the entries index; `build_sfx_layer()` and `build_foreground()` apply `volume_percentage` to SFX/BEAT stems; `build_ambience_layer()` skips corrupt or unreadable stem files with a warning rather than crashing
+- `tts_providers.py` — pluggable `TTSProvider` Protocol (PEP 544) with `ElevenLabsProvider`, `GttsProvider`, `ChatterboxProvider` implementations; see **TTS Provider Architecture** section above
 - `sfx_common.py` — shared SFX library management, ID3 tagging (`tag_mp3`, `tag_wav`), effect generation; `ensure_shared_asset()` retries on 429 rate-limit errors (up to 5 times, linear backoff); `load_sfx_entries()` accepts `direction_types` filter set, returns `direction_type` field in each entry dict, skips entries with `duration_seconds=0.0`; `dry_run_sfx()` shows per-category credit subtotals in the SUMMARY block
 - `timeline_viz.py` — multitrack timeline visualization; `render_terminal_timeline()` (ASCII) and `render_html_timeline()` (interactive HTML); no pydub dependency; HTML bar badges: `ri` (↑ ramp in, left), `ro` (↓ ramp out, right-top), `pd` (% play duration, center), `vb` (🔊 volume%, right-bottom, shown when `volume_pct != 100`); applies to music, ambience, and SFX spans
 - `models.py` — Pydantic data models plus `show_slug()`, `derive_paths()`, `resolve_slug()` for dynamic show-based path derivation; `DEFAULT_SLUG = "sample"` fallback

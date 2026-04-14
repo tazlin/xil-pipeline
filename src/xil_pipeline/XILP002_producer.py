@@ -2,7 +2,7 @@
 #
 # SPDX-License-Identifier: AGPL-3.0-or-later
 
-"""Generate individual voice stems via the ElevenLabs TTS API.
+"""Generate individual voice stems via a pluggable TTS provider.
 
 Reads parsed script JSON and cast configuration to produce one MP3 stem
 per dialogue line. Audio assembly is handled separately by XILP003.
@@ -11,28 +11,23 @@ Module Attributes:
     STEMS_DIR: Directory for generated voice stem MP3 files.
 """
 
+from __future__ import annotations
+
 import argparse
-import contextlib
 import json
 import os
 import re
 import sys
-import tempfile
 
-from elevenlabs import VoiceSettings
-from elevenlabs.client import ElevenLabs
-from elevenlabs.core.api_error import ApiError
 from pydub import AudioSegment
 
-try:
-    from gtts import gTTS as _gTTS
-    HAS_GTTS = True
-except ImportError:
-    HAS_GTTS = False
-
-import subprocess
-
 from xil_pipeline.log_config import configure_logging, get_logger
+from xil_pipeline.tts_providers import (
+    ChatterboxProvider,
+    ElevenLabsProvider,
+    GttsProvider,
+    TTSProvider,
+)
 from xil_pipeline.models import (
     CastConfiguration,
     DialogueEntry,
@@ -63,128 +58,7 @@ def _log_stem_hash(path: str) -> None:
     except Exception as exc:
         logger.debug("Could not hash %s: %s", path, exc)
 
-# Setup ElevenLabs Client
-client = ElevenLabs(api_key=os.environ.get("ELEVENLABS_API_KEY"))
-
 STEMS_DIR = "stems"
-
-
-def check_elevenlabs_quota() -> int | None:
-    """Display current ElevenLabs API character usage and return remaining quota.
-
-    Returns:
-        Remaining character count, or ``None`` if the API call fails.
-    """
-    try:
-        user_info = client.user.get()
-        sub = user_info.subscription
-
-        used = sub.character_count
-        limit = sub.character_limit
-        remaining = limit - used
-
-        logger.info("\n" + "="*40)
-        logger.info("ELEVENLABS API STATUS:")
-        logger.info("  Tier:      %s", sub.tier.upper())
-        logger.info("  Usage:     %s / %s characters", f"{used:,}", f"{limit:,}")
-        logger.info("  Remaining: %s", f"{remaining:,}")
-        logger.info("="*40 + "\n")
-
-        return remaining
-    except ApiError as e:
-        logger.warning("API Error: Unable to fetch user subscription data.")
-        logger.warning("    Details: %s", e)
-        return None
-
-
-def has_enough_characters(text_to_generate: str) -> bool:
-    """Check if the ElevenLabs quota can cover the next line of text.
-
-    Args:
-        text_to_generate: The dialogue text about to be synthesized.
-
-    Returns:
-        ``True`` if remaining characters are sufficient (or if the
-        API check fails, as a permissive fallback).
-    """
-    try:
-        user_info = client.user.get()
-        remaining = user_info.subscription.character_limit - user_info.subscription.character_count
-
-        required = len(text_to_generate)
-        if remaining >= required:
-            logger.info(" [Guard] Quota OK: %d required, %s left.", required, f"{remaining:,}")
-            return True
-        else:
-            logger.info(" [Guard] STOP: Line requires %d chars, but only %s remain.", required, f"{remaining:,}")
-            return False
-    except ApiError:
-        logger.warning(" [Guard] Permission 'user_read' missing. Skipping quota check.")
-        return True
-
-
-def get_best_model_for_budget() -> str:
-    """Return the TTS model to use, always ``eleven_v3``.
-
-    Previously this function fell back to ``eleven_flash_v2_5`` when the
-    account balance was low.  That fallback is removed because flash-v2.5 does
-    not honour native audio tags like ``[pause]``, causing them to be spoken
-    aloud as text.  A low-balance warning is logged instead so the operator
-    can top up before continuing.
-
-    Returns:
-        ``"eleven_v3"`` unconditionally (API-error fallback also returns v3).
-    """
-    SAFE_THRESHOLD = 5000
-
-    try:
-        user_info = client.user.get()
-        remaining = user_info.subscription.character_limit - user_info.subscription.character_count
-
-        if remaining > SAFE_THRESHOLD:
-            logger.info(" [Budget] Healthy Balance: %s left. Using 'eleven_v3'.", f"{remaining:,}")
-        else:
-            logger.warning(
-                " [Budget] LOW BALANCE: %s left. Continuing with 'eleven_v3' — "
-                "audio tags like [pause] require v3 and cannot fall back to flash.",
-                f"{remaining:,}",
-            )
-        return "eleven_v3"
-
-    except ApiError:
-        logger.info(" [Budget] API Check Failed. Defaulting to 'eleven_v3'.")
-        return "eleven_v3"
-
-
-_SSML_TAG_RE = re.compile(r"<(?:break|emphasis|prosody|say-as|phoneme|sub|speak|p|s)\b", re.IGNORECASE)
-
-
-def _select_model(text: str) -> str:
-    """Return the TTS model for this text segment, always ``eleven_v3``.
-
-    Previously this function fell back to ``eleven_multilingual_v2`` when SSML
-    tags (``<break>``, ``<emphasis>``, etc.) were detected, because ``eleven_v3``
-    does not honour SSML.  That fallback is removed: ``eleven_multilingual_v2``
-    does not honour native audio tags like ``[pause]``, causing them to be
-    spoken aloud as text.
-
-    If SSML tags are found a warning is logged prompting the operator to replace
-    them with native v3 audio tags (e.g. replace ``<break time="1s"/>`` with
-    ``[pause]``).
-
-    Args:
-        text: The TTS input text, possibly containing SSML markup.
-
-    Returns:
-        A model ID string safe to pass to ``client.text_to_speech.convert()``.
-    """
-    if _SSML_TAG_RE.search(text):
-        logger.warning(
-            "   [!] SSML tag detected in TTS text — eleven_v3 does not honour SSML. "
-            "Replace <break> / <emphasis> etc. with native audio tags like [pause]. "
-            "Text: %.60s", text,
-        )
-    return get_best_model_for_budget()
 
 
 def truncate_to_words(text: str, n: int = 3) -> str:
@@ -426,14 +300,13 @@ def dry_run(
 def generate_voices(
     config: dict[str, dict], dialogue_entries: list[dict],
     stems_dir: str, start_from: int = 1, stop_at: int | None = None,
-    show: str = "Sample Show", backend: str = "elevenlabs",
-    chatterbox_client: "_ChatterboxClient | None" = None,
+    show: str = "Sample Show", provider: TTSProvider | None = None,
 ) -> None:
-    """Generate individual voice stem MP3s via the configured TTS backend.
+    """Generate individual voice stem MP3s via the configured TTS provider.
 
     Iterates through dialogue entries, skipping stems that already exist
-    on disk or have unassigned voice IDs. Halts if the character quota
-    is exhausted (ElevenLabs backend only).
+    on disk or have unassigned voice IDs. Halts if the provider's character
+    quota is exhausted.
 
     Args:
         config: Speaker-to-voice mapping from ``load_production()``.
@@ -442,13 +315,14 @@ def generate_voices(
         start_from: Sequence number to resume generation from.
         stop_at: Sequence number to stop at, inclusive. ``None`` means
             process all entries from ``start_from`` onward.
-        backend: TTS backend — ``"elevenlabs"`` (default) or ``"gtts"`` for
-            a free flat-voice draft pass.
+        provider: TTS backend instance. Defaults to ``ElevenLabsProvider()``.
     """
+    if provider is None:
+        provider = ElevenLabsProvider()
+
     os.makedirs(stems_dir, exist_ok=True)
 
-    # Block if any cast member in the range has an unassigned voice_id (ElevenLabs only)
-    if backend == "elevenlabs":
+    if provider.requires_voice_id:
         speakers_needed = {
             e["speaker"] for e in dialogue_entries
             if e["seq"] >= start_from and (stop_at is None or e["seq"] <= stop_at)
@@ -479,7 +353,6 @@ def generate_voices(
     elif start_from > 1:
         range_note = f" (from seq {start_from})"
     logger.info("--- Phase 1: Generating %d voice stems%s ---", len(entries_to_process), range_note)
-    current_model = get_best_model_for_budget()
     generated_count = 0
 
     for entry in entries_to_process:
@@ -493,18 +366,16 @@ def generate_voices(
             logger.info("   Exists: %s — skipping", stem_file)
             continue
 
-        # Check voice_id is assigned (ElevenLabs only — gTTS uses a single flat voice)
-        if backend == "elevenlabs" and config.get(speaker, {}).get("id") == "TBD":
+        if provider.requires_voice_id and config.get(speaker, {}).get("id") == "TBD":
             logger.warning("No voice_id for %s — skipping %s", speaker, stem_name)
             continue
 
-        # Check quota (ElevenLabs only)
-        if backend == "elevenlabs" and not has_enough_characters(text):
+        if not provider.has_enough_quota(text):
             logger.info(" !!! Production halted at seq %d to save credits.", entry['seq'])
             break
 
-        # Guard: skip entries whose text would be empty after ElevenLabs strips speaker
-        # tags (e.g. [sighs]) and emojis — the API returns 400 "input_text_empty".
+        # Guard: skip entries whose text would be empty after stripping speaker
+        # tags (e.g. [sighs]) and emojis — ElevenLabs returns 400 "input_text_empty".
         stripped = re.sub(r'\[[^\]]*\]', '', text)   # remove [tag] patterns
         stripped = re.sub(r'[^\w\s]', '', stripped)   # remove punctuation / emojis
         if not stripped.strip():
@@ -515,49 +386,29 @@ def generate_voices(
             )
             continue
 
-        # Build VoiceSettings from per-speaker cast config (None fields are omitted)
+        # Build voice_settings dict from per-speaker cast config
         cfg = config.get(speaker, {})
         vs_fields = {
             k: cfg[k] for k in ("stability", "similarity_boost", "style", "use_speaker_boost")
             if cfg.get(k) is not None
         }
-        voice_settings = VoiceSettings(**vs_fields) if vs_fields else None
 
         # Resolve prev/next text for prosody continuity
         pos = seq_position.get(entry["seq"])
         prev_text = entries_by_seq[all_seqs[pos - 1]]["text"] if pos and pos > 0 else None
         next_text = entries_by_seq[all_seqs[pos + 1]]["text"] if pos is not None and pos < len(all_seqs) - 1 else None
 
-        # Collect optional top-level kwargs
-        extra_kwargs = {}
-        if cfg.get("language_code") and current_model != "eleven_v3":
-            extra_kwargs["language_code"] = cfg["language_code"]
-        if prev_text and current_model != "eleven_v3":
-            extra_kwargs["previous_text"] = prev_text
-        if next_text and current_model != "eleven_v3":
-            extra_kwargs["next_text"] = next_text
-
-        if backend == "gtts":
-            logger.info(" > [%03d] %s via gTTS (%d chars)...", entry['seq'], speaker, len(text))
-            _gtts_generate(text, stem_file)
-        elif backend == "chatterbox":
-            logger.info(" > [%03d] %s via Chatterbox (%d chars)...", entry['seq'], speaker, len(text))
-            assert chatterbox_client is not None
-            chatterbox_client.generate(text, stem_file, speaker)
-        else:
-            logger.info(" > [%03d] %s with %s (%d chars)...", entry['seq'], speaker, current_model, len(text))
-            audio_stream = client.text_to_speech.convert(
-                text=text,
-                voice_id=config[speaker]["id"],
-                model_id=current_model,
-                output_format="mp3_44100_128",
-                voice_settings=voice_settings,
-                **extra_kwargs,
-            )
-            with open(stem_file, "wb") as f:
-                for chunk in audio_stream:
-                    if chunk:
-                        f.write(chunk)
+        logger.info(" > [%03d] %s via %s (%d chars)...", entry['seq'], speaker, provider.name, len(text))
+        provider.generate(
+            text,
+            stem_file,
+            voice_id=config[speaker].get("id"),
+            speaker_key=speaker,
+            voice_settings=vs_fields or None,
+            previous_text=prev_text,
+            next_text=next_text,
+            language_code=cfg.get("language_code"),
+        )
 
         full_name = config.get(speaker, {}).get("full_name", speaker.title())
         first_five = " ".join(text.split()[:5])
@@ -721,182 +572,6 @@ def _resolve_postamble_text(cast_cfg) -> str:
     return _resolve_voice_block_text(cast_cfg.postamble, cast_cfg)
 
 
-def _gtts_generate(text: str, out_path: str) -> None:
-    """Draft TTS via gTTS (Google Translate TTS). Strips eleven_v3 tags; flat single voice.
-
-    Useful for free timing/pacing passes before committing ElevenLabs credits.
-    Requires the ``tts-alt`` optional dependency: ``pip install xil-pipeline[tts-alt]``.
-    """
-    if not HAS_GTTS:
-        raise RuntimeError(
-            "gTTS not installed. Run: pip install xil-pipeline[tts-alt]"
-        )
-    cleaned = re.sub(r'\[[^\]]*\]', '', text).strip()
-    if not cleaned:
-        return
-    tmp_fd, tmp_path = tempfile.mkstemp(
-        dir=os.path.dirname(out_path) or ".", suffix=".tmp"
-    )
-    os.close(tmp_fd)
-    try:
-        logger.info("   > gTTS (%d chars) → %s", len(cleaned), os.path.basename(out_path))
-        _gTTS(text=cleaned, lang="en").save(tmp_path)
-        os.replace(tmp_path, out_path)
-        tmp_path = None
-    finally:
-        if tmp_path is not None:
-            with contextlib.suppress(FileNotFoundError):
-                os.unlink(tmp_path)
-
-
-class _ChatterboxClient:
-    """Persistent subprocess bridge to the Chatterbox TTS worker.
-
-    The worker script (``chatterbox_worker.py``) runs under the chatterbox
-    venv Python and keeps the model loaded across all generation requests.
-    Communication uses newline-delimited JSON on stdin/stdout.
-
-    Args:
-        python_path: Path to the chatterbox venv Python executable.
-        voice_refs_dir: Directory containing ``<speaker_key>.wav`` reference
-            clips for zero-shot voice cloning.  Missing refs fall back to
-            Chatterbox's default voice.
-        device: ``"cuda"`` (default) or ``"cpu"``.
-        exaggeration: Emotion exaggeration level (0.0 = flat, 1.0 = dramatic).
-        cfg_weight: CFG weight controlling pacing/delivery (~0.3–0.5 typical).
-    """
-
-    _WORKER = os.path.join(os.path.dirname(__file__), "chatterbox_worker.py")
-
-    def __init__(
-        self,
-        python_path: str,
-        voice_refs_dir: str = "voice_refs",
-        device: str = "cuda",
-        exaggeration: float = 0.5,
-        cfg_weight: float = 0.5,
-    ) -> None:
-        self._python = python_path
-        self._voice_refs_dir = voice_refs_dir
-        self._device = device
-        self._exaggeration = exaggeration
-        self._cfg_weight = cfg_weight
-        self._proc: subprocess.Popen | None = None
-
-    def _start(self) -> None:
-        logger.info("Starting Chatterbox worker (%s, %s)…", self._python, self._device)
-        self._proc = subprocess.Popen(
-            [self._python, self._WORKER, self._device],
-            stdin=subprocess.PIPE,
-            stdout=subprocess.PIPE,
-            stderr=sys.stderr,
-            text=True,
-            bufsize=1,
-        )
-        # Chatterbox prints non-JSON startup noise to stdout (e.g. "loaded PerthNet …")
-        # before emitting the ready signal. Loop until we find a valid JSON ready line.
-        while True:
-            raw = self._proc.stdout.readline()
-            if not raw:
-                raise RuntimeError(
-                    "Chatterbox worker exited before sending ready signal. "
-                    "Check that venv-chatterbox is correctly set up and the model is downloaded."
-                )
-            raw = raw.strip()
-            if not raw:
-                continue
-            try:
-                msg = json.loads(raw)
-            except json.JSONDecodeError:
-                logger.debug("Chatterbox worker startup: %s", raw)
-                continue
-            if msg.get("ready"):
-                break
-            logger.debug("Chatterbox worker startup: %s", raw)
-        logger.info("Chatterbox worker ready (sample_rate=%d)", msg["sr"])
-
-    def _ref_for(self, speaker_key: str) -> str | None:
-        for ext in (".wav", ".mp3"):
-            p = os.path.join(self._voice_refs_dir, f"{speaker_key}{ext}")
-            if os.path.exists(p):
-                return p
-        return None
-
-    def generate(self, text: str, out_path: str, speaker_key: str) -> None:
-        if self._proc is None:
-            self._start()
-        ref = self._ref_for(speaker_key)
-        if ref:
-            logger.info("   ref: %s", os.path.basename(ref))
-        req = {
-            "text": text,
-            "out_path": out_path,
-            "ref_audio": ref,
-            "exaggeration": self._exaggeration,
-            "cfg_weight": self._cfg_weight,
-        }
-        assert self._proc is not None
-        self._proc.stdin.write(json.dumps(req) + "\n")
-        self._proc.stdin.flush()
-        raw = self._proc.stdout.readline()
-        if not raw:
-            raise RuntimeError("Chatterbox worker closed pipe unexpectedly.")
-        resp = json.loads(raw)
-        if "error" in resp:
-            raise RuntimeError(f"Chatterbox: {resp['error']}")
-
-    def close(self) -> None:
-        if self._proc is not None:
-            with contextlib.suppress(Exception):
-                self._proc.stdin.close()
-            with contextlib.suppress(Exception):
-                self._proc.wait(timeout=15)
-            self._proc = None
-
-
-def _tts_segment(text: str, out_path: str, voice_id: str, speed: float | None,
-                 backend: str = "elevenlabs",
-                 chatterbox_client: "_ChatterboxClient | None" = None,
-                 speaker_key: str | None = None) -> None:
-    """Call TTS backend and write the result to *out_path*.
-
-    Uses a unique ``.tmp`` staging file so a partial write is never mistaken
-    for a complete asset and concurrent runs cannot collide on the same path.
-    """
-    if backend == "gtts":
-        _gtts_generate(text, out_path)
-        return
-    if backend == "chatterbox":
-        assert chatterbox_client is not None, "chatterbox_client required for backend='chatterbox'"
-        chatterbox_client.generate(text, out_path, speaker_key or "")
-        return
-    tmp_fd, tmp_path = tempfile.mkstemp(
-        dir=os.path.dirname(out_path) or ".", suffix=".tmp"
-    )
-    os.close(tmp_fd)
-    try:
-        current_model = _select_model(text)
-        logger.info("   > TTS (%d chars) → %s [%s]", len(text), os.path.basename(out_path), current_model)
-        voice_settings = VoiceSettings(speed=speed) if speed is not None else None
-        audio_stream = client.text_to_speech.convert(
-            text=text,
-            voice_id=voice_id,
-            model_id=current_model,
-            output_format="mp3_44100_128",
-            voice_settings=voice_settings,
-        )
-        with open(tmp_path, "wb") as f:
-            for chunk in audio_stream:
-                if chunk:
-                    f.write(chunk)
-        os.replace(tmp_path, out_path)
-        tmp_path = None
-    finally:
-        if tmp_path is not None:
-            with contextlib.suppress(FileNotFoundError):
-                os.unlink(tmp_path)
-
-
 def _dry_run_voice_block(block, cast_cfg, stem_path: str, label: str) -> None:
     """Print dry-run summary for a preamble or postamble voice stem."""
     spk = block.speaker
@@ -926,22 +601,24 @@ def _dry_run_postamble(cast_cfg, postamble_voice_stem: str) -> None:
 
 def _generate_voice_block(block, cast_cfg, config: dict, voice_stem: str,
                            label: str, sfx_dir: str = "SFX",
-                           backend: str = "elevenlabs",
-                           chatterbox_client: "_ChatterboxClient | None" = None) -> None:
+                           provider: TTSProvider | None = None) -> None:
     """Generate a voice stem from a preamble or postamble block.
 
     All segment texts (when ``block.segments`` is present) are resolved and
-    joined into a single string, then sent to the TTS backend as one call.
+    joined into a single string, then sent to the TTS provider as one call.
     This produces natural prosody across the whole block without audible seams.
     The legacy single ``text`` field is also supported.
     """
+    if provider is None:
+        provider = ElevenLabsProvider()
+
     if file_nonempty(voice_stem):
         logger.info("   Exists: %s — skipping", voice_stem)
         return
 
     spk = block.speaker
     voice_id = config.get(spk, {}).get("id", "TBD")
-    if backend == "elevenlabs" and voice_id == "TBD":
+    if provider.requires_voice_id and voice_id == "TBD":
         logger.warning("No voice_id for %s — skipping %s", spk, os.path.basename(voice_stem))
         return
 
@@ -951,30 +628,35 @@ def _generate_voice_block(block, cast_cfg, config: dict, voice_stem: str,
         kwargs = _episode_kwargs(cast_cfg)
         resolved = _format_block_text(block.text, kwargs, "preamble/postamble text")
 
-    if backend == "elevenlabs" and not has_enough_characters(resolved):
+    if not provider.has_enough_quota(resolved):
         logger.warning("Insufficient quota for %s — skipping", label.lower())
         return
     logger.info(" > [%s] %s (%d chars)...", label, spk, len(resolved))
-    _tts_segment(resolved, voice_stem, voice_id, block.speed, backend=backend,
-                 chatterbox_client=chatterbox_client, speaker_key=spk)
+    provider.generate(
+        resolved,
+        voice_stem,
+        voice_id=voice_id,
+        speaker_key=spk,
+        speed=block.speed,
+    )
     logger.info("   Saved: %s", voice_stem)
     _log_stem_hash(voice_stem)
 
 
 def _generate_preamble_voice(cast_cfg, config: dict, preamble_voice_stem: str,
-                              sfx_dir: str = "SFX", backend: str = "elevenlabs",
-                              chatterbox_client: "_ChatterboxClient | None" = None) -> None:
+                              sfx_dir: str = "SFX",
+                              provider: TTSProvider | None = None) -> None:
     _generate_voice_block(cast_cfg.preamble, cast_cfg, config,
-                          preamble_voice_stem, "PREAMBLE", sfx_dir, backend=backend,
-                          chatterbox_client=chatterbox_client)
+                          preamble_voice_stem, "PREAMBLE", sfx_dir,
+                          provider=provider)
 
 
 def _generate_postamble_voice(cast_cfg, config: dict, postamble_voice_stem: str,
-                               sfx_dir: str = "SFX", backend: str = "elevenlabs",
-                               chatterbox_client: "_ChatterboxClient | None" = None) -> None:
+                               sfx_dir: str = "SFX",
+                               provider: TTSProvider | None = None) -> None:
     _generate_voice_block(cast_cfg.postamble, cast_cfg, config,
-                          postamble_voice_stem, "POSTAMBLE", sfx_dir, backend=backend,
-                          chatterbox_client=chatterbox_client)
+                          postamble_voice_stem, "POSTAMBLE", sfx_dir,
+                          provider=provider)
 
 
 def get_parser() -> argparse.ArgumentParser:
@@ -1160,8 +842,32 @@ def main() -> None:
             if cast_cfg.postamble and postamble_voice_stem:
                 _dry_run_postamble(cast_cfg, postamble_voice_stem)
         else:
-            if args.backend == "elevenlabs":
-                check_elevenlabs_quota()
+            # --- Build TTS provider from --backend flag ---
+            provider: TTSProvider
+            if args.backend == "chatterbox":
+                cb_python = args.chatterbox_python
+                if cb_python is None:
+                    cb_default = os.path.join(os.getcwd(), "venv-chatterbox", "bin", "python3")
+                    if os.path.exists(cb_default):
+                        cb_python = cb_default
+                    else:
+                        logger.error(
+                            "Cannot find chatterbox venv Python. "
+                            "Pass --chatterbox-python PATH or create venv-chatterbox/ in the project root."
+                        )
+                        sys.exit(1)
+                provider = ChatterboxProvider(
+                    python_path=cb_python,
+                    voice_refs_dir=args.voice_refs,
+                    exaggeration=args.exaggeration,
+                )
+            elif args.backend == "gtts":
+                provider = GttsProvider()
+            else:
+                provider = ElevenLabsProvider()
+
+            provider.check_quota()
+
             # --- Pre-flight: validate all SFX source files exist before spending any credits ---
             if sfx_entries and sfx_config_data:
                 _sfx_cfg_pf = SfxConfiguration(**sfx_config_data)
@@ -1179,33 +885,11 @@ def main() -> None:
                         logger.error(_msg)
                     sys.exit(1)
 
-            # --- Chatterbox client (backend=chatterbox only) ---
-            chatterbox_client: _ChatterboxClient | None = None
-            if args.backend == "chatterbox":
-                cb_python = args.chatterbox_python
-                if cb_python is None:
-                    # Auto-detect: look for venv-chatterbox adjacent to CWD
-                    cb_default = os.path.join(os.getcwd(), "venv-chatterbox", "bin", "python3")
-                    if os.path.exists(cb_default):
-                        cb_python = cb_default
-                    else:
-                        logger.error(
-                            "Cannot find chatterbox venv Python. "
-                            "Pass --chatterbox-python PATH or create venv-chatterbox/ in the project root."
-                        )
-                        sys.exit(1)
-                chatterbox_client = _ChatterboxClient(
-                    python_path=cb_python,
-                    voice_refs_dir=args.voice_refs,
-                    exaggeration=args.exaggeration,
-                )
-
             try:
                 if cast_cfg.preamble:
                     os.makedirs(stems_dir, exist_ok=True)
                     _generate_preamble_voice(cast_cfg, config, preamble_voice_stem,
-                                             backend=args.backend,
-                                             chatterbox_client=chatterbox_client)
+                                             provider=provider)
                     # Copy intro music from sfx config 'INTRO MUSIC' source (always regenerate — free local copy)
                     if sfx_config_model and "INTRO MUSIC" in sfx_config_model.effects:
                         intro_entry = sfx_config_model.effects["INTRO MUSIC"]
@@ -1224,11 +908,12 @@ def main() -> None:
                         logger.warning("No 'INTRO MUSIC' entry in sfx config — skipping music stem")
                 generate_voices(config, dialogue_entries, stems_dir,
                                 start_from=args.start_from, stop_at=args.stop_at,
-                                show=cast_cfg.show, backend=args.backend,
-                                chatterbox_client=chatterbox_client)
+                                show=cast_cfg.show, provider=provider)
                 if sfx_entries and sfx_config_data:
+                    # SFX generation needs the raw ElevenLabs client
+                    el_client = provider.client if isinstance(provider, ElevenLabsProvider) else None
                     generate_sfx_stems(sfx_entries, sfx_config_data, stems_dir,
-                                       client=client, start_from=args.start_from)
+                                       client=el_client, start_from=args.start_from)
                 # Inject preamble entries into parsed JSON (idempotent)
                 if cast_cfg.preamble and preamble_text is not None and os.path.exists(args.script):
                     inject_preamble_entries(args.script, preamble_text, cast_cfg.preamble.speaker)
@@ -1256,11 +941,9 @@ def main() -> None:
                         else:
                             logger.warning("OUTRO MUSIC entry has no 'source' — skipping outro music stem")
                     _generate_postamble_voice(cast_cfg, config, postamble_voice_stem,
-                                             backend=args.backend,
-                                             chatterbox_client=chatterbox_client)
+                                             provider=provider)
             finally:
-                if chatterbox_client is not None:
-                    chatterbox_client.close()
+                provider.close()
 
 
 if __name__ == "__main__":

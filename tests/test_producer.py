@@ -9,14 +9,10 @@ import os
 import unittest.mock
 
 import pytest
-from elevenlabs.core.api_error import ApiError
 
-# Patch out ElevenLabs client before loading module (no API key needed for these tests)
-with unittest.mock.patch.dict(os.environ, {"ELEVENLABS_API_KEY": "test_key"}):
-    with unittest.mock.patch("elevenlabs.client.ElevenLabs"):
-        from xil_pipeline import XILP002_producer as producer
-
+from xil_pipeline import XILP002_producer as producer
 from xil_pipeline import models
+from xil_pipeline.tts_providers import ElevenLabsProvider
 
 # ─── Fixtures ───
 
@@ -201,9 +197,15 @@ class TestLoadActualProduction:
         assert len(stem_names) == len(set(stem_names)), "Duplicate stem names found"
 
 
-# ─── Tests: check_elevenlabs_quota ───
+# ─── Tests: ElevenLabsProvider quota and model selection ───
+# These functions moved from the producer module to ElevenLabsProvider.
 
 class TestCheckElevenLabsQuota:
+    def _make_provider(self):
+        prov = ElevenLabsProvider(api_key="test_key")
+        prov._client = unittest.mock.MagicMock()
+        return prov
+
     def _make_sub(self, used, limit, tier="free"):
         sub = unittest.mock.MagicMock()
         sub.character_count = used
@@ -212,117 +214,127 @@ class TestCheckElevenLabsQuota:
         return sub
 
     def test_returns_remaining(self, caplog):
+        prov = self._make_provider()
         sub = self._make_sub(1000, 10000, "free")
         user_info = unittest.mock.MagicMock()
         user_info.subscription = sub
-        producer.client.user.get.return_value = user_info
+        prov.client.user.get.return_value = user_info
 
-        result = producer.check_elevenlabs_quota()
+        result = prov.check_quota()
         assert result == 9000
 
     def test_prints_status(self, caplog):
+        prov = self._make_provider()
         sub = self._make_sub(500, 5000, "starter")
         user_info = unittest.mock.MagicMock()
         user_info.subscription = sub
-        producer.client.user.get.return_value = user_info
+        prov.client.user.get.return_value = user_info
 
-        producer.check_elevenlabs_quota()
+        prov.check_quota()
         assert "ELEVENLABS API STATUS" in caplog.text
         assert "STARTER" in caplog.text
 
     def test_returns_none_on_exception(self, caplog):
-        producer.client.user.get.side_effect = ApiError(status_code=500, body="API error")
-        result = producer.check_elevenlabs_quota()
+        from elevenlabs.core.api_error import ApiError
+        prov = self._make_provider()
+        prov.client.user.get.side_effect = ApiError(status_code=500, body="API error")
+        result = prov.check_quota()
         assert result is None
-        producer.client.user.get.side_effect = None
 
 
-# ─── Tests: has_enough_characters ───
+# ─── Tests: has_enough_quota ───
 
 class TestHasEnoughCharacters:
-    def _set_quota(self, remaining):
+    def _make_provider(self, remaining):
+        prov = ElevenLabsProvider(api_key="test_key")
+        prov._client = unittest.mock.MagicMock()
         sub = unittest.mock.MagicMock()
         sub.character_limit = 10000
         sub.character_count = 10000 - remaining
         user_info = unittest.mock.MagicMock()
         user_info.subscription = sub
-        producer.client.user.get.return_value = user_info
+        prov.client.user.get.return_value = user_info
+        return prov
 
     def test_returns_true_when_enough(self):
-        self._set_quota(1000)
-        assert producer.has_enough_characters("short text") is True
+        prov = self._make_provider(1000)
+        assert prov.has_enough_quota("short text") is True
 
     def test_returns_false_when_insufficient(self, caplog):
-        self._set_quota(5)
-        assert producer.has_enough_characters("this is a much longer text than 5 chars") is False
+        prov = self._make_provider(5)
+        assert prov.has_enough_quota("this is a much longer text than 5 chars") is False
 
     def test_returns_true_on_api_exception(self):
-        producer.client.user.get.side_effect = ApiError(status_code=403, body="no user_read")
-        assert producer.has_enough_characters("any text") is True
-        producer.client.user.get.side_effect = None
+        from elevenlabs.core.api_error import ApiError
+        prov = self._make_provider(1000)
+        prov.client.user.get.side_effect = ApiError(status_code=403, body="no user_read")
+        assert prov.has_enough_quota("any text") is True
 
 
-# ─── Tests: get_best_model_for_budget ───
+# ─── Tests: get_model ───
 
 class TestGetBestModelForBudget:
-    def _set_quota(self, remaining):
+    def _make_provider(self, remaining):
+        prov = ElevenLabsProvider(api_key="test_key")
+        prov._client = unittest.mock.MagicMock()
         sub = unittest.mock.MagicMock()
         sub.character_limit = 100000
         sub.character_count = 100000 - remaining
         user_info = unittest.mock.MagicMock()
         user_info.subscription = sub
-        producer.client.user.get.return_value = user_info
+        prov.client.user.get.return_value = user_info
+        return prov
 
     def test_returns_v3_when_healthy(self):
-        self._set_quota(50000)
-        model = producer.get_best_model_for_budget()
+        prov = self._make_provider(50000)
+        model = prov.get_model()
         assert model == "eleven_v3"
 
     def test_returns_v3_when_low(self):
-        # Low balance no longer falls back to flash — v3 is always used so that
-        # native audio tags like [pause] are honoured.
-        self._set_quota(100)
-        model = producer.get_best_model_for_budget()
+        prov = self._make_provider(100)
+        model = prov.get_model()
         assert model == "eleven_v3"
 
     def test_returns_fallback_on_exception(self):
-        producer.client.user.get.side_effect = ApiError(status_code=500, body="fail")
-        model = producer.get_best_model_for_budget()
+        from elevenlabs.core.api_error import ApiError
+        prov = self._make_provider(50000)
+        prov.client.user.get.side_effect = ApiError(status_code=500, body="fail")
+        model = prov.get_model()
         assert model == "eleven_v3"
-        producer.client.user.get.side_effect = None
 
 
-# ─── Tests: _select_model ───
+# ─── Tests: _select_model (SSML warning) ───
 
 class TestSelectModel:
-    def _set_quota(self, remaining):
+    def _make_provider(self, remaining=50000):
+        prov = ElevenLabsProvider(api_key="test_key")
+        prov._client = unittest.mock.MagicMock()
         sub = unittest.mock.MagicMock()
         sub.character_limit = 100000
         sub.character_count = 100000 - remaining
         user_info = unittest.mock.MagicMock()
         user_info.subscription = sub
-        producer.client.user.get.return_value = user_info
+        prov.client.user.get.return_value = user_info
+        return prov
 
     def test_uses_v3_for_plain_text(self):
-        self._set_quota(50000)
-        model = producer._select_model("Hello there, this is plain text.")
+        prov = self._make_provider()
+        model = prov._select_model("Hello there, this is plain text.")
         assert model == "eleven_v3"
 
     def test_ssml_text_still_uses_v3(self):
-        # SSML fallback to eleven_multilingual_v2 is removed — v3 is always used.
-        # A warning is logged instead so the operator can replace SSML with [pause].
-        self._set_quota(50000)
-        model = producer._select_model('Hello <break time="1s"/> world.')
+        prov = self._make_provider()
+        model = prov._select_model('Hello <break time="1s"/> world.')
         assert model == "eleven_v3"
 
     def test_ssml_with_low_budget_still_uses_v3(self):
-        self._set_quota(100)
-        model = producer._select_model('Hello <break time="1s"/> world.')
+        prov = self._make_provider(100)
+        model = prov._select_model('Hello <break time="1s"/> world.')
         assert model == "eleven_v3"
 
     def test_bare_less_than_does_not_trigger_ssml_fallback(self):
-        self._set_quota(50000)
-        model = producer._select_model("Score was 3 < 5, no SSML here.")
+        prov = self._make_provider()
+        model = prov._select_model("Score was 3 < 5, no SSML here.")
         assert model == "eleven_v3"
 
 
@@ -343,20 +355,24 @@ class TestGenerateVoices:
             {"seq": 6, "speaker": "dez", "text": "Something happened.", "stem_name": "006_act1_dez"},
         ]
 
-    def _setup_api(self, fake_audio=b"\xff\xfb\x10\x00" * 100):
-        """Set up quota and TTS mocks."""
-        sub = unittest.mock.MagicMock()
-        sub.character_limit = 100000
-        sub.character_count = 0
-        user_info = unittest.mock.MagicMock()
-        user_info.subscription = sub
-        producer.client.user.get.return_value = user_info
-        producer.client.text_to_speech.convert.return_value = [fake_audio]
+    def _make_provider(self, *, requires_voice_id=True, enough_quota=True):
+        """Build a mock TTSProvider that writes fake audio on generate()."""
+        prov = unittest.mock.MagicMock()
+        prov.name = "MockProvider"
+        prov.requires_voice_id = requires_voice_id
+        prov.has_enough_quota.return_value = enough_quota
+        prov.get_model.return_value = "mock_model"
+        def _write_stub(text, out_path, **kwargs):
+            os.makedirs(os.path.dirname(out_path) or ".", exist_ok=True)
+            with open(out_path, "wb") as f:
+                f.write(b"\xff\xfb\x10\x00" * 100)
+        prov.generate.side_effect = _write_stub
+        return prov
 
     def test_skips_tbd_voice(self, config, entries, tmp_path, caplog):
-        self._setup_api()
+        prov = self._make_provider()
         stems_dir = str(tmp_path)
-        producer.generate_voices(config, entries, stems_dir)
+        producer.generate_voices(config, entries, stems_dir, provider=prov)
 
         # generate_voices now blocks and logs an error when any speaker in range has TBD
         assert "Cannot generate" in caplog.text
@@ -364,43 +380,37 @@ class TestGenerateVoices:
         assert not (tmp_path / "006_act1_dez.mp3").exists()
 
     def test_skips_existing_stem(self, config, entries, tmp_path, caplog):
-        self._setup_api()
+        prov = self._make_provider()
         # Use only the adam entry (valid voice) to avoid the TBD block
         adam_only = [e for e in entries if e["speaker"] == "adam"]
         (tmp_path / "003_cold-open_adam.mp3").write_bytes(b"existing")
         stems_dir = str(tmp_path)
-        producer.generate_voices(config, adam_only, stems_dir)
+        producer.generate_voices(config, adam_only, stems_dir, provider=prov)
 
         assert "skipping" in caplog.text
 
     def test_halts_when_quota_exhausted(self, config, entries, tmp_path, caplog):
-        sub = unittest.mock.MagicMock()
-        sub.character_limit = 1  # only 1 char left
-        sub.character_count = 0
-        user_info = unittest.mock.MagicMock()
-        user_info.subscription = sub
-        producer.client.user.get.return_value = user_info
-
+        prov = self._make_provider(enough_quota=False)
         # Use only the adam entry (valid voice) to avoid the TBD block
         adam_only = [e for e in entries if e["speaker"] == "adam"]
         stems_dir = str(tmp_path)
-        producer.generate_voices(config, adam_only, stems_dir)
+        producer.generate_voices(config, adam_only, stems_dir, provider=prov)
 
         assert "halted" in caplog.text
 
     def test_start_from_skips_earlier_entries(self, config, entries, tmp_path, caplog):
-        self._setup_api()
+        prov = self._make_provider()
         stems_dir = str(tmp_path)
-        producer.generate_voices(config, entries, stems_dir, start_from=6)
+        producer.generate_voices(config, entries, stems_dir, start_from=6, provider=prov)
 
         # adam (seq=3) should not appear in generation output
         assert "003" not in caplog.text
 
     def test_stop_at_skips_later_entries(self, config, entries, tmp_path, caplog):
-        self._setup_api()
+        prov = self._make_provider()
         stems_dir = str(tmp_path)
         # entries: seq 3 (adam, valid), seq 6 (dez, TBD) — stop at 4 excludes seq 6
-        producer.generate_voices(config, entries, stems_dir, stop_at=4)
+        producer.generate_voices(config, entries, stems_dir, stop_at=4, provider=prov)
 
         # seq 6 (dez) should not appear in output at all
         assert "006" not in caplog.text
@@ -408,22 +418,22 @@ class TestGenerateVoices:
         assert (tmp_path / "003_cold-open_adam.mp3").exists()
 
     def test_stop_at_combined_with_start_from(self, config, entries, tmp_path, caplog):
-        self._setup_api()
+        prov = self._make_provider()
         stems_dir = str(tmp_path)
         # start_from=6 AND stop_at=4 → empty range, nothing to process
-        producer.generate_voices(config, entries, stems_dir, start_from=6, stop_at=4)
+        producer.generate_voices(config, entries, stems_dir, start_from=6, stop_at=4, provider=prov)
 
         assert "Generating 0 voice stems" in caplog.text
 
     def test_skips_tag_only_text(self, tmp_path, caplog):
         """Entries whose text is only a speaker tag (e.g. '[sighs]') are skipped with a warning."""
-        self._setup_api()
+        prov = self._make_provider()
         config = {"dez": {"id": "voice_dez_456", "pan": 0.0, "filter": False}}
         entries = [
             {"seq": 117, "speaker": "dez", "text": "[sighs]", "stem_name": "117_act2-scene-2_dez"},
         ]
         stems_dir = str(tmp_path)
-        producer.generate_voices(config, entries, stems_dir)
+        producer.generate_voices(config, entries, stems_dir, provider=prov)
 
         assert not (tmp_path / "117_act2-scene-2_dez.mp3").exists()
         assert "SKIP" in caplog.text
@@ -432,23 +442,23 @@ class TestGenerateVoices:
 
     def test_skips_emoji_only_text(self, tmp_path, caplog):
         """Entries whose text is only an emoji are skipped with a warning."""
-        self._setup_api()
+        prov = self._make_provider()
         config = {"adam": {"id": "voice_adam_123", "pan": 0.0, "filter": False}}
         entries = [
             {"seq": 50, "speaker": "adam", "text": "\U0001f600", "stem_name": "050_cold-open_adam"},
         ]
         stems_dir = str(tmp_path)
-        producer.generate_voices(config, entries, stems_dir)
+        producer.generate_voices(config, entries, stems_dir, provider=prov)
 
         assert not (tmp_path / "050_cold-open_adam.mp3").exists()
         assert "SKIP" in caplog.text
 
     def test_tags_dialogue_stem(self, sample_script, sample_cast, tmp_path):
         """Generated stems carry ID3 tags: title (song), artist, and lyrics."""
-        self._setup_api()
+        prov = self._make_provider()
         config, entries, _tag = producer.load_production(sample_script, sample_cast)
         stems_dir = str(tmp_path)
-        producer.generate_voices(config, entries, stems_dir)
+        producer.generate_voices(config, entries, stems_dir, provider=prov)
 
         from mutagen.id3 import ID3
         stem_path = tmp_path / "003_cold-open_adam.mp3"
@@ -537,8 +547,8 @@ class TestTerseMode:
         assert terse_total < full_total
 
     def test_generate_voices_sends_truncated_text(self, sample_script, sample_cast, tmp_path):
-        """--terse entries reach the ElevenLabs API call with truncated text."""
-        self._setup_api()
+        """--terse entries reach the TTS provider with truncated text."""
+        prov = self._make_provider()
         config, entries, _tag = producer.load_production(sample_script, sample_cast)
         terse_entries = [
             {**e, "text": producer.truncate_to_words(e["text"])}
@@ -546,23 +556,26 @@ class TestTerseMode:
             if e["speaker"] != "frank"  # skip TBD voice
         ]
         stems_dir = str(tmp_path)
-        producer.generate_voices(config, terse_entries, stems_dir)
+        producer.generate_voices(config, terse_entries, stems_dir, provider=prov)
 
-        calls = producer.client.text_to_speech.convert.call_args_list
-        for call in calls:
-            text_sent = call.kwargs.get("text") or call.args[0] if call.args else None
+        for call in prov.generate.call_args_list:
+            text_sent = call.args[0] if call.args else call.kwargs.get("text")
             if text_sent:
                 assert len(text_sent.split()) <= 3
 
-    def _setup_api(self):
-        sub = unittest.mock.MagicMock()
-        sub.character_limit = 100000
-        sub.character_count = 0
-        sub.tier = "free"
-        user_info = unittest.mock.MagicMock()
-        user_info.subscription = sub
-        producer.client.user.get.return_value = user_info
-        producer.client.text_to_speech.convert.return_value = iter([b"fake_audio"])
+    def _make_provider(self):
+        """Build a mock TTSProvider that writes fake audio on generate()."""
+        prov = unittest.mock.MagicMock()
+        prov.name = "MockProvider"
+        prov.requires_voice_id = True
+        prov.has_enough_quota.return_value = True
+        prov.get_model.return_value = "mock_model"
+        def _write_stub(text, out_path, **kwargs):
+            os.makedirs(os.path.dirname(out_path) or ".", exist_ok=True)
+            with open(out_path, "wb") as f:
+                f.write(b"\xff\xfb\x10\x00" * 100)
+        prov.generate.side_effect = _write_stub
+        return prov
 
 
 # ─── Tests: SFX entry loading ───
