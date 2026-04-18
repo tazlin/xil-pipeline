@@ -561,12 +561,14 @@ def generate_voices(
 
         full_name = config.get(speaker, {}).get("full_name", speaker.title())
         first_five = " ".join(text.split()[:5])
+        tts_comment = current_model if backend == "elevenlabs" else backend
         tag_mp3(
             stem_file,
             show=show,
             title=f"{full_name}: {first_five}",
             artist=full_name,
             lyrics=text,
+            comments=tts_comment,
         )
         logger.info("   Saved: %s", stem_file)
         _log_stem_hash(stem_file)

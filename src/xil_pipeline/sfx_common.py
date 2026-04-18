@@ -27,7 +27,7 @@ import time
 
 import httpx
 from elevenlabs.core.api_error import ApiError
-from mutagen.id3 import ID3, TALB, TCON, TDRC, TIT2, TPE1, USLT, ID3NoHeaderError
+from mutagen.id3 import COMM, ID3, TALB, TCON, TDRC, TIT2, TPE1, USLT, ID3NoHeaderError
 from mutagen.wave import WAVE
 from pydub import AudioSegment
 
@@ -150,6 +150,7 @@ def tag_mp3(
     title: str | None = None,
     artist: str | None = None,
     lyrics: str | None = None,
+    comments: str | None = None,
 ) -> None:
     """Write ID3 metadata tags to an MP3 file.
 
@@ -179,6 +180,8 @@ def tag_mp3(
         tags.add(TPE1(encoding=3, text=artist))
     if lyrics:
         tags.add(USLT(encoding=3, lang="eng", desc="", text=lyrics))
+    if comments:
+        tags.add(COMM(encoding=3, lang="eng", desc="", text=comments))
     tags.save(path)
 
 
