@@ -52,4 +52,4 @@ ElevenLabs_exports/
 masters/
 parsed/
 cues/
-SFX/voice_refs/*.conds.pt
+*.conds.pt
