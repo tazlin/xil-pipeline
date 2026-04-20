@@ -230,7 +230,7 @@ def migrate(workspace: str = ".", dry_run: bool = True) -> int:
     Returns:
         Exit code (0 = success, 1 = nothing to migrate).
     """
-    run_banner("XILU009", "migrate-workspace")
+    run_banner("XILU009 migrate-workspace")
     moves = _discover_moves(workspace)
     if not moves:
         logger.info("Nothing to migrate — workspace already uses the normalized layout.")
